@@ -1,34 +1,37 @@
-# dataset_creation.py
-import os
 import torch
-import pandas as pd
+from torch.utils.data import Dataset
+import os
+import random
 
-def load_and_preprocess_text(file_path):
-    with open(file_path, 'r', encoding='utf-8') as file:
-        text = file.read()
-    # Preprocess text
-    text = text.replace('\n', ' ')
-    return text
+class TextDataset(Dataset):
+    def __init__(self, directory, sequence_length):
+        self.directory = directory
+        self.sequence_length = sequence_length
+        self.charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;'\"?! "
+        self.char_to_idx = {char: idx for idx, char in enumerate(self.charset)}
+        self.idx_to_char = {idx: char for idx, char in enumerate(self.charset)}
+        self.file_paths = [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith("_tokens.txt")]
+        self.file_sizes = [os.path.getsize(f) - self.sequence_length for f in self.file_paths]
 
-def create_dataset(directory, sequence_length=100):
-    all_text = ''
-    for filename in os.listdir(directory):
-        if filename.endswith("_tokens.txt"):
-            file_path = os.path.join(directory, filename)
-            # print(f"Reading file: {file_path}")  # Debug print
-            all_text += load_and_preprocess_text(file_path)
-    
-    characters = list(set(all_text))
-    char_to_idx = {char: idx for idx, char in enumerate(characters)}
-    idx_to_char = {idx: char for idx, char in enumerate(characters)}
+    def __len__(self):
+        return sum(self.file_sizes)
 
-    inputs = []
-    targets = []
-    for i in range(len(all_text) - sequence_length):
-        input_seq = all_text[i:i + sequence_length]
-        target_char = all_text[i + sequence_length]
-        inputs.append([char_to_idx[char] for char in input_seq])
-        targets.append(char_to_idx[target_char])
+    def __getitem__(self, idx):
+        file_idx, char_idx = self.map_index(idx)
+        file_path = self.file_paths[file_idx]
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as file:
+            file.seek(char_idx)
+            sequence = file.read(self.sequence_length + 1)
+            input_seq = sequence[:-1].replace('\n', ' ')
 
-    return torch.tensor(inputs, dtype=torch.long), torch.tensor(targets, dtype=torch.long), idx_to_char, char_to_idx
+        input_tensor = torch.tensor([self.char_to_idx.get(char, 0) for char in input_seq], dtype=torch.long)
+        return input_tensor
 
+    def map_index(self, idx):
+        cumulative_size = 0
+        for file_idx, size in enumerate(self.file_sizes):
+            if idx < cumulative_size + size:
+                char_idx = random.randint(0, size)  # Generate a random starting point
+                return file_idx, char_idx
+            cumulative_size += size
+        raise IndexError("Index out of range")
