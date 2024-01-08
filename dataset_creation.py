@@ -24,8 +24,8 @@ class TextDataset(Dataset):
             sequence = file.read(self.sequence_length + 1)
             input_seq = sequence[:-1].replace('\n', ' ')
 
-        input_tensor = torch.tensor([self.char_to_idx.get(char, 0) for char in input_seq], dtype=torch.long)
-        return input_tensor
+        tensor = torch.tensor([self.char_to_idx.get(char, 0) for char in input_seq], dtype=torch.long)
+        return input_seq, tensor
 
     def map_index(self, idx):
         cumulative_size = 0
