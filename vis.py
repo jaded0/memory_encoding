@@ -92,7 +92,7 @@ def visualize_model_data(layer_name, instance):
 
 import matplotlib.pyplot as plt
 
-def visualize_all_layers(model, instance):
+def visualize_all_layers_and_save(model, instance, save_path):
     # Assuming model layers are stored in a list or accessible by named_modules()
     layer_names = [name for name, layer in model.named_modules() if isinstance(layer, nn.Linear)]
 
@@ -120,7 +120,54 @@ def visualize_all_layers(model, instance):
             ax.bar(range(len(activation_tensor)), activation_tensor.detach().numpy())
             ax.set_title(f'Activations of {layer_name}')
 
+    # Save the figure before showing it
     plt.tight_layout()
-    plt.show()
+    plt.savefig(save_path)
+    plt.close()
+
+    # Optionally, show the plot in Jupyter Notebook
+    # plt.show()
 
 # Example usage: visualize_all_layers(rnn, 1080)
+
+import os
+import imageio
+
+
+def create_animation_from_visualizations(model, save_dir, output_path, frame_duration=0.5, format='gif'):
+    # Find all unique instances
+    instances = set()
+    for filename in os.listdir(save_dir):
+        parts = filename.split('_')
+        if len(parts) > 3 and parts[0] in ['weights', 'activations']:
+            # Extract the part with the instance number and remove the file extension
+            instance_part = parts[-1].split('.')[0]
+            # Further split if needed and extract the number
+            instance_number = instance_part.split('epoch')[-1]
+            instances.add(int(instance_number))
+
+    # Generate and save visualizations for each instance
+    image_paths = []
+    for instance in sorted(instances):
+        save_path = os.path.join(save_dir, f'visualization_{instance}.png')
+        visualize_all_layers_and_save(model, instance, save_path)
+        image_paths.append(save_path)
+
+    # Compile images into an animation (GIF or MP4)
+    if format == 'gif':
+        with imageio.get_writer(output_path, mode='I', duration=frame_duration, loop=0) as writer:
+            for image_path in image_paths:
+                image = imageio.imread(image_path)
+                writer.append_data(image)
+    elif format == 'mp4':
+        with imageio.get_writer(output_path, mode='I', fps=1/frame_duration) as writer:
+            for image_path in image_paths:
+                image = imageio.imread(image_path)
+                writer.append_data(image)
+
+    # Clean up saved images if desired
+    # for image_path in image_paths:
+    #     os.remove(image_path)
+
+# Example usage
+# create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
