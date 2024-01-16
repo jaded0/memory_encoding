@@ -87,3 +87,40 @@ def visualize_model_data(layer_name, instance):
     plot_tensors(weight_tensor, activation_tensor, layer_name, instance)
 
 # Example usage: visualize_model_data('layer1', 10)
+
+
+
+import matplotlib.pyplot as plt
+
+def visualize_all_layers(model, instance):
+    # Assuming model layers are stored in a list or accessible by named_modules()
+    layer_names = [name for name, layer in model.named_modules() if isinstance(layer, nn.Linear)]
+
+    # Create a large figure
+    num_layers = len(layer_names)
+    fig, axes = plt.subplots(num_layers, 2, figsize=(12, num_layers * 4))  # Adjust the size as needed
+
+    for i, layer_name in enumerate(layer_names):
+        # Load tensors for each layer
+        weight_path = os.path.join(save_dir, f'weights_{layer_name}_epoch{instance}.pt')
+        activation_path = os.path.join(save_dir, f'activations_{layer_name}_epoch{instance}.pt')
+        weight_tensor = load_tensor(weight_path)
+        activation_tensor = load_tensor(activation_path).squeeze()
+
+        # Plot weights
+        if weight_tensor is not None:
+            ax = axes[i][0]
+            im = ax.imshow(weight_tensor.detach().numpy(), cmap='viridis')
+            fig.colorbar(im, ax=ax)
+            ax.set_title(f'Weights of {layer_name}')
+
+        # Plot activations as bar chart
+        if activation_tensor is not None and activation_tensor.ndim == 1:
+            ax = axes[i][1]
+            ax.bar(range(len(activation_tensor)), activation_tensor.detach().numpy())
+            ax.set_title(f'Activations of {layer_name}')
+
+    plt.tight_layout()
+    plt.show()
+
+# Example usage: visualize_all_layers(rnn, 1080)
