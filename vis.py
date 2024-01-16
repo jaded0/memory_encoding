@@ -93,6 +93,7 @@ def visualize_model_data(layer_name, instance):
 import matplotlib.pyplot as plt
 
 def visualize_all_layers_and_save(model, instance, save_path):
+    print("Visualizing all layers and saving to", save_path)
     # Assuming model layers are stored in a list or accessible by named_modules()
     layer_names = [name for name, layer in model.named_modules() if isinstance(layer, nn.Linear)]
 
@@ -134,7 +135,7 @@ import os
 import imageio
 
 
-def create_animation_from_visualizations(model, save_dir, output_path, frame_duration=0.5, format='gif'):
+def create_animation_from_visualizations(model, save_dir, output_path, frame_duration=0.1, format='gif'):
     # Find all unique instances
     instances = set()
     for filename in os.listdir(save_dir):
