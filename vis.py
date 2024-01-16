@@ -23,11 +23,11 @@ def register_hooks(model):
 
     return activations
 
-def save_model_data(model, activations, epoch, batch_idx):
+def save_model_data(model, activations, epoch):
     for name, layer in model.named_modules():
         if isinstance(layer, nn.Linear):  # Replace with your layer types if different
-            weight_path = os.path.join(save_dir, f'weights_{name}_epoch{epoch}_batch{batch_idx}.pt')
-            activation_path = os.path.join(save_dir, f'activations_{name}_epoch{epoch}_batch{batch_idx}.pt')
+            weight_path = os.path.join(save_dir, f'weights_{name}_epoch{epoch}.pt')
+            activation_path = os.path.join(save_dir, f'activations_{name}_epoch{epoch}.pt')
             save_tensor(layer.weight, weight_path)
             if name in activations:
                 save_tensor(activations[name], activation_path)
@@ -38,3 +38,47 @@ def save_model_data(model, activations, epoch, batch_idx):
 # ...
 # Inside your training loop, after each forward pass
 # save_model_data(rnn, activations, epoch, batch_idx)
+import os
+import torch
+import matplotlib.pyplot as plt
+
+def load_tensor(path):
+    if os.path.exists(path):
+        return torch.load(path)
+    else:
+        return None
+
+def plot_tensors(weight_tensor, activation_tensor, layer_name, instance):
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    
+    # Plotting weights
+    if weight_tensor is not None:
+        ax = axes[0]
+        im = ax.imshow(weight_tensor.detach().numpy(), cmap='viridis')
+        ax.set_title(f'Weights of {layer_name}')
+        fig.colorbar(im, ax=ax)
+
+    # Plotting activations
+    if activation_tensor is not None:
+        ax = axes[1]
+        if activation_tensor.ndim == 1:
+            ax.plot(activation_tensor.detach().numpy())
+        else:
+            im = ax.imshow(activation_tensor.detach().numpy(), cmap='viridis')
+            fig.colorbar(im, ax=ax)
+        ax.set_title(f'Activations of {layer_name}')
+
+    plt.suptitle(f'Layer {layer_name} at Instance {instance}')
+    plt.show()
+
+def visualize_model_data(layer_name, instance):
+    weight_path = os.path.join(save_dir, f'weights_{layer_name}_epoch{instance}.pt')
+    activation_path = os.path.join(save_dir, f'activations_{layer_name}_epoch{instance}.pt')
+
+    weight_tensor = load_tensor(weight_path)
+    activation_tensor = load_tensor(activation_path)
+    print(weight_tensor)
+    print(activation_tensor)
+    plot_tensors(weight_tensor, activation_tensor, layer_name, instance)
+
+# Example usage: visualize_model_data('layer1', 10)
