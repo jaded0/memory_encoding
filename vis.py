@@ -135,7 +135,7 @@ import os
 import imageio
 
 
-def create_animation_from_visualizations(model, save_dir, output_path, frame_duration=0.1, format='gif'):
+def create_animation_from_visualizations(model, save_dir, output_path, frame_duration=0.3, format='gif'):
     # Find all unique instances
     instances = set()
     for filename in os.listdir(save_dir):
