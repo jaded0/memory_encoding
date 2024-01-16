@@ -58,12 +58,17 @@ def plot_tensors(weight_tensor, activation_tensor, layer_name, instance):
         ax.set_title(f'Weights of {layer_name}')
         fig.colorbar(im, ax=ax)
 
+    print(activation_tensor.shape)
     # Plotting activations
     if activation_tensor is not None:
         ax = axes[1]
+        # Remove singleton dimensions
+        activation_tensor = activation_tensor.squeeze()
         if activation_tensor.ndim == 1:
-            ax.plot(activation_tensor.detach().numpy())
+            # Convert tensor to numpy array and plot as a bar chart
+            ax.bar(range(len(activation_tensor)), activation_tensor.detach().numpy())
         else:
+            # For multi-dimensional activations, retain the heatmap representation
             im = ax.imshow(activation_tensor.detach().numpy(), cmap='viridis')
             fig.colorbar(im, ax=ax)
         ax.set_title(f'Activations of {layer_name}')
@@ -77,8 +82,8 @@ def visualize_model_data(layer_name, instance):
 
     weight_tensor = load_tensor(weight_path)
     activation_tensor = load_tensor(activation_path)
-    print(weight_tensor)
-    print(activation_tensor)
+    # print(weight_tensor)
+    # print(activation_tensor)
     plot_tensors(weight_tensor, activation_tensor, layer_name, instance)
 
 # Example usage: visualize_model_data('layer1', 10)
