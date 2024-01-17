@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.nn as nn
+import wandb
 
 # Create a directory for saving data
 save_dir = 'model_data'
@@ -33,6 +34,10 @@ def save_model_data(model, activations, epoch):
             save_tensor(layer.weight, weight_path)
             if name in activations:
                 save_tensor(activations[name], activation_path)
+    
+    # plot to image and log to wandb
+    visualize_all_layers_and_save(model, epoch, os.path.join(save_dir, f'visualization_{epoch}.png'))
+    wandb.log({"model_evolution": wandb.Image(os.path.join(save_dir, f'visualization_{epoch}.png'))},commit=False)
 
 # Example usage
 # rnn = SimpleRNN(input_size, n_hidden, output_size, 3)
