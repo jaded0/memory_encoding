@@ -46,7 +46,11 @@ class HebbianLinear(nn.Linear):
 
         # Apply the normalized imprints
         # The reward can be positive (for LTP) or negative (for LTD)
-        self.weight.data += reward * learning_rate * imprint_update + reward * imprint_rate * imprint_update
+        update = reward * learning_rate * imprint_update + reward * imprint_rate * imprint_update
+        # clip the update
+        update = torch.clamp(update, -0.1, 0.1)
+        # print("update:", update)
+        self.weight.data += update
 
 class SimpleRNN(torch.nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers):
@@ -75,6 +79,7 @@ class SimpleRNN(torch.nn.Module):
         # Split into hidden and output
         hidden = self.i2h(combined)
         output = self.i2o(combined)
+        hidden = torch.tanh(hidden)  # Apply tanh function
         # print(output)
         output = self.softmax(output)
         return output, hidden

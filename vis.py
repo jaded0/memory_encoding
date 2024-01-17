@@ -6,8 +6,10 @@ import torch.nn as nn
 save_dir = 'model_data'
 os.makedirs(save_dir, exist_ok=True)
 
-def save_tensor(tensor, path):
-    torch.save(tensor, path)
+def save_tensor(tensor, path, scale=1.0, precision=torch.float16):
+    # Scale and reduce precision
+    scaled_tensor = (tensor * scale).to(precision)
+    torch.save(scaled_tensor, path)
 
 def register_hooks(model):
     activations = {}
