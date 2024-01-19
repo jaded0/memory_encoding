@@ -44,6 +44,16 @@ class HebbianLinear(nn.Linear):
         imprint_update = self.imprints.data
         # print("norm_imprint_update:", norm_imprint_update)
 
+        # center the imprint update around 0
+        # mean = imprint_update.mean(dim=0, keepdim=True)
+        # imprint_update = imprint_update - mean
+        # print(imprint_update.shape)
+        # print(mean.shape)
+        # print("mean imprint update:", mean)
+        # get the norm of the imprint update
+        # norm_imprint_update = torch.norm(imprint_update, dim=1, keepdim=True)
+        # imprint_update = imprint_update / norm_imprint_update
+
         # Apply the normalized imprints
         # The reward can be positive (for LTP) or negative (for LTD)
         update = reward * learning_rate * imprint_update + reward * imprint_rate * imprint_update
@@ -53,15 +63,19 @@ class HebbianLinear(nn.Linear):
         self.weight.data += update
 
 class SimpleRNN(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.5):
         super(SimpleRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
+        self.dropout_rate = dropout_rate
 
         # Using HebbianLinear instead of Linear
         self.linear_layers = torch.nn.ModuleList([HebbianLinear(input_size + hidden_size, hidden_size)])
         for _ in range(1, num_layers):
             self.linear_layers.append(HebbianLinear(hidden_size, hidden_size))
+
+        # Dropout layers
+        self.dropout = nn.Dropout(dropout_rate)
 
         # Final layers for hidden and output, also using HebbianLinear
         self.i2h = HebbianLinear(hidden_size, hidden_size)
@@ -71,16 +85,17 @@ class SimpleRNN(torch.nn.Module):
     def forward(self, input, hidden):
         combined = torch.cat((input, hidden), dim=1)
 
-        # Pass through the Hebbian linear layers with ReLU
+        # Pass through the Hebbian linear layers with ReLU and Dropout
         for layer in self.linear_layers:
             combined = layer(combined)
             combined = F.relu(combined)
+            combined = self.dropout(combined)
 
         # Split into hidden and output
         hidden = self.i2h(combined)
         output = self.i2o(combined)
-        hidden = torch.tanh(hidden)  # Apply tanh function
-        # print(output)
+        hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
+        output = self.dropout(output)  # Apply dropout to the output before softmax
         output = self.softmax(output)
         return output, hidden
 
