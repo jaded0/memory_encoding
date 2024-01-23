@@ -42,22 +42,22 @@ class HebbianLinear(nn.Linear):
         # Apply the imprints to the weights
         # self.weight.data += reward * learning_rate * self.imprints
         imprint_update = self.imprints.data
-        ltd_threshold=0.6
-        # Calculate LTD adjustments
-        # For imprints less than the threshold, subtract their absolute value from the threshold
-        ltd_adjustment = torch.where(imprint_update < ltd_threshold, 
-                                    ltd_threshold - imprint_update.abs(), 
-                                    imprint_update)
+        # ltd_threshold=0.6
+        # # Calculate LTD adjustments
+        # # For imprints less than the threshold, subtract their absolute value from the threshold
+        # ltd_adjustment = torch.where(imprint_update < ltd_threshold, 
+        #                             ltd_threshold - imprint_update.abs(), 
+        #                             imprint_update)
 
-        # Reapply the original sign of the imprint update
-        update = torch.where(imprint_update < 0, 
-                                        -ltd_adjustment, 
-                                        ltd_adjustment)
+        # # Reapply the original sign of the imprint update
+        # update = torch.where(imprint_update < 0, 
+        #                                 -ltd_adjustment, 
+        #                                 ltd_adjustment)
 
         # The reward can be positive (for LTP) or negative (for LTD)
         update = reward * learning_rate * imprint_update + reward * imprint_rate * imprint_update
         # clip the update
-        # update = torch.clamp(update, -0.1, 0.1)
+        update = torch.clamp(update, -0.1, 0.1)
         # print("update:", update)
         self.weight.data += update
 
