@@ -35,12 +35,17 @@ class HebbianLinear(nn.Linear):
         # Results in a [batch_size, out_features, in_features] tensor
         imprint_update = output_expanded * input_expanded
 
+        # Compute the difference and square it
+        diff_squared = (output_expanded - input_expanded) ** 2
+
+        # Update the imprint using the new rule: oa*ia - (oa-ia)^2
+        imprint_update = imprint_update - diff_squared
+
         # Sum over the batch dimension to get the final imprint update
         self.imprints.data = imprint_update.sum(dim=0)
 
     def apply_imprints(self, reward, learning_rate, imprint_rate):
-        # Apply the imprints to the weights
-        # self.weight.data += reward * learning_rate * self.imprints
+
         imprint_update = self.imprints.data
         # ltd_threshold=0.6
         # # Calculate LTD adjustments
@@ -54,15 +59,14 @@ class HebbianLinear(nn.Linear):
         #                                 -ltd_adjustment, 
         #                                 ltd_adjustment)
 
-        # The reward can be positive (for LTP) or negative (for LTD)
         update = reward * learning_rate * imprint_update + reward * imprint_rate * imprint_update
         # clip the update
-        update = torch.clamp(update, -0.1, 0.1)
+        # update = torch.clamp(update, -0.1, 0.1)
         # print("update:", update)
         self.weight.data += update
 
 class SimpleRNN(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.5):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1):
         super(SimpleRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
