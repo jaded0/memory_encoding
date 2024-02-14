@@ -67,7 +67,7 @@ def main():
     parser.add_argument('--imprint_rate', type=float, default=0.00, help='Imprint rate for Hebbian updates')
     parser.add_argument('--stochasticity', type=float, default=0.0001, help='Stochasticity in Hebbian updates')
     parser.add_argument('--len_reward_history', type=int, default=1000, help='Number of rewards to track')
-    parser.add_argument('--save_frequency', type=int, default=1000000, help='How often to save and display model weights.')
+    parser.add_argument('--save_frequency', type=int, default=100000, help='How often to save and display model weights.')
     parser.add_argument('--hidden_size', type=int, default=128, help='Size of hidden layers in RNN')
     parser.add_argument('--num_layers', type=int, default=3, help='Number of layers in RNN')
     parser.add_argument('--n_iters', type=int, default=10000, help='Number of training iterations')
