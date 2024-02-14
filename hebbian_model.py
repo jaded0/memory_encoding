@@ -44,7 +44,7 @@ class HebbianLinear(nn.Linear):
         # Sum over the batch dimension to get the final imprint update
         self.imprints.data = imprint_update.sum(dim=0)
 
-    def apply_imprints(self, reward, learning_rate, imprint_rate):
+    def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
 
         imprint_update = self.imprints.data
         # ltd_threshold=0.6
@@ -64,6 +64,15 @@ class HebbianLinear(nn.Linear):
         # update = torch.clamp(update, -0.1, 0.1)
         # print("update:", update)
         self.weight.data += update
+
+        # Normalize the weights to prevent them from exploding
+        for p in self.parameters():
+            p.data = p.data / (p.data.norm(2) + 1e-6)
+
+        # Apply stochastic noise to the weights
+        for p in self.parameters():
+            noise = stochasticity * torch.randn_like(p.data)
+            p.data += noise
 
 class SimpleRNN(torch.nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1):
@@ -105,12 +114,12 @@ class SimpleRNN(torch.nn.Module):
     def initHidden(self):
         return torch.zeros(1, self.hidden_size)
 
-    def apply_imprints(self, reward, learning_rate, imprint_rate):
+    def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
         # Apply imprints for all HebbianLinear layers
         for layer in self.linear_layers:
-            layer.apply_imprints(reward, learning_rate, imprint_rate)
-        self.i2h.apply_imprints(reward, learning_rate, imprint_rate)
-        self.i2o.apply_imprints(reward, learning_rate, imprint_rate)
+            layer.apply_imprints(reward, learning_rate, imprint_rate, stochasticity)
+        self.i2h.apply_imprints(reward, learning_rate, imprint_rate, stochasticity)
+        self.i2o.apply_imprints(reward, learning_rate, imprint_rate, stochasticity)
 
 
 
