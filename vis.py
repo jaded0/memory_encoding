@@ -37,7 +37,7 @@ def save_model_data(model, activations, epoch):
     
     # plot to image and log to wandb
     visualize_all_layers_and_save(model, epoch, os.path.join(save_dir, f'visualization_{epoch}.png'))
-    # wandb.log({"model_evolution": wandb.Image(os.path.join(save_dir, f'visualization_{epoch}.png'))},commit=False)
+    wandb.log({"model_evolution": wandb.Image(os.path.join(save_dir, f'visualization_{epoch}.png'))},commit=False)
 
 # Example usage
 # rnn = SimpleRNN(input_size, n_hidden, output_size, 3)

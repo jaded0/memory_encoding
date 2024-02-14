@@ -45,6 +45,8 @@ class HebbianLinear(nn.Linear):
             imprint_update = imprint_update - diff_squared
         elif self.update_rule == 'oja':
             imprint_update = output_expanded*(input_expanded - output_expanded * self.imprints.data)
+        elif self.update_rule == 'competitive':
+            imprint_update = output_expanded*(input_expanded - self.imprints.data)
         # Sum over the batch dimension to get the final imprint update
         self.imprints.data = imprint_update.sum(dim=0)
 
