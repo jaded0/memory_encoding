@@ -75,11 +75,12 @@ class HebbianLinear(nn.Linear):
             p.data += noise
 
 class SimpleRNN(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero'):
         super(SimpleRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout_rate = dropout_rate
+        self.init_type = init_type
 
         # Using HebbianLinear instead of Linear
         self.linear_layers = torch.nn.ModuleList([HebbianLinear(input_size + hidden_size, hidden_size)])
@@ -93,6 +94,25 @@ class SimpleRNN(torch.nn.Module):
         self.i2h = HebbianLinear(hidden_size, hidden_size)
         self.i2o = HebbianLinear(hidden_size, output_size)
         self.softmax = torch.nn.LogSoftmax(dim=1)
+        # Initialize weights
+        self.init_weights()
+
+    def init_weights(self):
+        for layer in self.linear_layers:
+            self._init_weight(layer)
+
+        self._init_weight(self.i2h)
+        self._init_weight(self.i2o)
+
+    def _init_weight(self, layer):
+        if self.init_type == 'zero':
+            nn.init.zeros_(layer.weight)
+            if layer.bias is not None:
+                nn.init.zeros_(layer.bias)
+        elif self.init_type == 'orthogonal':
+            nn.init.orthogonal_(layer.weight)
+            if layer.bias is not None:
+                nn.init.zeros_(layer.bias)
 
     def forward(self, input, hidden):
         combined = torch.cat((input, hidden), dim=1)
