@@ -3,6 +3,16 @@
 # run_training.sh
 # Shell script to run the training script with custom hyperparameters.
 
+# How to update weights.
+# Options are:
+# damage - oa*ia - (oa-ia)^2
+# oja - 
+UPDATE_RULE='oja'
+
+# Whether to normalize the weights at each update.
+# Doing so seems to prevent the runaway exploding weights effect.
+NORMALIZE=false
+
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
 LEARNING_RATE=0.005
@@ -21,7 +31,7 @@ LEN_REWARD_HISTORY=1000
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=500000
+SAVE_FREQUENCY=100000
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
@@ -35,11 +45,11 @@ N_ITERS=10000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=100  # Example alternative: 25
+PRINT_FREQ=30
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=10  # Example alternative: 50
+PLOT_FREQ=10
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
@@ -51,4 +61,6 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --num_layers $NUM_LAYERS \
                        --n_iters $N_ITERS \
                        --print_freq $PRINT_FREQ \
-                       --plot_freq $PLOT_FREQ
+                       --plot_freq $PLOT_FREQ  \
+                       --update_rule $UPDATE_RULE \
+                       --normalize $NORMALIZE

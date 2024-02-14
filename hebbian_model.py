@@ -10,9 +10,11 @@ def clip_weights(model, max_norm):
             param.data.clamp_(-max_norm, max_norm)
 
 class HebbianLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True):
+    def __init__(self, in_features, out_features, bias=True, normalize=True, update_rule='damage'):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
         self.imprints = nn.Parameter(torch.zeros_like(self.weight))
+        self.normalize = normalize
+        self.update_rule = update_rule
 
     def forward(self, input):
         # print(input)
@@ -31,16 +33,18 @@ class HebbianLinear(nn.Linear):
         input_expanded = input.unsqueeze(1)  # Shape: [batch_size, 1, in_features]
         output_expanded = output.unsqueeze(2)  # Shape: [batch_size, out_features, 1]
 
-        # Element-wise multiplication with broadcasting
-        # Results in a [batch_size, out_features, in_features] tensor
-        imprint_update = output_expanded * input_expanded
+        if self.update_rule == 'damage':
+            # Element-wise multiplication with broadcasting
+            # Results in a [batch_size, out_features, in_features] tensor
+            imprint_update = output_expanded * input_expanded
 
-        # Compute the difference and square it
-        diff_squared = (output_expanded - input_expanded) ** 2
+            # Compute the difference and square it
+            diff_squared = (output_expanded - input_expanded) ** 2
 
-        # Update the imprint using the new rule: oa*ia - (oa-ia)^2
-        imprint_update = imprint_update - diff_squared
-
+            # Update the imprint using the new rule: oa*ia - (oa-ia)^2
+            imprint_update = imprint_update - diff_squared
+        elif self.update_rule == 'oja':
+            imprint_update = output_expanded*(input_expanded - output_expanded * self.imprints.data)
         # Sum over the batch dimension to get the final imprint update
         self.imprints.data = imprint_update.sum(dim=0)
 
@@ -64,10 +68,10 @@ class HebbianLinear(nn.Linear):
         # update = torch.clamp(update, -0.1, 0.1)
         # print("update:", update)
         self.weight.data += update
-
-        # Normalize the weights to prevent them from exploding
-        for p in self.parameters():
-            p.data = p.data / (p.data.norm(2) + 1e-6)
+        if self.normalize:
+            # Normalize the weights to prevent them from exploding
+            for p in self.parameters():
+                p.data = p.data / (p.data.norm(2) + 1e-6)
 
         # Apply stochastic noise to the weights
         for p in self.parameters():
@@ -75,7 +79,7 @@ class HebbianLinear(nn.Linear):
             p.data += noise
 
 class SimpleRNN(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero'):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero', normalize=True, update_rule='damage'):
         super(SimpleRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -83,16 +87,16 @@ class SimpleRNN(torch.nn.Module):
         self.init_type = init_type
 
         # Using HebbianLinear instead of Linear
-        self.linear_layers = torch.nn.ModuleList([HebbianLinear(input_size + hidden_size, hidden_size)])
+        self.linear_layers = torch.nn.ModuleList([HebbianLinear(input_size + hidden_size, hidden_size, normalize=normalize, update_rule=update_rule)])
         for _ in range(1, num_layers):
-            self.linear_layers.append(HebbianLinear(hidden_size, hidden_size))
+            self.linear_layers.append(HebbianLinear(hidden_size, hidden_size, normalize=normalize, update_rule=update_rule))
 
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
 
         # Final layers for hidden and output, also using HebbianLinear
-        self.i2h = HebbianLinear(hidden_size, hidden_size)
-        self.i2o = HebbianLinear(hidden_size, output_size)
+        self.i2h = HebbianLinear(hidden_size, hidden_size, normalize=normalize, update_rule=update_rule)
+        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, update_rule=update_rule)
         self.softmax = torch.nn.LogSoftmax(dim=1)
         # Initialize weights
         self.init_weights()

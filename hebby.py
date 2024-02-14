@@ -48,7 +48,7 @@ def train(line_tensor, rnn, config, state):
             # Apply Hebbian updates to the network
             rnn.apply_imprints(reward_update, config["learning_rate"], config["imprint_rate"], config["stochasticity"])
 
-        if (state["training_instance"] % config["save_frequency"] == 0):
+        if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
             # Save the model and activations periodically
             save_model_data(rnn, state["activations"], state["training_instance"])
 
@@ -73,6 +73,8 @@ def main():
     parser.add_argument('--n_iters', type=int, default=10000, help='Number of training iterations')
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
     parser.add_argument('--plot_freq', type=int, default=20, help='Frequency of plotting training loss')
+    parser.add_argument('--update_rule', type=str, default='damage', help='How to update weights.')
+    parser.add_argument('--normalize', type=bool, default=True, help='Whether to normalize the weights.')
     
     # Add other parameters as needed
     args = parser.parse_args()
@@ -96,6 +98,8 @@ def main():
         "stochasticity": args.stochasticity,
         "imprint_rate": args.imprint_rate,
         "len_reward_history": args.len_reward_history,
+        "update_rule": args.update_rule,
+        "normalize": args.normalize
     })
 
     # Load data
@@ -104,7 +108,7 @@ def main():
     # Model Initialization
     input_size = n_characters
     output_size = n_characters
-    rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"])
+    rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, update_rule=args.update_rule)
 
     rnn.train()
     state = {
@@ -130,6 +134,7 @@ def main():
             predicted_char = idx_to_char[topi[0, 0].item()]
             target_char = sequence[-1]
             correct = '✓' if predicted_char == target_char else '✗ (%s)' % target_char
+            sequence = sequence[-50:]
             wandb.log({"loss": loss, "correct": correct, "predicted_char": predicted_char, "target_char": target_char, "sequence": sequence})
             print('%d %d%% (%s) %.4f %s / %s %s' % (iter, iter / args.n_iters * 100, timeSince(start), loss, sequence, predicted_char, correct))
         if iter % args.plot_freq == 0:
