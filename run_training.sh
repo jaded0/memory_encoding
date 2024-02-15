@@ -36,7 +36,7 @@ LEN_REWARD_HISTORY=1000
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=1000000
+SAVE_FREQUENCY=100000
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
@@ -46,7 +46,7 @@ HIDDEN_SIZE=128
 NUM_LAYERS=3
 
 # Number of training iterations
-N_ITERS=1000
+N_ITERS=10000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.

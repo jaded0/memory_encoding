@@ -144,16 +144,16 @@ def main():
     wandb.finish()
 
     # Plotting the Training Loss
-    plt.figure()
-    plt.plot(all_losses)
-    plt.title("Training Loss Over Time")
-    plt.xlabel("Iterations")
-    plt.ylabel("Loss")
-    plt.show()
+    # plt.figure()
+    # plt.plot(all_losses)
+    # plt.title("Training Loss Over Time")
+    # plt.xlabel("Iterations")
+    # plt.ylabel("Loss")
+    # plt.show()
 
-    # Visualization and Animations
-    visualize_model_data('i2h', 0)
-    visualize_all_layers_and_save(rnn, 0, "jusone.png")
+    # # Visualization and Animations
+    # visualize_model_data('i2h', 0)
+    # visualize_all_layers_and_save(rnn, 0, "jusone.png")
     create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
 
 if __name__ == '__main__':
