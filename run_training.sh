@@ -10,7 +10,8 @@
 # competitive - Competitive learning rule: Similar to Oja's rule but without scaling by output in subtraction term (y * (x - w)).
 # covariance - Covariance rule: Adjusts weights based on the covariance between deviations of output and input from their running averages ((y - mean(y)) * (x - mean(x))).
 # hpca - Hebbian Principal Component Analysis (HPCA) rule: Updates weights based on the input and the output, subtracting the reconstructed input from all previous neurons (y_i * (x - Σ(y_j * w_j) for j=1 to i)).
-UPDATE_RULE='covariance'
+# candidate - Custom reward-based update: Introduces candidate weight changes that are temporarily applied and evaluated. Permanent updates to weights are made based on a reward signal, modulating the efficacy of the changes.
+UPDATE_RULE='hpca'
 
 
 # Whether to normalize the weights at each update.

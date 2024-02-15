@@ -12,7 +12,7 @@ def clip_weights(model, max_norm):
 class HebbianLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias=True, normalize=True, update_rule='damage', alpha=0.5):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
-        self.imprints = nn.Parameter(torch.zeros_like(self.weight))
+        self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=False)
         self.normalize = normalize
         self.update_rule = update_rule
 
@@ -20,7 +20,9 @@ class HebbianLinear(nn.Linear):
             self.alpha = alpha  # Decay factor for the exponential moving average
             self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=False)
             self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=False)
-
+        
+        if update_rule == 'candidate':
+            self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=False)
 
     def forward(self, input):
         # print(input)
@@ -50,9 +52,9 @@ class HebbianLinear(nn.Linear):
             # Update the imprint using the new rule: oa*ia - (oa-ia)^2
             imprint_update = imprint_update - diff_squared
         elif self.update_rule == 'oja':
-            imprint_update = output_expanded*(input_expanded - output_expanded * self.imprints.data)
+            imprint_update = output_expanded*(input_expanded - output_expanded * self.weight.data)
         elif self.update_rule == 'competitive':
-            imprint_update = output_expanded*(input_expanded - self.imprints.data)
+            imprint_update = output_expanded*(input_expanded - self.weight.data)
         elif self.update_rule =='covariance':
             # Covariance Rule: Δw = η * (y - θ_y) * (x - θ_x)
             imprint_update = (output - self.out_traces).unsqueeze(2) * (input - self.in_traces).unsqueeze(1)
@@ -74,7 +76,16 @@ class HebbianLinear(nn.Linear):
 
             # Compute the weight update for all neurons
             imprint_update = self.eta * (input.unsqueeze(1) - reconstruction) * output.unsqueeze(2)
-            self.imprints.data += imprint_update.sum(dim=0)
+            # self.imprints.data += imprint_update.sum(dim=0)
+        elif self.update_rule == 'candidate':
+            # only evaluate past weight updates with the current reward signal
+            imprint_update = self.candidate_weights.data
+
+            # Reset or decay candidate_weights
+            self.candidate_weights.data *= 0.5  # Example: decay by half
+
+            candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
+            self.candidate_weights.data += candidate_update.sum(dim=0)
 
         # Sum over the batch dimension to get the final imprint update
         self.imprints.data = imprint_update.sum(dim=0)
