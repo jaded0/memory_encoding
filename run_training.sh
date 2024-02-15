@@ -5,9 +5,13 @@
 
 # How to update weights.
 # Options are:
-# damage - oa*ia - (oa-ia)^2
-# oja - 
-UPDATE_RULE='oja'
+# damage - Damage rule: Increases weights based on product of output and input, then decreases based on squared difference (oa*ia - (oa-ia)^2).
+# oja - Oja's rule: Modifies weights based on output and the difference between input and weighted output (y * (x - y * w)).
+# competitive - Competitive learning rule: Similar to Oja's rule but without scaling by output in subtraction term (y * (x - w)).
+# covariance - Covariance rule: Adjusts weights based on the covariance between deviations of output and input from their running averages ((y - mean(y)) * (x - mean(x))).
+# hpca - Hebbian Principal Component Analysis (HPCA) rule: Updates weights based on the input and the output, subtracting the reconstructed input from all previous neurons (y_i * (x - Σ(y_j * w_j) for j=1 to i)).
+UPDATE_RULE='covariance'
+
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -31,7 +35,7 @@ LEN_REWARD_HISTORY=1000
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=100000
+SAVE_FREQUENCY=1000000
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
@@ -41,7 +45,7 @@ HIDDEN_SIZE=128
 NUM_LAYERS=3
 
 # Number of training iterations
-N_ITERS=10000
+N_ITERS=1000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.

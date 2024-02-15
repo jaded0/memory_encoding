@@ -10,11 +10,17 @@ def clip_weights(model, max_norm):
             param.data.clamp_(-max_norm, max_norm)
 
 class HebbianLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True, normalize=True, update_rule='damage'):
+    def __init__(self, in_features, out_features, bias=True, normalize=True, update_rule='damage', alpha=0.5):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
         self.imprints = nn.Parameter(torch.zeros_like(self.weight))
         self.normalize = normalize
         self.update_rule = update_rule
+
+        if update_rule == 'covariance':
+            self.alpha = alpha  # Decay factor for the exponential moving average
+            self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=False)
+            self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=False)
+
 
     def forward(self, input):
         # print(input)
@@ -47,6 +53,29 @@ class HebbianLinear(nn.Linear):
             imprint_update = output_expanded*(input_expanded - output_expanded * self.imprints.data)
         elif self.update_rule == 'competitive':
             imprint_update = output_expanded*(input_expanded - self.imprints.data)
+        elif self.update_rule =='covariance':
+            # Covariance Rule: Δw = η * (y - θ_y) * (x - θ_x)
+            imprint_update = (output - self.out_traces).unsqueeze(2) * (input - self.in_traces).unsqueeze(1)
+            self.imprints.data += imprint_update.sum(dim=0)
+
+            # Update the running averages (traces) for inputs and outputs
+            self.in_traces.data = self.alpha * self.in_traces.data + (1 - self.alpha) * input.mean(dim=0)
+            self.out_traces.data = self.alpha * self.out_traces.data + (1 - self.alpha) * output.mean(dim=0)
+        elif self.update_rule == 'hpca':
+            # hpca - Hebbian Principal Component Analysis (HPCA) rule: Updates weights based on the input and the output, 
+            # subtracting the reconstructed input from all previous neurons
+            # (y_i * (x - Σ(y_j * w_j) for j=1 to i)).
+
+            # Outer product of output and weights for all neurons
+            outer_product = output.unsqueeze(2) * self.imprints.unsqueeze(0)
+            
+            # Compute cumulative sum for the reconstruction term
+            reconstruction = torch.cumsum(outer_product, dim=1)
+
+            # Compute the weight update for all neurons
+            imprint_update = self.eta * (input.unsqueeze(1) - reconstruction) * output.unsqueeze(2)
+            self.imprints.data += imprint_update.sum(dim=0)
+
         # Sum over the batch dimension to get the final imprint update
         self.imprints.data = imprint_update.sum(dim=0)
 
