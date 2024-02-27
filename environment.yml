@@ -1,0 +1,18 @@
+name: hebby
+channels:
+  - nvidia
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python  # You can specify the Python version you need
+  - pytorch
+  - imageio
+  - torchvision
+  - torchaudio
+  - cudatoolkit  # Match this with your CUDA version, or remove if CUDA is not needed
+  - matplotlib
+  - wandb
+  - pip
+  - pip:
+    - datasets  # Hugging Face datasets library
