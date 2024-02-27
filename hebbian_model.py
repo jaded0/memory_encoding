@@ -75,7 +75,7 @@ class HebbianLinear(nn.Linear):
             reconstruction = torch.cumsum(outer_product, dim=1)
 
             # Compute the weight update for all neurons
-            imprint_update = self.eta * (input.unsqueeze(1) - reconstruction) * output.unsqueeze(2)
+            imprint_update = (input.unsqueeze(1) - reconstruction) * output.unsqueeze(2)
             # self.imprints.data += imprint_update.sum(dim=0)
         elif self.update_rule == 'candidate':
             # only evaluate past weight updates with the current reward signal
