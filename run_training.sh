@@ -50,13 +50,15 @@ N_ITERS=100000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=30
+PRINT_FREQ=50
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
 PLOT_FREQ=10
 
 TRACK=true
+
+DATASET=jbrazzy/baby_names
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
@@ -71,4 +73,5 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --plot_freq $PLOT_FREQ  \
                        --update_rule $UPDATE_RULE \
                        --normalize $NORMALIZE \
-                       --track $TRACK
+                       --track $TRACK \
+                       --dataset $DATASET

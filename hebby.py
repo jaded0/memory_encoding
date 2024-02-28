@@ -77,6 +77,7 @@ def main():
     parser.add_argument('--update_rule', type=str, default='damage', help='How to update weights.')
     parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=True, help='Whether to normalize the weights.')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
+    parser.add_argument('--dataset', type=str, default='roneneldan/tinystories', help='The dataset used for training.')
     
     # Add other parameters as needed
     args = parser.parse_args()
@@ -91,6 +92,7 @@ def main():
         "n_hidden": args.hidden_size,
         "n_layers": args.num_layers,
         "track": args.track,
+        "dataset": args.dataset,
     }
     print(args.track)
     if args.track:
@@ -98,7 +100,7 @@ def main():
         wandb.init(project="hebby", config={
             "learning_rate": args.learning_rate,
             "architecture": "crazy hebbian thing",
-            "dataset": "TinyStories",
+            "dataset": args.dataset,
             "epochs": 1,
             "stochasticity": args.stochasticity,
             "imprint_rate": args.imprint_rate,
@@ -108,7 +110,7 @@ def main():
         })
 
     # Load data
-    dataloader = load_and_preprocess_data()
+    dataloader = load_and_preprocess_data(args.dataset)
 
     # Model Initialization
     input_size = n_characters

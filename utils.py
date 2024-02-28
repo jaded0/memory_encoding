@@ -3,23 +3,31 @@ import time
 import math
 import argparse
 
+dataset_keys = {
+    "roneneldan/tinystories": "text",
+    "jbrazzy/baby_names": "Names"
+}
+
 # Your charset
 charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n- "
 char_to_idx = {char: idx for idx, char in enumerate(charset)}
 idx_to_char = {idx: char for char, idx in char_to_idx.items()}
 n_characters = len(charset)
 
-def filter_text(examples):
+def filter_text(examples, dataset_name):
     """Filter out characters not in the charset for a batch of texts."""
-    return {'text': [''.join([char for char in text if char in charset]) for text in examples['text']]}
+    key = dataset_keys.get(dataset_name)
+    return {'text': [''.join([char for char in text if char in charset]) for text in examples[key]]}
 
-def text_to_indices(examples):
-    tensors = [torch.tensor([char_to_idx[char] for char in text], dtype=torch.long) for text in examples['text']]
+def text_to_indices(examples, dataset_name):
+    key = dataset_keys.get(dataset_name)
+    tensors = [torch.tensor([char_to_idx[char] for char in text], dtype=torch.long) for text in examples[key]]
     return {'tensor': tensors}
 
-def text_to_indices_and_one_hot(examples):
+def text_to_indices_and_one_hot(examples, dataset_name):
+    key = dataset_keys.get(dataset_name)
     one_hot_tensors = []
-    for text in examples['text']:
+    for text in examples[key]:
         indices = [char_to_idx[char] for char in text]
         one_hot = torch.nn.functional.one_hot(torch.tensor(indices, dtype=torch.long), num_classes=n_characters).type(torch.float)
         one_hot_tensors.append(one_hot)

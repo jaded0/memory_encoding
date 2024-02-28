@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --time=70:00:00   # walltime.  hours:minutes:seconds
+#SBATCH --time=1:00:00   # walltime.  hours:minutes:seconds
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
 #SBATCH --gpus=1

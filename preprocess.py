@@ -3,17 +3,17 @@ import torch.utils.data
 from utils import filter_text, text_to_indices, text_to_indices_and_one_hot, collate_fn
 
 # Load dataset
-def load_and_preprocess_data():
-    dataset = load_dataset("roneneldan/tinystories")
+def load_and_preprocess_data(dataset_name):
+    dataset = load_dataset(dataset_name)
     # dataset.cleanup_cache_files()
-    dataset = dataset['train'].select(range(1000))
-
+    dataset = dataset['train'].select(range(10))
+    
     print("mapping the filter")
-    dataset = dataset.map(filter_text, batched=True)
+    dataset = dataset.map(filter_text, batched=True, fn_kwargs={"dataset_name": dataset_name})
     print("mapping text to indices")
-    dataset = dataset.map(text_to_indices, batched=True)
+    dataset = dataset.map(text_to_indices, batched=True, fn_kwargs={"dataset_name": dataset_name})
     print("mapping text to indices, onehotted")
-    dataset = dataset.map(text_to_indices_and_one_hot, batched=True)
+    dataset = dataset.map(text_to_indices_and_one_hot, batched=True, fn_kwargs={"dataset_name": dataset_name})
     print('preprocessed') 
 
     # # Inspect a few examples from the dataset
