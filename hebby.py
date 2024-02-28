@@ -18,15 +18,14 @@ def train(line_tensor, onehot_line_tensor, rnn, config, state):
         l2_reg = None  # Reset L2 regularization term for each character
 
         hot_input_char_tensor = onehot_line_tensor[i].unsqueeze(0)
-        # Convert the current character to a one-hot encoded tensor
-        # hot_input_char_tensor = torch.nn.functional.one_hot(line_tensor[i], num_classes=n_characters).type(torch.float).unsqueeze(0)
 
         with torch.no_grad():  # Disable gradient calculations
             # Forward pass through the RNN
             output, hidden = rnn(hot_input_char_tensor, hidden)
 
             # Compute the loss for this step
-            loss = config['criterion'](output, line_tensor[-1].unsqueeze(0))
+            final_char = line_tensor[i+1].unsqueeze(0)
+            loss = config['criterion'](output, final_char)
 
             # Compute the L2 regularization term
             for param in rnn.parameters():

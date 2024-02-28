@@ -46,17 +46,17 @@ HIDDEN_SIZE=128
 NUM_LAYERS=3
 
 # Number of training iterations, like 100000
-N_ITERS=100
+N_ITERS=100000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=5
+PRINT_FREQ=30
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
 PLOT_FREQ=10
 
-TRACK=false
+TRACK=true
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
