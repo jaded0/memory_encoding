@@ -1,5 +1,5 @@
 import torch
-from hebbian_model import HebbianLinear, SimpleRNN, clip_weights
+from hebbian_model import HebbianLinear, HebbyRNN, SimpleRNN, clip_weights
 from vis import register_hooks, save_model_data, visualize_model_data, visualize_all_layers_and_save, create_animation_from_visualizations
 import wandb
 import matplotlib.pyplot as plt
@@ -9,7 +9,25 @@ import time
 import math
 import argparse
 
-def train(line_tensor, onehot_line_tensor, rnn, config, state):
+def train_backprop(line_tensor, onehot_line_tensor, rnn, config, state):
+    rnn.train()  # Set the RNN to training mode
+    optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
+    criterion = config['criterion']
+
+    hidden = rnn.initHidden()
+    rnn.zero_grad()
+    loss = 0
+
+    for i in range(onehot_line_tensor.size()[0] - 1):
+        output, hidden = rnn(onehot_line_tensor[i].unsqueeze(0), hidden)
+        loss += criterion(output, line_tensor[i + 1].unsqueeze(0))
+
+    loss.backward()
+    optimizer.step()
+
+    return output, loss.item(), 0, 0
+
+def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
     hidden = rnn.initHidden()
     losses, og_losses, reg_losses = [], [], []
     l2_reg, output = None, None
@@ -61,6 +79,12 @@ def train(line_tensor, onehot_line_tensor, rnn, config, state):
     reg_loss_avg = sum(reg_losses) / len(reg_losses)
     return output, loss_avg, og_loss_avg, reg_loss_avg
 
+def train(line_tensor, onehot_line_tensor, rnn, config, state):
+    if config['update_rule'] == "backprop":
+        return train_backprop(line_tensor, onehot_line_tensor, rnn, config, state)
+    else:
+        return train_hebby(line_tensor, onehot_line_tensor, rnn, config, state)
+
 def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Train a model with specified hyperparameters.')
@@ -93,6 +117,7 @@ def main():
         "n_layers": args.num_layers,
         "track": args.track,
         "dataset": args.dataset,
+        "update_rule": args.update_rule,
     }
     print(args.track)
     if args.track:
@@ -115,7 +140,12 @@ def main():
     # Model Initialization
     input_size = n_characters
     output_size = n_characters
-    rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, update_rule=args.update_rule)
+    
+
+    if args.update_rule == "backprop":
+        rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"])
+    else:
+        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, update_rule=args.update_rule)
 
     rnn.train()
     state = {
