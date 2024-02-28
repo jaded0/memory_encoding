@@ -32,7 +32,7 @@ STOCHASTICITY=0.00001
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
-LEN_REWARD_HISTORY=1000
+LEN_REWARD_HISTORY=10
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
@@ -43,10 +43,10 @@ NUM_LAYERS=1
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=10000
+SAVE_FREQUENCY=5000
 
 # Number of training iterations, like 100000
-N_ITERS=10000
+N_ITERS=100000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
