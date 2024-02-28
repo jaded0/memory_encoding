@@ -20,7 +20,7 @@ NORMALIZE=false
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=0.005
+LEARNING_RATE=0.0005
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -28,25 +28,25 @@ IMPRINT_RATE=0.0
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=0.0001
+STOCHASTICITY=0.00001
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
 LEN_REWARD_HISTORY=1000
 
-# Frequency of saving and displaying model weights
-# Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=1000000
-
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=128
+HIDDEN_SIZE=64
 
 # Number of layers in RNN
-NUM_LAYERS=3
+NUM_LAYERS=1
+
+# Frequency of saving and displaying model weights
+# Lower values save more frequently but may slow down training.
+SAVE_FREQUENCY=10000
 
 # Number of training iterations, like 100000
-N_ITERS=100000
+N_ITERS=10000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
