@@ -10,6 +10,38 @@ import math
 import argparse
 import time
 
+# def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
+#     criterion = config['criterion']
+
+#     hidden = rnn.initHidden()
+#     rnn.zero_grad()
+#     loss = 0
+
+#     for i in range(onehot_line_tensor.size()[0] - 1):
+#         print(f"Input: {onehot_line_tensor[i].unsqueeze(0)}")
+#         output, hidden = rnn(onehot_line_tensor[i].unsqueeze(0), hidden)
+
+#         # Print the target letter and its corresponding output from the RNN
+#         target_letter = idx_to_char[line_tensor[i + 1].item()]
+#         predicted_letter = idx_to_char[output.max(1)[1].item()]
+#         print(f"Iteration {i}: Target = '{target_letter}', Predicted = '{predicted_letter}'")
+#         print(line_tensor[i + 1].item(), output.max(1)[1].item())
+#         print(output)
+
+#         # Calculate and print the loss for this step
+#         step_loss = criterion(output, line_tensor[i + 1].unsqueeze(0))
+#         print(f"Loss for this letter: {step_loss.item()}")
+
+#         loss += step_loss
+
+#         # Add a one-second delay
+#         time.sleep(0.001)
+
+#     loss.backward()
+#     optimizer.step()
+
+#     return output, loss.item(), 0, 0
+
 def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     criterion = config['criterion']
 
@@ -19,41 +51,12 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
 
     for i in range(onehot_line_tensor.size()[0] - 1):
         output, hidden = rnn(onehot_line_tensor[i].unsqueeze(0), hidden)
-
-        # Print the target letter and its corresponding output from the RNN
-        target_letter = idx_to_char[line_tensor[i + 1].item()]
-        predicted_letter = idx_to_char[output.max(1)[1].item()]
-        print(f"Iteration {i}: Target = '{target_letter}', Predicted = '{predicted_letter}'")
-
-        # Calculate and print the loss for this step
-        step_loss = criterion(output, line_tensor[i + 1].unsqueeze(0))
-        print(f"Loss for this letter: {step_loss.item()}")
-
-        loss += step_loss
-
-        # Add a one-second delay
-        time.sleep(1)
+        loss += criterion(output, line_tensor[i + 1].unsqueeze(0))
 
     loss.backward()
     optimizer.step()
 
     return output, loss.item(), 0, 0
-
-# def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
-#     criterion = config['criterion']
-
-#     hidden = rnn.initHidden()
-#     rnn.zero_grad()
-#     loss = 0
-
-#     for i in range(onehot_line_tensor.size()[0] - 1):
-#         output, hidden = rnn(onehot_line_tensor[i].unsqueeze(0), hidden)
-#         loss += criterion(output, line_tensor[i + 1].unsqueeze(0))
-
-#     loss.backward()
-#     optimizer.step()
-
-#     return output, loss.item(), 0, 0
 
 def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
     hidden = rnn.initHidden()
@@ -107,9 +110,8 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
     reg_loss_avg = sum(reg_losses) / len(reg_losses)
     return output, loss_avg, og_loss_avg, reg_loss_avg
 
-def train(line_tensor, onehot_line_tensor, rnn, config, state):
+def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None):
     if config['update_rule'] == "backprop":
-        optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
         return train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer)
     else:
         return train_hebby(line_tensor, onehot_line_tensor, rnn, config, state)
@@ -170,9 +172,11 @@ def main():
     input_size = n_characters
     output_size = n_characters
     
+    optimizer = None
 
     if args.update_rule == "backprop":
         rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"])
+        optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
     else:
         rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, update_rule=args.update_rule)
 
@@ -191,7 +195,7 @@ def main():
 
     for iter in range(1, args.n_iters + 1):
         sequence, line_tensor, onehot_line_tensor = randomTrainingExample(dataloader)
-        output, loss, og_loss, reg_loss = train(line_tensor, onehot_line_tensor, rnn, config, state)
+        output, loss, og_loss, reg_loss = train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer)
         # Loss tracking
         current_loss += loss
         if iter % args.print_freq == 0:
@@ -206,6 +210,8 @@ def main():
             print('%d %d%% (%s) %.4f %s / %s %s' % (iter, iter / args.n_iters * 100, timeSince(start), loss, sequence, predicted_char, correct))
         if iter % args.plot_freq == 0:
             all_losses.append(current_loss / args.plot_freq)
+            if args.track:
+                wandb.log({"avg_loss": current_loss / args.plot_freq})
             current_loss = 0
 
     if args.track:

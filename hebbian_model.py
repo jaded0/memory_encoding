@@ -209,25 +209,25 @@ class SimpleRNN(nn.Module):
         self.i2o = nn.Linear(hidden_size, output_size)
         self.softmax = nn.LogSoftmax(dim=1)
 
-        # Initialize weights
-        self.init_weights()
+    #     # Initialize weights
+    #     self.init_weights()
 
-    def init_weights(self):
-        for layer in self.linear_layers:
-            self._init_weight(layer)
+    # def init_weights(self):
+    #     for layer in self.linear_layers:
+    #         self._init_weight(layer)
 
-        self._init_weight(self.i2h)
-        self._init_weight(self.i2o)
+    #     self._init_weight(self.i2h)
+    #     self._init_weight(self.i2o)
 
-    def _init_weight(self, layer):
-        if self.init_type == 'zero':
-            nn.init.zeros_(layer.weight)
-            if layer.bias is not None:
-                nn.init.zeros_(layer.bias)
-        elif self.init_type == 'orthogonal':
-            nn.init.orthogonal_(layer.weight)
-            if layer.bias is not None:
-                nn.init.zeros_(layer.bias)
+    # def _init_weight(self, layer):
+    #     if self.init_type == 'zero':
+    #         nn.init.zeros_(layer.weight)
+    #         if layer.bias is not None:
+    #             nn.init.zeros_(layer.bias)
+    #     elif self.init_type == 'orthogonal':
+    #         nn.init.orthogonal_(layer.weight)
+    #         if layer.bias is not None:
+    #             nn.init.zeros_(layer.bias)
 
     def forward(self, input, hidden):
         combined = torch.cat((input, hidden), dim=1)
