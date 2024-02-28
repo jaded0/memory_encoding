@@ -4,7 +4,7 @@ from utils import filter_text, text_to_indices, text_to_indices_and_one_hot, col
 
 # Load dataset
 def load_and_preprocess_data():
-    dataset = load_dataset("roneneldan/TinyStories")
+    dataset = load_dataset("roneneldan/tinystories")
     # dataset.cleanup_cache_files()
     dataset = dataset['train'].select(range(1000))
 
