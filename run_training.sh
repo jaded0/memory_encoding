@@ -36,7 +36,7 @@ LEN_REWARD_HISTORY=1000
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=256
+HIDDEN_SIZE=16
 
 # Number of layers in RNN
 NUM_LAYERS=3
@@ -46,7 +46,7 @@ NUM_LAYERS=3
 SAVE_FREQUENCY=5000
 
 # Number of training iterations, like 100000
-N_ITERS=5000000
+N_ITERS=100000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
@@ -56,7 +56,7 @@ PRINT_FREQ=50
 # Lower values plot more frequently.
 PLOT_FREQ=10
 
-TRACK=true
+TRACK=false
 
 DATASET=jbrazzy/baby_names
 

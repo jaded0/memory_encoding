@@ -8,6 +8,7 @@ from utils import randomTrainingExample, timeSince, str2bool, idx_to_char, n_cha
 import time
 import math
 import argparse
+import time
 
 def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     criterion = config['criterion']
@@ -18,12 +19,41 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
 
     for i in range(onehot_line_tensor.size()[0] - 1):
         output, hidden = rnn(onehot_line_tensor[i].unsqueeze(0), hidden)
-        loss += criterion(output, line_tensor[i + 1].unsqueeze(0))
+
+        # Print the target letter and its corresponding output from the RNN
+        target_letter = idx_to_char[line_tensor[i + 1].item()]
+        predicted_letter = idx_to_char[output.max(1)[1].item()]
+        print(f"Iteration {i}: Target = '{target_letter}', Predicted = '{predicted_letter}'")
+
+        # Calculate and print the loss for this step
+        step_loss = criterion(output, line_tensor[i + 1].unsqueeze(0))
+        print(f"Loss for this letter: {step_loss.item()}")
+
+        loss += step_loss
+
+        # Add a one-second delay
+        time.sleep(1)
 
     loss.backward()
     optimizer.step()
 
     return output, loss.item(), 0, 0
+
+# def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
+#     criterion = config['criterion']
+
+#     hidden = rnn.initHidden()
+#     rnn.zero_grad()
+#     loss = 0
+
+#     for i in range(onehot_line_tensor.size()[0] - 1):
+#         output, hidden = rnn(onehot_line_tensor[i].unsqueeze(0), hidden)
+#         loss += criterion(output, line_tensor[i + 1].unsqueeze(0))
+
+#     loss.backward()
+#     optimizer.step()
+
+#     return output, loss.item(), 0, 0
 
 def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
     hidden = rnn.initHidden()
