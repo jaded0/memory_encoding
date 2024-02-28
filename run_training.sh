@@ -20,7 +20,7 @@ NORMALIZE=false
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=0.05
+LEARNING_RATE=0.005
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -28,7 +28,7 @@ IMPRINT_RATE=0.0
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=0.001
+STOCHASTICITY=0.0001
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
@@ -45,16 +45,18 @@ HIDDEN_SIZE=128
 # Number of layers in RNN
 NUM_LAYERS=3
 
-# Number of training iterations
-N_ITERS=100000
+# Number of training iterations, like 100000
+N_ITERS=100
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=30
+PRINT_FREQ=5
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
 PLOT_FREQ=10
+
+TRACK=false
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
@@ -68,4 +70,5 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --print_freq $PRINT_FREQ \
                        --plot_freq $PLOT_FREQ  \
                        --update_rule $UPDATE_RULE \
-                       --normalize $NORMALIZE
+                       --normalize $NORMALIZE \
+                       --track $TRACK

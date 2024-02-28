@@ -4,20 +4,22 @@ from vis import register_hooks, save_model_data, visualize_model_data, visualize
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
-from utils import randomTrainingExample, timeSince, idx_to_char, n_characters
+from utils import randomTrainingExample, timeSince, str2bool, idx_to_char, n_characters
 import time
 import math
 import argparse
 
-def train(line_tensor, rnn, config, state):
+def train(line_tensor, onehot_line_tensor, rnn, config, state):
     hidden = rnn.initHidden()
     losses, og_losses, reg_losses = [], [], []
     l2_reg, output = None, None
 
-    for i in range(line_tensor.size()[0] - 1):
+    for i in range(onehot_line_tensor.size()[0] - 1):
         l2_reg = None  # Reset L2 regularization term for each character
+
+        hot_input_char_tensor = onehot_line_tensor[i].unsqueeze(0)
         # Convert the current character to a one-hot encoded tensor
-        hot_input_char_tensor = torch.nn.functional.one_hot(line_tensor[i], num_classes=n_characters).type(torch.float).unsqueeze(0)
+        # hot_input_char_tensor = torch.nn.functional.one_hot(line_tensor[i], num_classes=n_characters).type(torch.float).unsqueeze(0)
 
         with torch.no_grad():  # Disable gradient calculations
             # Forward pass through the RNN
@@ -50,7 +52,7 @@ def train(line_tensor, rnn, config, state):
 
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
             # Save the model and activations periodically
-            save_model_data(rnn, state["activations"], state["training_instance"])
+            save_model_data(rnn, state["activations"], state["training_instance"], config['track'])
 
         state['training_instance'] += 1
 
@@ -74,7 +76,8 @@ def main():
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
     parser.add_argument('--plot_freq', type=int, default=20, help='Frequency of plotting training loss')
     parser.add_argument('--update_rule', type=str, default='damage', help='How to update weights.')
-    parser.add_argument('--normalize', type=bool, default=True, help='Whether to normalize the weights.')
+    parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=True, help='Whether to normalize the weights.')
+    parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
     
     # Add other parameters as needed
     args = parser.parse_args()
@@ -88,19 +91,22 @@ def main():
         "l2_lambda": 0.000,  # Example static hyperparameter
         "n_hidden": args.hidden_size,
         "n_layers": args.num_layers,
+        "track": args.track,
     }
-    # wandb initialization
-    wandb.init(project="hebby", config={
-        "learning_rate": args.learning_rate,
-        "architecture": "crazy hebbian thing",
-        "dataset": "TinyStories",
-        "epochs": 1,
-        "stochasticity": args.stochasticity,
-        "imprint_rate": args.imprint_rate,
-        "len_reward_history": args.len_reward_history,
-        "update_rule": args.update_rule,
-        "normalize": args.normalize
-    })
+    print(args.track)
+    if args.track:
+        # wandb initialization
+        wandb.init(project="hebby", config={
+            "learning_rate": args.learning_rate,
+            "architecture": "crazy hebbian thing",
+            "dataset": "TinyStories",
+            "epochs": 1,
+            "stochasticity": args.stochasticity,
+            "imprint_rate": args.imprint_rate,
+            "len_reward_history": args.len_reward_history,
+            "update_rule": args.update_rule,
+            "normalize": args.normalize
+        })
 
     # Load data
     dataloader = load_and_preprocess_data()
@@ -124,8 +130,8 @@ def main():
     start = time.time()
 
     for iter in range(1, args.n_iters + 1):
-        sequence, line_tensor = randomTrainingExample(dataloader)
-        output, loss, og_loss, reg_loss = train(line_tensor, rnn, config, state)
+        sequence, line_tensor, onehot_line_tensor = randomTrainingExample(dataloader)
+        output, loss, og_loss, reg_loss = train(line_tensor, onehot_line_tensor, rnn, config, state)
         # Loss tracking
         current_loss += loss
         if iter % args.print_freq == 0:
@@ -135,13 +141,15 @@ def main():
             target_char = sequence[-1]
             correct = '✓' if predicted_char == target_char else '✗ (%s)' % target_char
             sequence = sequence[-50:]
-            wandb.log({"loss": loss, "correct": correct, "predicted_char": predicted_char, "target_char": target_char, "sequence": sequence})
+            if args.track:
+                wandb.log({"loss": loss, "correct": correct, "predicted_char": predicted_char, "target_char": target_char, "sequence": sequence})
             print('%d %d%% (%s) %.4f %s / %s %s' % (iter, iter / args.n_iters * 100, timeSince(start), loss, sequence, predicted_char, correct))
         if iter % args.plot_freq == 0:
             all_losses.append(current_loss / args.plot_freq)
             current_loss = 0
 
-    wandb.finish()
+    if args.track:
+        wandb.finish()
 
     # Plotting the Training Loss
     # plt.figure()

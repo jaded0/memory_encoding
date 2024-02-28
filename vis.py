@@ -26,7 +26,7 @@ def register_hooks(model):
 
     return activations
 
-def save_model_data(model, activations, epoch):
+def save_model_data(model, activations, epoch, track):
     for name, layer in model.named_modules():
         if isinstance(layer, nn.Linear):  # Replace with your layer types if different
             weight_path = os.path.join(save_dir, f'weights_{name}_epoch{epoch}.pt')
@@ -37,7 +37,8 @@ def save_model_data(model, activations, epoch):
     
     # plot to image and log to wandb
     visualize_all_layers_and_save(model, epoch, os.path.join(save_dir, f'visualization_{epoch}.png'))
-    wandb.log({"model_evolution": wandb.Image(os.path.join(save_dir, f'visualization_{epoch}.png'))},commit=False)
+    if track: 
+        wandb.log({"model_evolution": wandb.Image(os.path.join(save_dir, f'visualization_{epoch}.png'))},commit=False)
 
 # Example usage
 # rnn = SimpleRNN(input_size, n_hidden, output_size, 3)
