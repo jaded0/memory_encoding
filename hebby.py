@@ -9,9 +9,7 @@ import time
 import math
 import argparse
 
-def train_backprop(line_tensor, onehot_line_tensor, rnn, config, state):
-    rnn.train()  # Set the RNN to training mode
-    optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
+def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     criterion = config['criterion']
 
     hidden = rnn.initHidden()
@@ -81,7 +79,8 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
 
 def train(line_tensor, onehot_line_tensor, rnn, config, state):
     if config['update_rule'] == "backprop":
-        return train_backprop(line_tensor, onehot_line_tensor, rnn, config, state)
+        optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
+        return train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer)
     else:
         return train_hebby(line_tensor, onehot_line_tensor, rnn, config, state)
 
