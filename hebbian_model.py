@@ -26,6 +26,10 @@ class HebbianLinear(nn.Linear):
         if update_rule == 'candidate':
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=False)
 
+        if update_rule == 'dfa':
+            # self.feedback_weights = torch.ones(out_features, in_features)  # Matrix of 1s
+            self.feedback_weights = torch.randn(out_features, in_features)
+
     def forward(self, input):
         # print(input)
         output = super(HebbianLinear, self).forward(input)
@@ -104,6 +108,8 @@ class HebbianLinear(nn.Linear):
 
             candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
             self.candidate_weights.data += candidate_update.sum(dim=0)
+        else:
+            return
 
         # Sum over the batch dimension to get the final imprint update
         self.imprints.data = imprint_update.sum(dim=0)
@@ -134,15 +140,10 @@ class HebbianLinear(nn.Linear):
         #         #     print("the nan is in the imprint")
         #         #     sys.exit(1)
         #         p.data.clamp_(-max_weight_value, max_weight_value)
-
-        update = reward * learning_rate * imprint_update + reward * imprint_rate * imprint_update
-        # for p in update:
-        #     if torch.isnan(p.data).any():
-        #         print(f"the nan is in the update, here's the reward: {reward} and here's the imprint_update:\n{imprint_update}")
-        #         sys.exit(1)
-        # clip the update
-        # update = torch.clamp(update, -0.1, 0.1)
-        # print("update:", update)
+        if self.update_rule == 'dfa':
+            update = reward.T * learning_rate * self.feedback_weights
+        else:
+            update = reward * learning_rate * imprint_update + reward * imprint_rate * imprint_update
         self.weight.data += update
 
         # for p in self.weight:

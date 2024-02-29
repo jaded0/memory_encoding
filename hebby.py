@@ -11,38 +11,6 @@ import argparse
 import time
 import sys
 
-# def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
-#     criterion = config['criterion']
-
-#     hidden = rnn.initHidden()
-#     rnn.zero_grad()
-#     loss = 0
-
-#     for i in range(onehot_line_tensor.size()[0] - 1):
-#         print(f"Input: {onehot_line_tensor[i].unsqueeze(0)}")
-#         output, hidden = rnn(onehot_line_tensor[i].unsqueeze(0), hidden)
-
-#         # Print the target letter and its corresponding output from the RNN
-#         target_letter = idx_to_char[line_tensor[i + 1].item()]
-#         predicted_letter = idx_to_char[output.max(1)[1].item()]
-#         print(f"Iteration {i}: Target = '{target_letter}', Predicted = '{predicted_letter}'")
-#         print(line_tensor[i + 1].item(), output.max(1)[1].item())
-#         print(output)
-
-#         # Calculate and print the loss for this step
-#         step_loss = criterion(output, line_tensor[i + 1].unsqueeze(0))
-#         print(f"Loss for this letter: {step_loss.item()}")
-
-#         loss += step_loss
-
-#         # Add a one-second delay
-#         time.sleep(0.001)
-
-#     loss.backward()
-#     optimizer.step()
-
-#     return output, loss.item(), 0, 0
-
 def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     criterion = config['criterion']
 
@@ -53,13 +21,15 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     for i in range(onehot_line_tensor.size()[0] - 1):
         hot_input_char_tensor = onehot_line_tensor[i].unsqueeze(0)
         output, hidden = rnn(hot_input_char_tensor, hidden)
-        final_char = line_tensor[i+1].unsqueeze(0)
+        final_char = onehot_line_tensor[i+1].unsqueeze(0).float()
         loss += criterion(output, final_char)
 
     loss.backward()
-    optimizer.step()
+    # optimizer.step()
+    for p in rnn.parameters():
+        p.data.add_(p.grad.data, alpha=-config['learning_rate'])
 
-    return output, loss.item(), 0, 0
+    return output, loss.item()/onehot_line_tensor.size()[0], 0, 0
 
 def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
     hidden = rnn.initHidden()
@@ -76,7 +46,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
             output, hidden = rnn(hot_input_char_tensor, hidden)
 
             # Compute the loss for this step
-            final_char = line_tensor[i+1].unsqueeze(0)
+            final_char = onehot_line_tensor[i+1].unsqueeze(0).float()
             loss = config['criterion'](output, final_char)
             # if math.isnan(loss):
             #     print("Warning: Loss is NaN")
@@ -93,15 +63,17 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
             losses.append(loss.item())  # Store the loss for this step
 
             # Convert loss to a reward signal for Hebbian updates
-            reward = -loss.item()
             if config["delta_rewards"]:
+                reward = -loss.item()
                 state['last_n_rewards'].append(reward)
                 if len(state['last_n_rewards']) > config['len_reward_history']:
                     state['last_n_rewards'].pop(0)
                 last_n_reward_avg = sum(state['last_n_rewards']) / len(state['last_n_rewards'])
                 reward_update = reward - last_n_reward_avg
             else:
-                reward_update = reward
+                # global_error = torch.autograd.grad(loss, output, retain_graph=True)[0]
+                global_error = 2.0 / onehot_line_tensor.size()[1] * (output - final_char)
+                reward_update = -global_error
             
             # Apply Hebbian updates to the network
             rnn.apply_imprints(reward_update, config["learning_rate"], config["imprint_rate"], config["stochasticity"])
@@ -153,7 +125,7 @@ def main():
         "stochasticity": args.stochasticity,
         "len_reward_history": args.len_reward_history,
         "save_frequency": args.save_frequency,
-        "criterion": torch.nn.NLLLoss(),
+        "criterion": torch.nn.MSELoss(),
         "l2_lambda": 0.000,  # Example static hyperparameter
         "n_hidden": args.hidden_size,
         "n_layers": args.num_layers,
