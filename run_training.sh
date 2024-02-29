@@ -11,12 +11,14 @@
 # covariance - Covariance rule: Adjusts weights based on the covariance between deviations of output and input from their running averages ((y - mean(y)) * (x - mean(x))).
 # hpca - Hebbian Principal Component Analysis (HPCA) rule: Updates weights based on the input and the output, subtracting the reconstructed input from all previous neurons (y_i * (x - Σ(y_j * w_j) for j=1 to i)).
 # candidate - Custom reward-based update: Introduces candidate weight changes that are temporarily applied and evaluated. Permanent updates to weights are made based on a reward signal, modulating the efficacy of the changes.
-UPDATE_RULE='backprop'
+UPDATE_RULE='hpca'
 
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
 NORMALIZE=false
+
+CLIP_WEIGHTS=true
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
@@ -28,11 +30,12 @@ IMPRINT_RATE=0.0
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=0.001
+STOCHASTICITY=0.0001
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
-LEN_REWARD_HISTORY=1000
+LEN_REWARD_HISTORY=10
+DELTA_REWARDS=true
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
@@ -43,18 +46,18 @@ NUM_LAYERS=1
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=5000
+SAVE_FREQUENCY=1000
 
 # Number of training iterations, like 100000
 N_ITERS=100000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=1000
+PRINT_FREQ=100
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=10
+PLOT_FREQ=100
 
 TRACK=true
 
@@ -73,5 +76,7 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --plot_freq $PLOT_FREQ  \
                        --update_rule $UPDATE_RULE \
                        --normalize $NORMALIZE \
+                       --clip_weights $CLIP_WEIGHTS \
                        --track $TRACK \
-                       --dataset $DATASET
+                       --dataset $DATASET \
+                       --delta_rewards $DELTA_REWARDS

@@ -9,6 +9,7 @@ import time
 import math
 import argparse
 import time
+import sys
 
 # def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
 #     criterion = config['criterion']
@@ -50,8 +51,10 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     loss = 0
 
     for i in range(onehot_line_tensor.size()[0] - 1):
-        output, hidden = rnn(onehot_line_tensor[i].unsqueeze(0), hidden)
-        loss += criterion(output, line_tensor[i + 1].unsqueeze(0))
+        hot_input_char_tensor = onehot_line_tensor[i].unsqueeze(0)
+        output, hidden = rnn(hot_input_char_tensor, hidden)
+        final_char = line_tensor[i+1].unsqueeze(0)
+        loss += criterion(output, final_char)
 
     loss.backward()
     optimizer.step()
@@ -75,26 +78,31 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
             # Compute the loss for this step
             final_char = line_tensor[i+1].unsqueeze(0)
             loss = config['criterion'](output, final_char)
-
+            # if math.isnan(loss):
+            #     print("Warning: Loss is NaN")
+            #     sys.exit(1)
             # Compute the L2 regularization term
-            for param in rnn.parameters():
-                if l2_reg is None:
-                    l2_reg = param.norm(2)  # L2 norm of the parameter
-                else:
-                    l2_reg = l2_reg + param.norm(2)
-            og_losses.append(loss.item())  # Store the original loss for this step
-            reg_losses.append(config['l2_lambda']*l2_reg.item())
-            loss = loss + config['l2_lambda'] * l2_reg  # Add the L2 regularization term to the loss
+            # for param in rnn.parameters():
+            #     if l2_reg is None:
+            #         l2_reg = param.norm(2)  # L2 norm of the parameter
+            #     else:
+            #         l2_reg = l2_reg + param.norm(2)
+            # og_losses.append(loss.item())  # Store the original loss for this step
+            # reg_losses.append(config['l2_lambda']*l2_reg.item())
+            # loss = loss + config['l2_lambda'] * l2_reg  # Add the L2 regularization term to the loss
             losses.append(loss.item())  # Store the loss for this step
 
             # Convert loss to a reward signal for Hebbian updates
             reward = -loss.item()
-            state['last_n_rewards'].append(reward)
-            if len(state['last_n_rewards']) > config['len_reward_history']:
-                state['last_n_rewards'].pop(0)
-            last_n_reward_avg = sum(state['last_n_rewards']) / len(state['last_n_rewards'])
-            reward_update = reward - last_n_reward_avg
-
+            if config["delta_rewards"]:
+                state['last_n_rewards'].append(reward)
+                if len(state['last_n_rewards']) > config['len_reward_history']:
+                    state['last_n_rewards'].pop(0)
+                last_n_reward_avg = sum(state['last_n_rewards']) / len(state['last_n_rewards'])
+                reward_update = reward - last_n_reward_avg
+            else:
+                reward_update = reward
+            
             # Apply Hebbian updates to the network
             rnn.apply_imprints(reward_update, config["learning_rate"], config["imprint_rate"], config["stochasticity"])
 
@@ -106,8 +114,9 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
 
     # Calculate the average loss for the sequence
     loss_avg = sum(losses) / len(losses)
-    og_loss_avg = sum(og_losses) / len(og_losses)
-    reg_loss_avg = sum(reg_losses) / len(reg_losses)
+    # og_loss_avg = sum(og_losses) / len(og_losses)
+    # reg_loss_avg = sum(reg_losses) / len(reg_losses)
+    og_loss_avg, reg_loss_avg = 0,0 # i don wanna refactor rn
     return output, loss_avg, og_loss_avg, reg_loss_avg
 
 def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None):
@@ -131,7 +140,9 @@ def main():
     parser.add_argument('--plot_freq', type=int, default=20, help='Frequency of plotting training loss')
     parser.add_argument('--update_rule', type=str, default='damage', help='How to update weights.')
     parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=True, help='Whether to normalize the weights.')
+    parser.add_argument('--clip_weights', type=str2bool, nargs='?', const=True, default=True, help='Whether to clip the weights.')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
+    parser.add_argument('--delta_rewards', type=str2bool, nargs='?', const=True, default=True, help='Whether to calculate rewards by change in reward instead.')
     parser.add_argument('--dataset', type=str, default='roneneldan/tinystories', help='The dataset used for training.')
     
     # Add other parameters as needed
@@ -149,6 +160,7 @@ def main():
         "track": args.track,
         "dataset": args.dataset,
         "update_rule": args.update_rule,
+        "delta_rewards": args.delta_rewards,
     }
     print(args.track)
     if args.track:
@@ -162,7 +174,9 @@ def main():
             "imprint_rate": args.imprint_rate,
             "len_reward_history": args.len_reward_history,
             "update_rule": args.update_rule,
-            "normalize": args.normalize
+            "normalize": args.normalize,
+            "clip_weights": args.clip_weights,
+            "delta_rewards": args.delta_rewards,
         })
 
     # Load data
@@ -178,7 +192,7 @@ def main():
         rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"])
         optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
     else:
-        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, update_rule=args.update_rule)
+        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, clip_weights=args.clip_weights, update_rule=args.update_rule)
 
     rnn.train()
     state = {

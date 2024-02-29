@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import math
+import sys
 
 # Apply Clipping
 def clip_weights(model, max_norm):
@@ -10,10 +11,11 @@ def clip_weights(model, max_norm):
             param.data.clamp_(-max_norm, max_norm)
 
 class HebbianLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True, normalize=True, update_rule='damage', alpha=0.5):
+    def __init__(self, in_features, out_features, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
         self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=False)
         self.normalize = normalize
+        self.clip_weights = clip_weights
         self.update_rule = update_rule
 
         if update_rule == 'covariance':
@@ -40,17 +42,33 @@ class HebbianLinear(nn.Linear):
         # Reshape input and output for broadcasting
         input_expanded = input.unsqueeze(1)  # Shape: [batch_size, 1, in_features]
         output_expanded = output.unsqueeze(2)  # Shape: [batch_size, out_features, 1]
+        # if torch.isnan(input_expanded).any():
+        #     print("the nan is in the input_expanded")
+        #     sys.exit(1)
 
         if self.update_rule == 'damage':
             # Element-wise multiplication with broadcasting
             # Results in a [batch_size, out_features, in_features] tensor
             imprint_update = output_expanded * input_expanded
 
+            # for p in imprint_update:
+            #     if torch.isnan(p.data).any():
+            #         print("the nan is in the initial imprint_update in the learning rule")
+            #         sys.exit(1)
+            
             # Compute the difference and square it
             diff_squared = (output_expanded - input_expanded) ** 2
+            # for p in diff_squared:
+            #     if torch.isnan(p.data).any():
+            #         print("the nan is in the diff_squared in the learning rule")
+            #         sys.exit(1)
 
             # Update the imprint using the new rule: oa*ia - (oa-ia)^2
             imprint_update = imprint_update - diff_squared
+            # for p in imprint_update:
+            #     if torch.isnan(p.data).any():
+            #         print("the nan is in the imprint_update in the learning rule, at the end")
+            #         sys.exit(1)
         elif self.update_rule == 'oja':
             imprint_update = output_expanded*(input_expanded - output_expanded * self.weight.data)
         elif self.update_rule == 'competitive':
@@ -82,7 +100,7 @@ class HebbianLinear(nn.Linear):
             imprint_update = self.candidate_weights.data
 
             # Reset or decay candidate_weights
-            self.candidate_weights.data *= 0.5  # Example: decay by half
+            self.candidate_weights.data *= 0.9  # Example: decay by half is 0.5
 
             candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
             self.candidate_weights.data += candidate_update.sum(dim=0)
@@ -91,7 +109,10 @@ class HebbianLinear(nn.Linear):
         self.imprints.data = imprint_update.sum(dim=0)
 
     def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
-
+        # Check if reward is NaN
+        # if math.isnan(reward):
+        #     print("Warning: Reward is NaN")
+        #     sys.exit(1)
         imprint_update = self.imprints.data
         # ltd_threshold=0.6
         # # Calculate LTD adjustments
@@ -105,15 +126,39 @@ class HebbianLinear(nn.Linear):
         #                                 -ltd_adjustment, 
         #                                 ltd_adjustment)
 
+        # this actually clips the imprint updates, not the weights themselves
+        # if self.clip_weights:
+        #     max_weight_value = 0.1
+        #     for p in self.imprints:
+        #         # if torch.isnan(p.data).any():
+        #         #     print("the nan is in the imprint")
+        #         #     sys.exit(1)
+        #         p.data.clamp_(-max_weight_value, max_weight_value)
+
         update = reward * learning_rate * imprint_update + reward * imprint_rate * imprint_update
+        # for p in update:
+        #     if torch.isnan(p.data).any():
+        #         print(f"the nan is in the update, here's the reward: {reward} and here's the imprint_update:\n{imprint_update}")
+        #         sys.exit(1)
         # clip the update
         # update = torch.clamp(update, -0.1, 0.1)
         # print("update:", update)
         self.weight.data += update
+
+        # for p in self.weight:
+        #     if torch.isnan(p.data).any():
+        #         print("the nan is in the weights, post-update")
+        #         sys.exit(1)
+
         if self.normalize:
             # Normalize the weights to prevent them from exploding
             for p in self.parameters():
                 p.data = p.data / (p.data.norm(2) + 1e-6)
+        
+        if self.clip_weights:
+            max_weight_value = 0.1
+            for p in self.parameters():
+                p.data.clamp_(-max_weight_value, max_weight_value)
 
         # Apply stochastic noise to the weights
         for p in self.parameters():
@@ -121,7 +166,7 @@ class HebbianLinear(nn.Linear):
             p.data += noise
 
 class HebbyRNN(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero', normalize=True, update_rule='damage'):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero', normalize=True, clip_weights=False, update_rule='damage'):
         super(HebbyRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -129,36 +174,36 @@ class HebbyRNN(torch.nn.Module):
         self.init_type = init_type
 
         # Using HebbianLinear instead of Linear
-        self.linear_layers = torch.nn.ModuleList([HebbianLinear(input_size + hidden_size, hidden_size, normalize=normalize, update_rule=update_rule)])
+        self.linear_layers = torch.nn.ModuleList([HebbianLinear(input_size + hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)])
         for _ in range(1, num_layers):
-            self.linear_layers.append(HebbianLinear(hidden_size, hidden_size, normalize=normalize, update_rule=update_rule))
+            self.linear_layers.append(HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule))
 
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
 
         # Final layers for hidden and output, also using HebbianLinear
-        self.i2h = HebbianLinear(hidden_size, hidden_size, normalize=normalize, update_rule=update_rule)
-        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, update_rule=update_rule)
+        self.i2h = HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)
+        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)
         self.softmax = torch.nn.LogSoftmax(dim=1)
-        # Initialize weights
-        self.init_weights()
+    #     # Initialize weights
+    #     self.init_weights()
 
-    def init_weights(self):
-        for layer in self.linear_layers:
-            self._init_weight(layer)
+    # def init_weights(self):
+    #     for layer in self.linear_layers:
+    #         self._init_weight(layer)
 
-        self._init_weight(self.i2h)
-        self._init_weight(self.i2o)
+    #     self._init_weight(self.i2h)
+    #     self._init_weight(self.i2o)
 
-    def _init_weight(self, layer):
-        if self.init_type == 'zero':
-            nn.init.zeros_(layer.weight)
-            if layer.bias is not None:
-                nn.init.zeros_(layer.bias)
-        elif self.init_type == 'orthogonal':
-            nn.init.orthogonal_(layer.weight)
-            if layer.bias is not None:
-                nn.init.zeros_(layer.bias)
+    # def _init_weight(self, layer):
+    #     if self.init_type == 'zero':
+    #         nn.init.zeros_(layer.weight)
+    #         if layer.bias is not None:
+    #             nn.init.zeros_(layer.bias)
+    #     elif self.init_type == 'orthogonal':
+    #         nn.init.orthogonal_(layer.weight)
+    #         if layer.bias is not None:
+    #             nn.init.zeros_(layer.bias)
 
     def forward(self, input, hidden):
         combined = torch.cat((input, hidden), dim=1)
