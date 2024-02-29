@@ -146,7 +146,13 @@ class HebbianLinear(nn.Linear):
             global_error = reward.T
 
             # Project the global error using the fixed random matrix
+            # I think in backprop these two values actually come from the next layer's 
+            # error vector and weights. chain ruleee
             projected_error = global_error @ self.feedback_weights  # assuming matrix multiplication
+            # I am currently completely ignoring the effect of dropout and relu. 
+            # it oughta look like the derivative of the output of the two with respect to the inputs. 
+            # prolly either one or zero. It'll just zero out some values in the error signal bc they were
+            # zeroed out in the actual output.
 
             # Assuming 'inputs' holds the inputs to the layer
             inputs = imprint_update
