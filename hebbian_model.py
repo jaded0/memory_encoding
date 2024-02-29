@@ -108,6 +108,8 @@ class HebbianLinear(nn.Linear):
 
             candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
             self.candidate_weights.data += candidate_update.sum(dim=0)
+        elif self.update_rule == "dfa":
+            self.imprint_update = input_expanded
         else:
             return
 
@@ -141,7 +143,19 @@ class HebbianLinear(nn.Linear):
         #         #     sys.exit(1)
         #         p.data.clamp_(-max_weight_value, max_weight_value)
         if self.update_rule == 'dfa':
-            update = reward.T * learning_rate * self.feedback_weights
+            global_error = reward.T
+
+            # Project the global error using the fixed random matrix
+            projected_error = global_error @ self.feedback_weights  # assuming matrix multiplication
+
+            # Assuming 'inputs' holds the inputs to the layer
+            inputs = imprint_update
+            update = projected_error.T * learning_rate * inputs
+
+            # Update the weights
+            self.weight.data += update
+
+            # update = global_error.T * learning_rate * self.feedback_weights
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
         self.weight.data += update
