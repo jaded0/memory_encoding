@@ -143,7 +143,7 @@ class HebbianLinear(nn.Linear):
         if self.update_rule == 'dfa':
             update = reward.T * learning_rate * self.feedback_weights
         else:
-            update = reward * learning_rate * imprint_update + reward * imprint_rate * imprint_update
+            update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
         self.weight.data += update
 
         # for p in self.weight:
