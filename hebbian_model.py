@@ -11,24 +11,24 @@ def clip_weights(model, max_norm):
             param.data.clamp_(-max_norm, max_norm)
 
 class HebbianLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5):
+    def __init__(self, in_features, out_features, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5, requires_grad=False):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
-        self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=False)
+        self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
         self.normalize = normalize
         self.clip_weights = clip_weights
         self.update_rule = update_rule
 
         if update_rule == 'covariance':
             self.alpha = alpha  # Decay factor for the exponential moving average
-            self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=False)
-            self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=False)
+            self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
+            self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
         
         if update_rule == 'candidate':
-            self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=False)
+            self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
 
         if update_rule == 'dfa':
             # self.feedback_weights = torch.ones(out_features, in_features)  # Matrix of 1s
-            self.feedback_weights = torch.randn(out_features, in_features)
+            self.feedback_weights = torch.randn(73, in_features)
 
     def forward(self, input):
         # print(input)
@@ -109,7 +109,7 @@ class HebbianLinear(nn.Linear):
             candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
             self.candidate_weights.data += candidate_update.sum(dim=0)
         elif self.update_rule == "dfa":
-            self.imprint_update = input_expanded
+            imprint_update = input_expanded
         else:
             return
 
@@ -143,11 +143,13 @@ class HebbianLinear(nn.Linear):
         #         #     sys.exit(1)
         #         p.data.clamp_(-max_weight_value, max_weight_value)
         if self.update_rule == 'dfa':
-            global_error = reward.T
+            global_error = reward
+            # global_error.clamp_(-0.1,0.1)
 
             # Project the global error using the fixed random matrix
             # I think in backprop these two values actually come from the next layer's 
             # error vector and weights. chain ruleee
+            # print(self.feedback_weights.shape)
             projected_error = global_error @ self.feedback_weights  # assuming matrix multiplication
             # I am currently completely ignoring the effect of dropout and relu. 
             # it oughta look like the derivative of the output of the two with respect to the inputs. 
@@ -156,8 +158,9 @@ class HebbianLinear(nn.Linear):
 
             # Assuming 'inputs' holds the inputs to the layer
             inputs = imprint_update
-            update = projected_error.T * learning_rate * inputs
-
+            # print(projected_error.shape, inputs.shape)
+            update = projected_error * learning_rate * inputs
+            # print(update.shape)
             # Update the weights
             self.weight.data += update
 
@@ -177,7 +180,7 @@ class HebbianLinear(nn.Linear):
                 p.data = p.data / (p.data.norm(2) + 1e-6)
         
         if self.clip_weights:
-            max_weight_value = 0.1
+            max_weight_value = 10
             for p in self.parameters():
                 p.data.clamp_(-max_weight_value, max_weight_value)
 
@@ -204,7 +207,7 @@ class HebbyRNN(torch.nn.Module):
 
         # Final layers for hidden and output, also using HebbianLinear
         self.i2h = HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)
-        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)
+        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=True)
         self.softmax = torch.nn.LogSoftmax(dim=1)
     #     # Initialize weights
     #     self.init_weights()
@@ -240,7 +243,7 @@ class HebbyRNN(torch.nn.Module):
         output = self.i2o(combined)
         hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
         output = self.dropout(output)  # Apply dropout to the output before softmax
-        output = self.softmax(output)
+        # output = self.softmax(output)
         return output, hidden
 
     def initHidden(self):

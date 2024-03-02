@@ -15,9 +15,22 @@ idx_to_char = {idx: char for char, idx in char_to_idx.items()}
 n_characters = len(charset)
 
 def filter_text(examples, dataset_name):
-    """Filter out characters not in the charset for a batch of texts."""
+    """Filter out characters not in the charset and pad sequences to ensure a minimum length of 3 characters."""
     key = dataset_keys.get(dataset_name)
-    return {'text': [''.join([char for char in text if char in charset]) for text in examples[key]]}
+    filtered_and_padded_texts = []
+
+    for text in examples[key]:
+        # Filter out characters not in the charset
+        filtered_text = ''.join([char for char in text if char in charset])
+
+        # Pad the text with spaces if it's shorter than 3 characters
+        while len(filtered_text) < 3:
+            filtered_text += ' '
+
+        filtered_and_padded_texts.append(filtered_text)
+
+    return {'text': filtered_and_padded_texts}
+
 
 def text_to_indices(examples, dataset_name):
     key = dataset_keys.get(dataset_name)

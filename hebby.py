@@ -27,7 +27,8 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     loss.backward()
     # optimizer.step()
     for p in rnn.parameters():
-        p.data.add_(p.grad.data, alpha=-config['learning_rate'])
+        if p.grad is not None:
+            p.data.add_(p.grad.data, alpha=-config['learning_rate'])
 
     return output, loss.item()/onehot_line_tensor.size()[0], 0, 0
 
@@ -41,42 +42,42 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
 
         hot_input_char_tensor = onehot_line_tensor[i].unsqueeze(0)
 
-        with torch.no_grad():  # Disable gradient calculations
-            # Forward pass through the RNN
-            output, hidden = rnn(hot_input_char_tensor, hidden)
+        # with torch.no_grad():  # Disable gradient calculations
+        # Forward pass through the RNN
+        output, hidden = rnn(hot_input_char_tensor, hidden)
 
-            # Compute the loss for this step
-            final_char = onehot_line_tensor[i+1].unsqueeze(0).float()
-            loss = config['criterion'](output, final_char)
-            # if math.isnan(loss):
-            #     print("Warning: Loss is NaN")
-            #     sys.exit(1)
-            # Compute the L2 regularization term
-            # for param in rnn.parameters():
-            #     if l2_reg is None:
-            #         l2_reg = param.norm(2)  # L2 norm of the parameter
-            #     else:
-            #         l2_reg = l2_reg + param.norm(2)
-            # og_losses.append(loss.item())  # Store the original loss for this step
-            # reg_losses.append(config['l2_lambda']*l2_reg.item())
-            # loss = loss + config['l2_lambda'] * l2_reg  # Add the L2 regularization term to the loss
-            losses.append(loss.item())  # Store the loss for this step
+        # Compute the loss for this step
+        final_char = onehot_line_tensor[i+1].unsqueeze(0).float()
+        loss = config['criterion'](output, final_char)
+        # if math.isnan(loss):
+        #     print("Warning: Loss is NaN")
+        #     sys.exit(1)
+        # Compute the L2 regularization term
+        # for param in rnn.parameters():
+        #     if l2_reg is None:
+        #         l2_reg = param.norm(2)  # L2 norm of the parameter
+        #     else:
+        #         l2_reg = l2_reg + param.norm(2)
+        # og_losses.append(loss.item())  # Store the original loss for this step
+        # reg_losses.append(config['l2_lambda']*l2_reg.item())
+        # loss = loss + config['l2_lambda'] * l2_reg  # Add the L2 regularization term to the loss
+        losses.append(loss.item())  # Store the loss for this step
 
-            # Convert loss to a reward signal for Hebbian updates
-            if config["delta_rewards"]:
-                reward = -loss.item()
-                state['last_n_rewards'].append(reward)
-                if len(state['last_n_rewards']) > config['len_reward_history']:
-                    state['last_n_rewards'].pop(0)
-                last_n_reward_avg = sum(state['last_n_rewards']) / len(state['last_n_rewards'])
-                reward_update = reward - last_n_reward_avg
-            else:
-                # global_error = torch.autograd.grad(loss, output, retain_graph=True)[0]
-                global_error = 2.0 / onehot_line_tensor.size()[1] * (output - final_char)
-                reward_update = -global_error
-            
-            # Apply Hebbian updates to the network
-            rnn.apply_imprints(reward_update, config["learning_rate"], config["imprint_rate"], config["stochasticity"])
+        # Convert loss to a reward signal for Hebbian updates
+        if config["delta_rewards"]:
+            reward = -loss.item()
+            state['last_n_rewards'].append(reward)
+            if len(state['last_n_rewards']) > config['len_reward_history']:
+                state['last_n_rewards'].pop(0)
+            last_n_reward_avg = sum(state['last_n_rewards']) / len(state['last_n_rewards'])
+            reward_update = reward - last_n_reward_avg
+        else:
+            global_error = torch.autograd.grad(loss, output, retain_graph=True)[0]
+            # global_error = 2.0 / onehot_line_tensor.size()[1] * (output - final_char)
+            reward_update = -global_error
+        
+        # Apply Hebbian updates to the network
+        rnn.apply_imprints(reward_update, config["learning_rate"], config["imprint_rate"], config["stochasticity"])
 
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
             # Save the model and activations periodically
@@ -125,7 +126,8 @@ def main():
         "stochasticity": args.stochasticity,
         "len_reward_history": args.len_reward_history,
         "save_frequency": args.save_frequency,
-        "criterion": torch.nn.MSELoss(),
+        # "criterion": torch.nn.MSELoss(),
+        "criterion": torch.nn.CrossEntropyLoss(),
         "l2_lambda": 0.000,  # Example static hyperparameter
         "n_hidden": args.hidden_size,
         "n_layers": args.num_layers,
@@ -181,10 +183,11 @@ def main():
 
     for iter in range(1, args.n_iters + 1):
         sequence, line_tensor, onehot_line_tensor = randomTrainingExample(dataloader)
+        # print(sequence)
         output, loss, og_loss, reg_loss = train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer)
         # Loss tracking
         current_loss += loss
-        if iter % args.print_freq == 0:
+        if iter % args.plot_freq == 0:
             # Print training progress
             topv, topi = output.topk(1, dim=1)
             predicted_char = idx_to_char[topi[0, 0].item()]
@@ -192,12 +195,9 @@ def main():
             correct = '✓' if predicted_char == target_char else '✗ (%s)' % target_char
             sequence = sequence[-50:]
             if args.track:
-                wandb.log({"loss": loss, "correct": correct, "predicted_char": predicted_char, "target_char": target_char, "sequence": sequence})
+                wandb.log({"loss": loss, "avg_loss": current_loss / args.plot_freq, "correct": correct, "predicted_char": predicted_char, "target_char": target_char, "sequence": sequence})
             print('%d %d%% (%s) %.4f %s / %s %s' % (iter, iter / args.n_iters * 100, timeSince(start), loss, sequence, predicted_char, correct))
-        if iter % args.plot_freq == 0:
             all_losses.append(current_loss / args.plot_freq)
-            if args.track:
-                wandb.log({"avg_loss": current_loss / args.plot_freq})
             current_loss = 0
 
     if args.track:

@@ -13,7 +13,7 @@
 # candidate - Custom reward-based update: Introduces candidate weight changes that are temporarily applied and evaluated. Permanent updates to weights are made based on a reward signal, modulating the efficacy of the changes.
 # backprop - Standard backpropagation: Computes gradients using chain rule and updates weights based on gradient descent. Relies on global error propagated from the output layer.
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
-UPDATE_RULE='candidate'
+UPDATE_RULE='dfa'
 
 
 
@@ -25,7 +25,7 @@ CLIP_WEIGHTS=true
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=0.05
+LEARNING_RATE=0.00005
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -33,7 +33,7 @@ IMPRINT_RATE=0.0
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=0.0001
+STOCHASTICITY=0.00000001
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
@@ -42,25 +42,25 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=73
+HIDDEN_SIZE=128
 
 # Number of layers in RNN
 NUM_LAYERS=1
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=5000
+SAVE_FREQUENCY=1000
 
 # Number of training iterations, like 100000
-N_ITERS=50000
+N_ITERS=80000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=100
+PRINT_FREQ=500
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=100
+PLOT_FREQ=500
 
 TRACK=true
 
