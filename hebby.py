@@ -86,7 +86,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         state['training_instance'] += 1
 
     # Calculate the average loss for the sequence
-    loss_avg = sum(losses) / len(losses)
+    loss_avg = sum(losses) / onehot_line_tensor.size()[0]
     # og_loss_avg = sum(og_losses) / len(og_losses)
     # reg_loss_avg = sum(reg_losses) / len(reg_losses)
     og_loss_avg, reg_loss_avg = 0,0 # i don wanna refactor rn
@@ -113,7 +113,7 @@ def main():
     parser.add_argument('--plot_freq', type=int, default=20, help='Frequency of plotting training loss')
     parser.add_argument('--update_rule', type=str, default='damage', help='How to update weights.')
     parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=True, help='Whether to normalize the weights.')
-    parser.add_argument('--clip_weights', type=str2bool, nargs='?', const=True, default=True, help='Whether to clip the weights.')
+    parser.add_argument('--clip_weights', type=float, default=1, help='Whether to clip the weights.')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
     parser.add_argument('--delta_rewards', type=str2bool, nargs='?', const=True, default=True, help='Whether to calculate rewards by change in reward instead.')
     parser.add_argument('--dataset', type=str, default='roneneldan/tinystories', help='The dataset used for training.')

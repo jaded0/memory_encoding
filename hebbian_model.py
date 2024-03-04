@@ -17,6 +17,7 @@ class HebbianLinear(nn.Linear):
         self.normalize = normalize
         self.clip_weights = clip_weights
         self.update_rule = update_rule
+        self.is_last_layer = requires_grad
 
         if update_rule == 'covariance':
             self.alpha = alpha  # Decay factor for the exponential moving average
@@ -27,14 +28,40 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
 
         if update_rule == 'dfa':
-            # self.feedback_weights = torch.ones(out_features, in_features)  # Matrix of 1s
-            self.feedback_weights = torch.randn(73, in_features)
+            # Uniform distribution initialization
+            self.feedback_weights = torch.nn.init.uniform_(torch.empty(73, in_features), -1, 1)
+            
+            # Normal (Gaussian) distribution initialization
+            # self.feedback_weights = torch.nn.init.normal_(torch.empty(73, in_features), mean=0.0, std=1.0)
+
+            # Xavier (Glorot) uniform initialization
+            # self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(73, in_features))
+
+            # Xavier (Glorot) normal initialization
+            # self.feedback_weights = torch.nn.init.xavier_normal_(torch.empty(73, in_features))
+
+            # Kaiming (He) uniform initialization
+            # self.feedback_weights = torch.nn.init.kaiming_uniform_(torch.empty(73, in_features), mode='fan_in', nonlinearity='relu')
+
+            # Kaiming (He) normal initialization
+            # self.feedback_weights = torch.nn.init.kaiming_normal_(torch.empty(73, in_features), mode='fan_in', nonlinearity='relu')
+
+            # Orthogonal initialization
+            # self.feedback_weights = torch.nn.init.orthogonal_(torch.empty(73, in_features))
+
+            # Sparse initialization
+            # self.feedback_weights = torch.nn.init.sparse_(torch.empty(73, in_features), sparsity=0.1)
+
+            # To use Truncated Normal, you'd need a custom implementation
+            # self.feedback_weights = custom_truncated_normal_(torch.empty(73, in_features), mean=0.0, std=1.0)
 
     def forward(self, input):
         # print(input)
         output = super(HebbianLinear, self).forward(input)
         self.update_imprints(input, output)
         # print(output)
+        max_activation = 1
+        output.clamp_(-max_activation, max_activation)
         return output
 
     def update_imprints(self, input, output):
@@ -144,13 +171,17 @@ class HebbianLinear(nn.Linear):
         #         p.data.clamp_(-max_weight_value, max_weight_value)
         if self.update_rule == 'dfa':
             global_error = reward
+            # print(global_error)
             # global_error.clamp_(-0.1,0.1)
 
             # Project the global error using the fixed random matrix
             # I think in backprop these two values actually come from the next layer's 
             # error vector and weights. chain ruleee
             # print(self.feedback_weights.shape)
-            projected_error = global_error @ self.feedback_weights  # assuming matrix multiplication
+            if self.is_last_layer==True: 
+                projected_error = global_error @ self.weight.data
+            else:
+                projected_error = global_error @ self.feedback_weights  # assuming matrix multiplication
             # I am currently completely ignoring the effect of dropout and relu. 
             # it oughta look like the derivative of the output of the two with respect to the inputs. 
             # prolly either one or zero. It'll just zero out some values in the error signal bc they were
@@ -159,7 +190,7 @@ class HebbianLinear(nn.Linear):
             # Assuming 'inputs' holds the inputs to the layer
             inputs = imprint_update
             # print(projected_error.shape, inputs.shape)
-            update = projected_error * learning_rate * inputs
+            update = learning_rate * inputs * projected_error 
             # print(update.shape)
             # Update the weights
             self.weight.data += update
@@ -179,8 +210,8 @@ class HebbianLinear(nn.Linear):
             for p in self.parameters():
                 p.data = p.data / (p.data.norm(2) + 1e-6)
         
-        if self.clip_weights:
-            max_weight_value = 10
+        if self.clip_weights != 0:
+            max_weight_value = self.clip_weights
             for p in self.parameters():
                 p.data.clamp_(-max_weight_value, max_weight_value)
 
@@ -241,7 +272,7 @@ class HebbyRNN(torch.nn.Module):
         # Split into hidden and output
         hidden = self.i2h(combined)
         output = self.i2o(combined)
-        hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
+        hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
         output = self.dropout(output)  # Apply dropout to the output before softmax
         # output = self.softmax(output)
         return output, hidden
@@ -312,7 +343,7 @@ class SimpleRNN(nn.Module):
         output = self.i2o(combined)
         hidden = torch.tanh(hidden)
         output = self.dropout(output)
-        output = self.softmax(output)
+        # output = self.softmax(output)
         return output, hidden
 
     def initHidden(self):

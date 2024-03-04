@@ -21,11 +21,11 @@ UPDATE_RULE='dfa'
 # Doing so seems to prevent the runaway exploding weights effect.
 NORMALIZE=false
 
-CLIP_WEIGHTS=true
+CLIP_WEIGHTS=0.1
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=0.00005
+LEARNING_RATE=0.05
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -45,14 +45,14 @@ DELTA_REWARDS=false
 HIDDEN_SIZE=128
 
 # Number of layers in RNN
-NUM_LAYERS=1
+NUM_LAYERS=2
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=1000
+SAVE_FREQUENCY=10000
 
 # Number of training iterations, like 100000
-N_ITERS=80000
+N_ITERS=10000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
