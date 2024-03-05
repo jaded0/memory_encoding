@@ -54,7 +54,7 @@ NUM_LAYERS=0
 SAVE_FREQUENCY=10000
 
 # Number of training iterations, like 100000
-N_ITERS=30000
+N_ITERS=300000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.

@@ -96,9 +96,7 @@ class HebbianLinear(nn.Linear):
             #     if torch.isnan(p.data).any():
             #         print("the nan is in the diff_squared in the learning rule")
             #         sys.exit(1)
-            self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
-            self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
-
+            
             # Update the imprint using the new rule: oa*ia - (oa-ia)^2
             imprint_update = imprint_update - diff_squared
             # for p in imprint_update:

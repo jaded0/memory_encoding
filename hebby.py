@@ -173,9 +173,9 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         # rnn.direct_feedback_alignment(hot_input_char_tensor.numpy(), final_char, output, global_error.numpy(), config['learning_rate'], reroll=False)
         # rnn.backpropagation(hot_input_char_tensor.numpy(), final_char, output, config['learning_rate'])
 
-        # if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
-        #     # Save the model and activations periodically
-        #     save_model_data(rnn, state["activations"], state["training_instance"], config['track'])
+        if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
+            # Save the model and activations periodically
+            save_model_data(rnn, state["activations"], state["training_instance"], config['track'])
 
         state['training_instance'] += 1
 
@@ -269,7 +269,7 @@ def main():
         "training_instance": 0,
         "last_n_rewards": [0],
         "last_n_reward_avg": 0,
-        # "activations": register_hooks(rnn)
+        "activations": register_hooks(rnn)
     }
 
     # Training Loop
