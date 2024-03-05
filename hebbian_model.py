@@ -4,20 +4,15 @@ import torch.nn.functional as F
 import math
 import sys
 
-# Apply Clipping
-def clip_weights(model, max_norm):
-    with torch.no_grad():
-        for param in model.parameters():
-            param.data.clamp_(-max_norm, max_norm)
 
 class HebbianLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5, requires_grad=False):
+    def __init__(self, in_features, out_features, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5, requires_grad=False, is_last_layer=False):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
         self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
         self.normalize = normalize
         self.clip_weights = clip_weights
         self.update_rule = update_rule
-        self.is_last_layer = requires_grad
+        self.is_last_layer = is_last_layer
 
         if update_rule == 'covariance':
             self.alpha = alpha  # Decay factor for the exponential moving average
@@ -28,17 +23,29 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
 
         if update_rule == 'dfa':
+            self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
+            self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
+
             # Uniform distribution initialization
-            self.feedback_weights = torch.nn.init.uniform_(torch.empty(73, in_features), -1, 1)
+            # self.feedback_weights = torch.nn.init.uniform_(torch.empty(73, in_features), -1, 1)
             
             # Normal (Gaussian) distribution initialization
             # self.feedback_weights = torch.nn.init.normal_(torch.empty(73, in_features), mean=0.0, std=1.0)
 
             # Xavier (Glorot) uniform initialization
+            # Calculate the adjusted gain for [-1, 1] range
+            gain = 1 / math.sqrt(6 / (in_features + out_features))
+
+            # Initialize weights with the adjusted gain
+            self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(73, out_features), gain=gain)
+            self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
+
             # self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(73, in_features))
+            # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features))
 
             # Xavier (Glorot) normal initialization
             # self.feedback_weights = torch.nn.init.xavier_normal_(torch.empty(73, in_features))
+            # self.weight.data = torch.nn.init.xavier_normal_(torch.empty(out_features, in_features))
 
             # Kaiming (He) uniform initialization
             # self.feedback_weights = torch.nn.init.kaiming_uniform_(torch.empty(73, in_features), mode='fan_in', nonlinearity='relu')
@@ -60,8 +67,8 @@ class HebbianLinear(nn.Linear):
         output = super(HebbianLinear, self).forward(input)
         self.update_imprints(input, output)
         # print(output)
-        max_activation = 1
-        output.clamp_(-max_activation, max_activation)
+        # max_activation = 1
+        # output.clamp_(-max_activation, max_activation)
         return output
 
     def update_imprints(self, input, output):
@@ -69,13 +76,9 @@ class HebbianLinear(nn.Linear):
         # print("output shape:", output.shape)
     
         # Hebbian update rule: imprint = input * output
-        # Adjusting to compute the required [5, 10] imprint matrix for each batch
         # Reshape input and output for broadcasting
         input_expanded = input.unsqueeze(1)  # Shape: [batch_size, 1, in_features]
         output_expanded = output.unsqueeze(2)  # Shape: [batch_size, out_features, 1]
-        # if torch.isnan(input_expanded).any():
-        #     print("the nan is in the input_expanded")
-        #     sys.exit(1)
 
         if self.update_rule == 'damage':
             # Element-wise multiplication with broadcasting
@@ -93,6 +96,8 @@ class HebbianLinear(nn.Linear):
             #     if torch.isnan(p.data).any():
             #         print("the nan is in the diff_squared in the learning rule")
             #         sys.exit(1)
+            self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
+            self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
 
             # Update the imprint using the new rule: oa*ia - (oa-ia)^2
             imprint_update = imprint_update - diff_squared
@@ -137,6 +142,8 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights.data += candidate_update.sum(dim=0)
         elif self.update_rule == "dfa":
             imprint_update = input_expanded
+            self.in_traces.data = input
+            self.out_traces.data = output
         else:
             return
 
@@ -144,32 +151,10 @@ class HebbianLinear(nn.Linear):
         self.imprints.data = imprint_update.sum(dim=0)
 
     def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
-        # Check if reward is NaN
-        # if math.isnan(reward):
-        #     print("Warning: Reward is NaN")
-        #     sys.exit(1)
         imprint_update = self.imprints.data
-        # ltd_threshold=0.6
-        # # Calculate LTD adjustments
-        # # For imprints less than the threshold, subtract their absolute value from the threshold
-        # ltd_adjustment = torch.where(imprint_update < ltd_threshold, 
-        #                             ltd_threshold - imprint_update.abs(), 
-        #                             imprint_update)
-
-        # # Reapply the original sign of the imprint update
-        # update = torch.where(imprint_update < 0, 
-        #                                 -ltd_adjustment, 
-        #                                 ltd_adjustment)
-
-        # this actually clips the imprint updates, not the weights themselves
-        # if self.clip_weights:
-        #     max_weight_value = 0.1
-        #     for p in self.imprints:
-        #         # if torch.isnan(p.data).any():
-        #         #     print("the nan is in the imprint")
-        #         #     sys.exit(1)
-        #         p.data.clamp_(-max_weight_value, max_weight_value)
+        
         if self.update_rule == 'dfa':
+            # print("isdfa")
             global_error = reward
             # print(global_error)
             # global_error.clamp_(-0.1,0.1)
@@ -179,31 +164,42 @@ class HebbianLinear(nn.Linear):
             # error vector and weights. chain ruleee
             # print(self.feedback_weights.shape)
             if self.is_last_layer==True: 
-                projected_error = global_error @ self.weight.data
+                projected_error = global_error
             else:
                 projected_error = global_error @ self.feedback_weights  # assuming matrix multiplication
-            # I am currently completely ignoring the effect of dropout and relu. 
-            # it oughta look like the derivative of the output of the two with respect to the inputs. 
-            # prolly either one or zero. It'll just zero out some values in the error signal bc they were
-            # zeroed out in the actual output.
+                # I am currently completely ignoring the effect of dropout and relu. 
+                # it oughta look like the derivative of the output of the two with respect to the inputs. 
+                # prolly either one or zero. It'll just zero out some values in the error signal bc they were
+                # zeroed out in the actual output.
+
+                # Apply ReLU derivative
+                relu_derivative = (self.out_traces.data.squeeze() > 0).float()  # 1 for activated neurons, 0 otherwise
+                projected_error *= relu_derivative
+
+            # If dropout was applied during forward pass, apply the same mask here
+            # if self.dropout_mask is not None:
+            #     projected_error *= self.dropout_mask
 
             # Assuming 'inputs' holds the inputs to the layer
-            inputs = imprint_update
-            # print(projected_error.shape, inputs.shape)
-            update = learning_rate * inputs * projected_error 
-            # print(update.shape)
-            # Update the weights
-            self.weight.data += update
+            outputs = self.in_traces.data
+            # print(projected_error.shape, outputs.shape)
+            # print(f"A1 shape: {outputs.T.shape}, error shape: {projected_error.shape}")
+            update = learning_rate * outputs.T * projected_error
+            update = update.T
+            # print(f"update shape: {update.shape}, weight shape: {self.weight.data.shape}")
 
             # update = global_error.T * learning_rate * self.feedback_weights
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
+
         self.weight.data += update
 
-        # for p in self.weight:
-        #     if torch.isnan(p.data).any():
-        #         print("the nan is in the weights, post-update")
-        #         sys.exit(1)
+        # Update bias if applicable
+        if hasattr(self, 'bias') and self.bias is not None:
+            # print("has")
+            # Bias is updated based on the mean error across the batch
+            bias_update = learning_rate * projected_error.mean(dim=-1)
+            self.bias.data += bias_update
 
         if self.normalize:
             # Normalize the weights to prevent them from exploding
@@ -234,12 +230,12 @@ class HebbyRNN(torch.nn.Module):
             self.linear_layers.append(HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule))
 
         # Dropout layers
-        self.dropout = nn.Dropout(dropout_rate)
+        # self.dropout = nn.Dropout(dropout_rate)
 
         # Final layers for hidden and output, also using HebbianLinear
         self.i2h = HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)
-        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=True)
-        self.softmax = torch.nn.LogSoftmax(dim=1)
+        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=True, is_last_layer=True)
+        # self.softmax = torch.nn.LogSoftmax(dim=1)
     #     # Initialize weights
     #     self.init_weights()
 
@@ -262,18 +258,18 @@ class HebbyRNN(torch.nn.Module):
 
     def forward(self, input, hidden):
         combined = torch.cat((input, hidden), dim=1)
-
         # Pass through the Hebbian linear layers with ReLU and Dropout
         for layer in self.linear_layers:
             combined = layer(combined)
             combined = F.relu(combined)
-            combined = self.dropout(combined)
+            # combined = self.dropout(combined)
 
         # Split into hidden and output
         hidden = self.i2h(combined)
+        hidden = torch.zeros_like(hidden)
         output = self.i2o(combined)
         hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
-        output = self.dropout(output)  # Apply dropout to the output before softmax
+        # output = self.dropout(output)  # Apply dropout to the output before softmax
         # output = self.softmax(output)
         return output, hidden
 

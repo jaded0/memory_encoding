@@ -1,5 +1,5 @@
 import torch
-from hebbian_model import HebbianLinear, HebbyRNN, SimpleRNN, clip_weights
+from hebbian_model import HebbianLinear, HebbyRNN, SimpleRNN
 from vis import register_hooks, save_model_data, visualize_model_data, visualize_all_layers_and_save, create_animation_from_visualizations
 import wandb
 import matplotlib.pyplot as plt
@@ -10,6 +10,85 @@ import math
 import argparse
 import time
 import sys
+import numpy as np
+
+def relu(x):
+    return np.maximum(0, x)
+
+def relu_derivative(x):
+    return (x > 0).astype(x.dtype)
+
+# Sigmoid activation function and its derivative
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def sigmoid_derivative(x):
+    return x * (1 - x)
+
+# Mean Squared Error loss function and its derivative
+def mse_loss(y_true, y_pred):
+    return np.mean((y_true - y_pred).numpy() ** 2)
+
+def mse_loss_derivative(y_true, y_pred):
+    # return 2 * (y_pred - y_true.numpy()) / y_true.numpy().size
+    global_error = 2.0 / y_true.numpy().size * (y_pred - y_true.numpy())
+    return global_error
+
+# Neural Network class
+class NeuralNetwork:
+    def __init__(self, input_size, hidden_size, output_size):
+        # Initialize weights and biases
+        self.W1 = np.random.randn(input_size, hidden_size)
+        self.b1 = np.zeros(hidden_size)
+        self.W2 = np.random.randn(hidden_size, output_size)
+        self.b2 = np.zeros(output_size)
+        self.random_feedback = np.random.randn(self.W2.shape[1], self.W1.shape[1])
+
+    def forward(self, X):
+        X.numpy()
+        # Forward pass
+        self.Z1 = np.dot(X, self.W1) + self.b1
+        self.A1 = relu(self.Z1)
+        self.Z2 = np.dot(self.A1, self.W2) + self.b2
+        return torch.from_numpy(self.Z2).float()
+
+    def backpropagation(self, X, error, learning_rate):
+        # Backpropagation
+        # error = mse_loss_derivative(y, y_pred)
+        dW2 = np.dot(self.A1.T, error)
+        db2 = np.sum(error, axis=0)
+
+        error_hidden = np.dot(error, self.W2.T) * relu_derivative(self.A1)
+        dW1 = np.dot(X.T, error_hidden)
+        db1 = np.sum(error_hidden, axis=0)
+
+        # Update weights and biases
+        self.W1 -= learning_rate * dW1
+        self.b1 -= learning_rate * db1
+        self.W2 -= learning_rate * dW2
+        self.b2 -= learning_rate * db2
+
+    def direct_feedback_alignment(self, X, y, y_pred, error, learning_rate, reroll=True):
+        # Direct Feedback Alignment
+        # error = mse_loss_derivative(y, y_pred)
+        if reroll==True:
+          self.random_feedback = np.random.randn(self.W2.shape[1], self.W1.shape[1])
+        error_hidden = np.dot(error, self.random_feedback) * relu_derivative(self.A1)
+
+        # Calculate weight updates
+        dW1 = np.dot(X.T, error_hidden)
+        db1 = np.sum(error_hidden, axis=0)
+        print(f"A1 shape: {self.A1.T.shape}, error shape: {error.shape}")
+        dW2 = np.dot(self.A1.T, error)
+        print(f"dW2 shape: {dW2.shape}, W2 shape: {self.W2.shape}")
+        db2 = np.sum(error, axis=0)
+
+        # Update weights and biases
+        self.W1 -= learning_rate * dW1
+        self.b1 -= learning_rate * db1
+        self.W2 -= learning_rate * dW2
+        self.b2 -= learning_rate * db2
+
 
 def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     criterion = config['criterion']
@@ -18,17 +97,18 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     rnn.zero_grad()
     loss = 0
 
-    for i in range(onehot_line_tensor.size()[0] - 1):
+    for i in range(onehot_line_tensor.size()[0] - 1): 
         hot_input_char_tensor = onehot_line_tensor[i].unsqueeze(0)
-        output, hidden = rnn(hot_input_char_tensor, hidden)
+        output, nhidden = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[i+1].unsqueeze(0).float()
-        loss += criterion(output, final_char)
+        # loss += criterion(output, final_char)
+        loss = criterion(output, final_char)
 
-    loss.backward()
-    # optimizer.step()
-    for p in rnn.parameters():
-        if p.grad is not None:
-            p.data.add_(p.grad.data, alpha=-config['learning_rate'])
+        loss.backward()
+        # optimizer.step()
+        for p in rnn.parameters():
+            if p.grad is not None:
+                p.data.add_(p.grad.data, alpha=-config['learning_rate'])
 
     return output, loss.item()/onehot_line_tensor.size()[0], 0, 0
 
@@ -45,10 +125,17 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         # with torch.no_grad():  # Disable gradient calculations
         # Forward pass through the RNN
         output, hidden = rnn(hot_input_char_tensor, hidden)
+        # output = rnn.forward(hot_input_char_tensor)
 
         # Compute the loss for this step
-        final_char = onehot_line_tensor[i+1].unsqueeze(0).float()
-        loss = config['criterion'](output, final_char)
+        final_char = onehot_line_tensor[i+1].squeeze(0)
+        # print(final_char)
+        noutput = output.squeeze(0)
+        # if isinstance(output, np.ndarray):
+        #     noutput = torch.from_numpy(noutput).float() 
+        loss = config['criterion'](final_char, noutput)
+        # loss = mse_loss(final_char, output)
+        # print(f"old loss: {old_loss}, new loss: {loss}")
         # if math.isnan(loss):
         #     print("Warning: Loss is NaN")
         #     sys.exit(1)
@@ -72,16 +159,23 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
             last_n_reward_avg = sum(state['last_n_rewards']) / len(state['last_n_rewards'])
             reward_update = reward - last_n_reward_avg
         else:
-            global_error = torch.autograd.grad(loss, output, retain_graph=True)[0]
+            # global_error = torch.autograd.grad(loss, output, retain_graph=True)
+            # global_error = global_error[0][0]
+            # print(global_error)
+            # global_error = 2.0 / final_char.numpy().size * (output.numpy() - final_char.numpy())
+            global_error = 2.0 / final_char.size()[-1] * (output - final_char)
             # global_error = 2.0 / onehot_line_tensor.size()[1] * (output - final_char)
             reward_update = -global_error
         
         # Apply Hebbian updates to the network
         rnn.apply_imprints(reward_update, config["learning_rate"], config["imprint_rate"], config["stochasticity"])
+        # rnn.direct_feedback_alignment(hot_input_char_tensor.numpy(), final_char, output, global_error.numpy(), config['learning_rate'])
+        # rnn.direct_feedback_alignment(hot_input_char_tensor.numpy(), final_char, output, global_error.numpy(), config['learning_rate'], reroll=False)
+        # rnn.backpropagation(hot_input_char_tensor.numpy(), final_char, output, config['learning_rate'])
 
-        if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
-            # Save the model and activations periodically
-            save_model_data(rnn, state["activations"], state["training_instance"], config['track'])
+        # if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
+        #     # Save the model and activations periodically
+        #     save_model_data(rnn, state["activations"], state["training_instance"], config['track'])
 
         state['training_instance'] += 1
 
@@ -126,8 +220,8 @@ def main():
         "stochasticity": args.stochasticity,
         "len_reward_history": args.len_reward_history,
         "save_frequency": args.save_frequency,
-        # "criterion": torch.nn.MSELoss(),
-        "criterion": torch.nn.CrossEntropyLoss(),
+        "criterion": torch.nn.MSELoss(),
+        # "criterion": torch.nn.CrossEntropyLoss(),
         "l2_lambda": 0.000,  # Example static hyperparameter
         "n_hidden": args.hidden_size,
         "n_layers": args.num_layers,
@@ -167,13 +261,15 @@ def main():
         optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
     else:
         rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, clip_weights=args.clip_weights, update_rule=args.update_rule)
+        # rnn = NeuralNetwork(input_size=n_characters, hidden_size=128, output_size=n_characters)
 
-    rnn.train()
+
+    # rnn.train()
     state = {
         "training_instance": 0,
         "last_n_rewards": [0],
         "last_n_reward_avg": 0,
-        "activations": register_hooks(rnn)
+        # "activations": register_hooks(rnn)
     }
 
     # Training Loop

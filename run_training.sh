@@ -2,6 +2,7 @@
 
 # run_training.sh
 # Shell script to run the training script with custom hyperparameters.
+rm model_data/*
 
 # How to update weights.
 # Options are:
@@ -19,13 +20,14 @@ UPDATE_RULE='dfa'
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
+# true or false
 NORMALIZE=false
 
-CLIP_WEIGHTS=0.1
+CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=0.05
+LEARNING_RATE=0.01
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -33,7 +35,7 @@ IMPRINT_RATE=0.0
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=0.00000001
+STOCHASTICITY=0.0
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
@@ -45,23 +47,24 @@ DELTA_REWARDS=false
 HIDDEN_SIZE=128
 
 # Number of layers in RNN
-NUM_LAYERS=2
+NUM_LAYERS=0
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
 SAVE_FREQUENCY=10000
 
 # Number of training iterations, like 100000
-N_ITERS=10000
+N_ITERS=30000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=500
+PRINT_FREQ=300
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=500
+PLOT_FREQ=300
 
+# true or false
 TRACK=true
 
 DATASET=jbrazzy/baby_names
