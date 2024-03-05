@@ -264,7 +264,7 @@ class HebbyRNN(torch.nn.Module):
 
         # Split into hidden and output
         hidden = self.i2h(combined)
-        hidden = torch.zeros_like(hidden)
+        # hidden = torch.zeros_like(hidden)
         output = self.i2o(combined)
         hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
         # output = self.dropout(output)  # Apply dropout to the output before softmax
