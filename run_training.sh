@@ -21,7 +21,7 @@ UPDATE_RULE='dfa'
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
 # true or false
-NORMALIZE=false
+NORMALIZE=true
 
 CLIP_WEIGHTS=0
 
@@ -31,11 +31,11 @@ LEARNING_RATE=0.001
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=0.0
+IMPRINT_RATE=1e-6
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=0.00000001
+STOCHASTICITY=0.0000000
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
@@ -54,7 +54,7 @@ NUM_LAYERS=3
 SAVE_FREQUENCY=10000
 
 # Number of training iterations, like 100000
-N_ITERS=30000
+N_ITERS=300000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
@@ -65,7 +65,7 @@ PRINT_FREQ=300
 PLOT_FREQ=300
 
 # true or false
-TRACK=false
+TRACK=true
 
 DATASET=jbrazzy/baby_names
 

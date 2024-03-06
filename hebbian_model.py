@@ -159,7 +159,7 @@ class HebbianLinear(nn.Linear):
         self.imprints.data = imprint_update
 
     def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
-        imprint_update = self.imprints.data * 1e-6
+        imprint_update = self.imprints.data
         # print(f"imprint_update shape: {imprint_update.shape}")
         
         if self.update_rule == 'dfa':
@@ -194,7 +194,7 @@ class HebbianLinear(nn.Linear):
             # print(projected_error.shape, inputs.shape)
             # print(f"A1 shape: {inputs.T.shape}, error shape: {projected_error.shape}")
             update = learning_rate * inputs.T * projected_error
-            update = update.T + imprint_update
+            update = update.T + imprint_update * imprint_rate
             # print(f"update shape: {update.shape}, weight shape: {self.weight.data.shape}")
 
             # update = global_error.T * learning_rate * self.feedback_weights
