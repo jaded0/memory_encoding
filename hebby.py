@@ -96,21 +96,25 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     hidden = rnn.initHidden()
     rnn.zero_grad()
     loss = 0
+    # losses = []
 
     for i in range(onehot_line_tensor.size()[0] - 1): 
         hot_input_char_tensor = onehot_line_tensor[i].unsqueeze(0)
         output, nhidden = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[i+1].unsqueeze(0).float()
-        # loss += criterion(output, final_char)
-        loss = criterion(output, final_char)
+        loss += criterion(output, final_char)
+        # loss = criterion(output, final_char)
+        # losses.append(loss.item())
 
-        loss.backward()
-        # optimizer.step()
-        for p in rnn.parameters():
-            if p.grad is not None:
-                p.data.add_(p.grad.data, alpha=-config['learning_rate'])
+    loss.backward()
+    # optimizer.step()
+    for p in rnn.parameters():
+        if p.grad is not None:
+            p.data.add_(p.grad.data, alpha=-config['learning_rate'])
 
-    return output, loss.item()/onehot_line_tensor.size()[0], 0, 0
+    report_loss = loss.item()/onehot_line_tensor.size()[0]
+    # report_loss = sum(losses) / onehot_line_tensor.size()[0]
+    return output, report_loss, 0, 0
 
 def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
     hidden = rnn.initHidden()
@@ -136,9 +140,9 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         loss = config['criterion'](final_char, noutput)
         # loss = mse_loss(final_char, output)
         # print(f"old loss: {old_loss}, new loss: {loss}")
-        # if math.isnan(loss):
-        #     print("Warning: Loss is NaN")
-        #     sys.exit(1)
+        if math.isnan(loss):
+            print("Warning: Loss is NaN")
+            sys.exit(1)
         # Compute the L2 regularization term
         # for param in rnn.parameters():
         #     if l2_reg is None:

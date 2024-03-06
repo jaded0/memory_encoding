@@ -159,7 +159,7 @@ class HebbianLinear(nn.Linear):
         self.imprints.data = imprint_update
 
     def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
-        imprint_update = self.imprints.data * 0.0000001
+        imprint_update = self.imprints.data * 1e-6
         # print(f"imprint_update shape: {imprint_update.shape}")
         
         if self.update_rule == 'dfa':

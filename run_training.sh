@@ -27,7 +27,7 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=0.01
+LEARNING_RATE=0.001
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -47,14 +47,14 @@ DELTA_REWARDS=false
 HIDDEN_SIZE=128
 
 # Number of layers in RNN
-NUM_LAYERS=2
+NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
 SAVE_FREQUENCY=10000
 
 # Number of training iterations, like 100000
-N_ITERS=300000
+N_ITERS=30000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
@@ -65,7 +65,7 @@ PRINT_FREQ=300
 PLOT_FREQ=300
 
 # true or false
-TRACK=true
+TRACK=false
 
 DATASET=jbrazzy/baby_names
 
