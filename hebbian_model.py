@@ -145,8 +145,8 @@ class HebbianLinear(nn.Linear):
             # Reset or decay candidate_weights
             self.candidate_weights.data *= 0.9  # Example: decay by half is 0.5
 
-            candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
-            self.candidate_weights.data += candidate_update.sum(dim=0)
+            # candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
+            # self.candidate_weights.data += candidate_update.sum(dim=0)
             # print(f"candidate update shape: {self.candidate_weights.data.shape}")
 
             # imprint_update = input_expanded
@@ -188,14 +188,17 @@ class HebbianLinear(nn.Linear):
             # If dropout was applied during forward pass, apply the same mask here
             # if self.dropout_mask is not None:
             #     projected_error *= self.dropout_mask
-
+            # print((projected_error * self.weight.data.T).shape)
             # Assuming 'inputs' holds the inputs to the layer
             inputs = self.in_traces.data
-            # print(projected_error.shape, inputs.shape)
-            # print(f"A1 shape: {inputs.T.shape}, error shape: {projected_error.shape}")
-            update = learning_rate * inputs.T * projected_error
-            update = update.T + imprint_update * imprint_rate
-            # print(f"update shape: {update.shape}, weight shape: {self.weight.data.shape}")
+            candidate_update = projected_error*(inputs.T - projected_error * self.weight.data.T) # oja's rule, reused
+            # print(candidate_update.shape)
+            candidate_update = candidate_update.T
+            self.candidate_weights.data += candidate_update
+
+            # update = learning_rate * inputs.T * projected_error
+            # update = update.T + imprint_update * imprint_rate
+            update = learning_rate * imprint_update
 
             # update = global_error.T * learning_rate * self.feedback_weights
         else:

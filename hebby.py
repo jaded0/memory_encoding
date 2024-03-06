@@ -282,25 +282,27 @@ def main():
     current_loss = 0
     all_losses = []
     start = time.time()
-
-    for iter in range(1, args.n_iters + 1):
-        sequence, line_tensor, onehot_line_tensor = randomTrainingExample(dataloader)
-        # print(sequence)
-        output, loss, og_loss, reg_loss = train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer)
-        # Loss tracking
-        current_loss += loss
-        if iter % args.plot_freq == 0:
-            # Print training progress
-            topv, topi = output.topk(1, dim=1)
-            predicted_char = idx_to_char[topi[0, 0].item()]
-            target_char = sequence[-1]
-            correct = '✓' if predicted_char == target_char else '✗ (%s)' % target_char
-            sequence = sequence[-50:]
-            if args.track:
-                wandb.log({"loss": loss, "avg_loss": current_loss / args.plot_freq, "correct": correct, "predicted_char": predicted_char, "target_char": target_char, "sequence": sequence})
-            print('%d %d%% (%s) %.4f %s / %s %s' % (iter, iter / args.n_iters * 100, timeSince(start), loss, sequence, predicted_char, correct))
-            all_losses.append(current_loss / args.plot_freq)
-            current_loss = 0
+    try:
+        for iter in range(1, args.n_iters + 1):
+            sequence, line_tensor, onehot_line_tensor = randomTrainingExample(dataloader)
+            # print(sequence)
+            output, loss, og_loss, reg_loss = train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer)
+            # Loss tracking
+            current_loss += loss
+            if iter % args.plot_freq == 0:
+                # Print training progress
+                topv, topi = output.topk(1, dim=1)
+                predicted_char = idx_to_char[topi[0, 0].item()]
+                target_char = sequence[-1]
+                correct = '✓' if predicted_char == target_char else '✗ (%s)' % target_char
+                sequence = sequence[-50:]
+                if args.track:
+                    wandb.log({"loss": loss, "avg_loss": current_loss / args.plot_freq, "correct": correct, "predicted_char": predicted_char, "target_char": target_char, "sequence": sequence})
+                print('%d %d%% (%s) %.4f %s / %s %s' % (iter, iter / args.n_iters * 100, timeSince(start), loss, sequence, predicted_char, correct))
+                all_losses.append(current_loss / args.plot_freq)
+                current_loss = 0
+    except KeyboardInterrupt:
+        print("\nok, finishing up..")
 
     if args.track:
         wandb.finish()
@@ -317,6 +319,10 @@ def main():
     # visualize_model_data('i2h', 0)
     # visualize_all_layers_and_save(rnn, 0, "jusone.png")
     create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
+
+    # hidden = rnn.initHidden()
+    # output, hidden = rnn(hot_input_char_tensor, hidden)
+
 
 if __name__ == '__main__':
     main()
