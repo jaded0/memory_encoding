@@ -25,7 +25,7 @@ class HebbianLinear(nn.Linear):
         if update_rule == 'dfa':
             self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
             self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
-
+            self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Uniform distribution initialization
             # self.feedback_weights = torch.nn.init.uniform_(torch.empty(73, in_features), -1, 1)
             
@@ -139,17 +139,28 @@ class HebbianLinear(nn.Linear):
             candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
             self.candidate_weights.data += candidate_update.sum(dim=0)
         elif self.update_rule == "dfa":
-            imprint_update = input_expanded
+            # only evaluate past weight updates with the current reward signal
+            imprint_update = self.candidate_weights.data
+
+            # Reset or decay candidate_weights
+            self.candidate_weights.data *= 0.9  # Example: decay by half is 0.5
+
+            candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
+            self.candidate_weights.data += candidate_update.sum(dim=0)
+            # print(f"candidate update shape: {self.candidate_weights.data.shape}")
+
+            # imprint_update = input_expanded
             self.in_traces.data = input
             self.out_traces.data = output
         else:
             return
 
         # Sum over the batch dimension to get the final imprint update
-        self.imprints.data = imprint_update.sum(dim=0)
+        self.imprints.data = imprint_update
 
     def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
-        imprint_update = self.imprints.data
+        imprint_update = self.imprints.data * 0.0000001
+        # print(f"imprint_update shape: {imprint_update.shape}")
         
         if self.update_rule == 'dfa':
             # print("isdfa")
@@ -179,11 +190,11 @@ class HebbianLinear(nn.Linear):
             #     projected_error *= self.dropout_mask
 
             # Assuming 'inputs' holds the inputs to the layer
-            outputs = self.in_traces.data
-            # print(projected_error.shape, outputs.shape)
-            # print(f"A1 shape: {outputs.T.shape}, error shape: {projected_error.shape}")
-            update = learning_rate * outputs.T * projected_error
-            update = update.T
+            inputs = self.in_traces.data
+            # print(projected_error.shape, inputs.shape)
+            # print(f"A1 shape: {inputs.T.shape}, error shape: {projected_error.shape}")
+            update = learning_rate * inputs.T * projected_error
+            update = update.T + imprint_update
             # print(f"update shape: {update.shape}, weight shape: {self.weight.data.shape}")
 
             # update = global_error.T * learning_rate * self.feedback_weights

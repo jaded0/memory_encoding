@@ -35,7 +35,7 @@ IMPRINT_RATE=0.0
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=0.0
+STOCHASTICITY=0.00000001
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
@@ -47,7 +47,7 @@ DELTA_REWARDS=false
 HIDDEN_SIZE=128
 
 # Number of layers in RNN
-NUM_LAYERS=0
+NUM_LAYERS=2
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
