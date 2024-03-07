@@ -51,10 +51,10 @@ NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=10000
+SAVE_FREQUENCY=1000000
 
 # Number of training iterations, like 100000
-N_ITERS=300000
+N_ITERS=30000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.

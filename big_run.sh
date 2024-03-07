@@ -1,10 +1,10 @@
 #!/bin/bash
 
-#SBATCH --time=2:00:00   # walltime.  hours:minutes:seconds
+#SBATCH --time=48:00:00   # walltime.  hours:minutes:seconds
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
 #BATCH --gpus=1
-#SBATCH --mem-per-cpu=8000M   # 8G memory per CPU core
+#SBATCH --mem-per-cpu=16000M   # 8G memory per CPU core
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-type=END
 #SBATCH --mail-type=FAIL
