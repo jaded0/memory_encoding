@@ -6,7 +6,7 @@ from utils import filter_text, text_to_indices, text_to_indices_and_one_hot, col
 def load_and_preprocess_data(dataset_name):
     dataset = load_dataset(dataset_name)
     # dataset.cleanup_cache_files()
-    dataset = dataset['train']#.select(range(100))
+    dataset = dataset['train'].select(range(100))
     
     print("mapping the filter")
     dataset = dataset.map(filter_text, batched=True, fn_kwargs={"dataset_name": dataset_name})

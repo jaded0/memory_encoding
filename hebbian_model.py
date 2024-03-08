@@ -13,54 +13,50 @@ class HebbianLinear(nn.Linear):
         self.clip_weights = clip_weights
         self.update_rule = update_rule
         self.is_last_layer = is_last_layer
+        self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
+        self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
+
+        # Uniform distribution initialization
+        # self.feedback_weights = torch.nn.init.uniform_(torch.empty(73, in_features), -1, 1)
+        
+        # Normal (Gaussian) distribution initialization
+        # self.feedback_weights = torch.nn.init.normal_(torch.empty(73, in_features), mean=0.0, std=1.0)
+
+        # Xavier (Glorot) uniform initialization
+        # Calculate the adjusted gain for [-1, 1] range
+        gain = 1 / math.sqrt(6 / (in_features + out_features))
+
+        # Initialize weights with the adjusted gain
+        self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(73, out_features), gain=gain)
+        self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
+
+        # self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(73, in_features))
+        # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features))
+
+        # Xavier (Glorot) normal initialization
+        # self.feedback_weights = torch.nn.init.xavier_normal_(torch.empty(73, in_features))
+        # self.weight.data = torch.nn.init.xavier_normal_(torch.empty(out_features, in_features))
+
+        # Kaiming (He) uniform initialization
+        # self.feedback_weights = torch.nn.init.kaiming_uniform_(torch.empty(73, in_features), mode='fan_in', nonlinearity='relu')
+
+        # Kaiming (He) normal initialization
+        # self.feedback_weights = torch.nn.init.kaiming_normal_(torch.empty(73, in_features), mode='fan_in', nonlinearity='relu')
+
+        # Orthogonal initialization
+        # self.feedback_weights = torch.nn.init.orthogonal_(torch.empty(73, in_features))
+
+        # Sparse initialization
+        # self.feedback_weights = torch.nn.init.sparse_(torch.empty(73, in_features), sparsity=0.1)
+
+        # To use Truncated Normal, you'd need a custom implementation
+        # self.feedback_weights = custom_truncated_normal_(torch.empty(73, in_features), mean=0.0, std=1.0)
 
         if update_rule == 'covariance':
             self.alpha = alpha  # Decay factor for the exponential moving average
-            self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
-            self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
         
         if update_rule == 'candidate':
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
-
-        if update_rule == 'dfa':
-            self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
-            self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
-            self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
-            # Uniform distribution initialization
-            # self.feedback_weights = torch.nn.init.uniform_(torch.empty(73, in_features), -1, 1)
-            
-            # Normal (Gaussian) distribution initialization
-            # self.feedback_weights = torch.nn.init.normal_(torch.empty(73, in_features), mean=0.0, std=1.0)
-
-            # Xavier (Glorot) uniform initialization
-            # Calculate the adjusted gain for [-1, 1] range
-            gain = 1 / math.sqrt(6 / (in_features + out_features))
-
-            # Initialize weights with the adjusted gain
-            self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(73, out_features), gain=gain)
-            self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
-
-            # self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(73, in_features))
-            # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features))
-
-            # Xavier (Glorot) normal initialization
-            # self.feedback_weights = torch.nn.init.xavier_normal_(torch.empty(73, in_features))
-            # self.weight.data = torch.nn.init.xavier_normal_(torch.empty(out_features, in_features))
-
-            # Kaiming (He) uniform initialization
-            # self.feedback_weights = torch.nn.init.kaiming_uniform_(torch.empty(73, in_features), mode='fan_in', nonlinearity='relu')
-
-            # Kaiming (He) normal initialization
-            # self.feedback_weights = torch.nn.init.kaiming_normal_(torch.empty(73, in_features), mode='fan_in', nonlinearity='relu')
-
-            # Orthogonal initialization
-            # self.feedback_weights = torch.nn.init.orthogonal_(torch.empty(73, in_features))
-
-            # Sparse initialization
-            # self.feedback_weights = torch.nn.init.sparse_(torch.empty(73, in_features), sparsity=0.1)
-
-            # To use Truncated Normal, you'd need a custom implementation
-            # self.feedback_weights = custom_truncated_normal_(torch.empty(73, in_features), mean=0.0, std=1.0)
 
     def forward(self, input):
         # print(input)
@@ -75,15 +71,39 @@ class HebbianLinear(nn.Linear):
         # print("input shape:", input.shape)
         # print("output shape:", output.shape)
     
-        # Hebbian update rule: imprint = input * output
+
+        self.in_traces.data = input
+        self.out_traces.data = output
+
+    def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
+        input = self.in_traces.data
+        output = self.out_traces.data    
         # Reshape input and output for broadcasting
         input_expanded = input.unsqueeze(1)  # Shape: [batch_size, 1, in_features]
         output_expanded = output.unsqueeze(2)  # Shape: [batch_size, out_features, 1]
+        global_error = reward
+
+        # Project the global error using the fixed random matrix
+        # I think in backprop these two values actually come from the next layer's 
+        # error vector and weights. chain ruleee
+        # print(self.feedback_weights.shape)
+        if self.is_last_layer==True: 
+            projected_error = global_error
+        else:
+            projected_error = global_error @ self.feedback_weights  # assuming matrix multiplication
+            # I am currently completely ignoring the effect of dropout and relu. 
+            # it oughta look like the derivative of the output of the two with respect to the inputs. 
+            # prolly either one or zero. It'll just zero out some values in the error signal bc they were
+            # zeroed out in the actual output.
+
+            # Apply ReLU derivative
+            relu_derivative = (output.squeeze() > 0).float()  # 1 for activated neurons, 0 otherwise
+            projected_error *= relu_derivative
 
         if self.update_rule == 'damage':
             # Element-wise multiplication with broadcasting
             # Results in a [batch_size, out_features, in_features] tensor
-            imprint_update = output_expanded * input_expanded
+            imprint_update = projected_error.unsqueeze(2) * input_expanded
 
             # for p in imprint_update:
             #     if torch.isnan(p.data).any():
@@ -91,7 +111,7 @@ class HebbianLinear(nn.Linear):
             #         sys.exit(1)
             
             # Compute the difference and square it
-            diff_squared = (output_expanded - input_expanded) ** 2
+            diff_squared = (projected_error.unsqueeze(2) - input_expanded) ** 2
             # for p in diff_squared:
             #     if torch.isnan(p.data).any():
             #         print("the nan is in the diff_squared in the learning rule")
@@ -109,26 +129,30 @@ class HebbianLinear(nn.Linear):
             imprint_update = output_expanded*(input_expanded - self.weight.data)
         elif self.update_rule =='covariance':
             # Covariance Rule: Δw = η * (y - θ_y) * (x - θ_x)
-            imprint_update = (output - self.out_traces).unsqueeze(2) * (input - self.in_traces).unsqueeze(1)
+            imprint_update = (projected_error - self.out_traces).unsqueeze(2) * (input - self.in_traces).unsqueeze(1)
             self.imprints.data += imprint_update.sum(dim=0)
 
-            # Update the running averages (traces) for inputs and outputs
+            # Update the running averages (traces) for inputs and projected_errors
             self.in_traces.data = self.alpha * self.in_traces.data + (1 - self.alpha) * input.mean(dim=0)
-            self.out_traces.data = self.alpha * self.out_traces.data + (1 - self.alpha) * output.mean(dim=0)
+            self.out_traces.data = self.alpha * self.out_traces.data + (1 - self.alpha) * projected_error.mean(dim=0)
         elif self.update_rule == 'hpca':
             # hpca - Hebbian Principal Component Analysis (HPCA) rule: Updates weights based on the input and the output, 
             # subtracting the reconstructed input from all previous neurons
             # (y_i * (x - Σ(y_j * w_j) for j=1 to i)).
-
+            out = output
             # Outer product of output and weights for all neurons
-            outer_product = output.unsqueeze(2) * self.imprints.unsqueeze(0)
+            # print(projected_error.unsqueeze(2).shape, self.imprints.unsqueeze(0).shape)
+            outer_product = out.unsqueeze(2) * self.weight.data.unsqueeze(0)
             
             # Compute cumulative sum for the reconstruction term
             reconstruction = torch.cumsum(outer_product, dim=1)
 
             # Compute the weight update for all neurons
-            imprint_update = (input.unsqueeze(1) - reconstruction) * output.unsqueeze(2)
-            # self.imprints.data += imprint_update.sum(dim=0)
+            imprint_update = (input.unsqueeze(1) - reconstruction) * projected_error.unsqueeze(2)
+            # imprint_update += imprint_update.sum(dim=0)
+            # print(imprint_update.shape)
+            imprint_update = imprint_update.squeeze()
+            update = learning_rate * imprint_update * projected_error.T
         elif self.update_rule == 'candidate':
             # only evaluate past weight updates with the current reward signal
             imprint_update = self.candidate_weights.data
@@ -136,73 +160,24 @@ class HebbianLinear(nn.Linear):
             # Reset or decay candidate_weights
             self.candidate_weights.data *= 0.9  # Example: decay by half is 0.5
 
-            candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
-            self.candidate_weights.data += candidate_update.sum(dim=0)
-        elif self.update_rule == "dfa":
-            # only evaluate past weight updates with the current reward signal
-            imprint_update = self.candidate_weights.data
-
-            # Reset or decay candidate_weights
-            self.candidate_weights.data *= 0.9  # Example: decay by half is 0.5
-
-            # candidate_update = output_expanded*(input_expanded - output_expanded * self.weight.data) # oja's rule, reused
-            # self.candidate_weights.data += candidate_update.sum(dim=0)
-            # print(f"candidate update shape: {self.candidate_weights.data.shape}")
-
-            # imprint_update = input_expanded
-            self.in_traces.data = input
-            self.out_traces.data = output
-        else:
-            return
-
-        # Sum over the batch dimension to get the final imprint update
-        self.imprints.data = imprint_update
-
-    def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
-        imprint_update = self.imprints.data
-        # print(f"imprint_update shape: {imprint_update.shape}")
-        
-        if self.update_rule == 'dfa':
-            # print("isdfa")
-            global_error = reward
-            # print(global_error)
-            # global_error.clamp_(-0.1,0.1)
-
-            # Project the global error using the fixed random matrix
-            # I think in backprop these two values actually come from the next layer's 
-            # error vector and weights. chain ruleee
-            # print(self.feedback_weights.shape)
-            if self.is_last_layer==True: 
-                projected_error = global_error
-            else:
-                projected_error = global_error @ self.feedback_weights  # assuming matrix multiplication
-                # I am currently completely ignoring the effect of dropout and relu. 
-                # it oughta look like the derivative of the output of the two with respect to the inputs. 
-                # prolly either one or zero. It'll just zero out some values in the error signal bc they were
-                # zeroed out in the actual output.
-
-                # Apply ReLU derivative
-                relu_derivative = (self.out_traces.data.squeeze() > 0).float()  # 1 for activated neurons, 0 otherwise
-                projected_error *= relu_derivative
-
             # If dropout was applied during forward pass, apply the same mask here
             # if self.dropout_mask is not None:
             #     projected_error *= self.dropout_mask
-            # print((projected_error * self.weight.data.T).shape)
             # Assuming 'inputs' holds the inputs to the layer
-            inputs = self.in_traces.data
-            candidate_update = projected_error*(inputs.T - projected_error * self.weight.data.T) # oja's rule, reused
-            # print(candidate_update.shape)
+            # out = output/(output.shape[1]) + projected_error
+            out = output/(input.shape[1])
+            candidate_update = projected_error*(input.T - out * self.weight.data.T) # oja's rule, reused
             candidate_update = candidate_update.T
             self.candidate_weights.data += candidate_update
 
             # update = learning_rate * inputs.T * projected_error
             # update = update.T + imprint_update * imprint_rate
-            update = learning_rate * imprint_update
-
             # update = global_error.T * learning_rate * self.feedback_weights
+            imprint_update = imprint_update.squeeze()
+            update = learning_rate * imprint_update 
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
+
 
         self.weight.data += update
 

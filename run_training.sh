@@ -14,7 +14,7 @@ rm model_data/*
 # candidate - Custom reward-based update: Introduces candidate weight changes that are temporarily applied and evaluated. Permanent updates to weights are made based on a reward signal, modulating the efficacy of the changes.
 # backprop - Standard backpropagation: Computes gradients using chain rule and updates weights based on gradient descent. Relies on global error propagated from the output layer.
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
-UPDATE_RULE='backprop'
+UPDATE_RULE='candidate'
 
 
 
@@ -27,7 +27,7 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=0.001
+LEARNING_RATE=0.0001
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -51,7 +51,7 @@ NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=1000000
+SAVE_FREQUENCY=10000
 
 # Number of training iterations, like 100000
 N_ITERS=30000000000
@@ -65,8 +65,10 @@ PRINT_FREQ=300
 PLOT_FREQ=300
 
 # true or false
-TRACK=true
+TRACK=false
 
+# roneneldan/tinystories
+# jbrazzy/baby_names
 DATASET=jbrazzy/baby_names
 
 # Running the training script with the specified hyperparameters

@@ -100,7 +100,7 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
 
     for i in range(onehot_line_tensor.size()[0] - 1): 
         hot_input_char_tensor = onehot_line_tensor[i].unsqueeze(0)
-        output, nhidden = rnn(hot_input_char_tensor, hidden)
+        output, hidden = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[i+1].unsqueeze(0).float()
         loss += criterion(output, final_char)
         # loss = criterion(output, final_char)
