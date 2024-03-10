@@ -23,7 +23,7 @@ UPDATE_RULE='candidate'
 # true or false
 NORMALIZE=false
 
-CLIP_WEIGHTS=0
+CLIP_WEIGHTS=1
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
@@ -35,7 +35,7 @@ IMPRINT_RATE=1e-6
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=0.0000000
+STOCHASTICITY=0.000000000000000001
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
@@ -44,32 +44,32 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=128
+HIDDEN_SIZE=256
 
 # Number of layers in RNN
-NUM_LAYERS=3
+NUM_LAYERS=16
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=10000
+SAVE_FREQUENCY=1000000
 
 # Number of training iterations, like 100000
 N_ITERS=30000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=300
+PRINT_FREQ=3
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=300
+PLOT_FREQ=3
 
 # true or false
 TRACK=false
 
 # roneneldan/tinystories
 # jbrazzy/baby_names
-DATASET=jbrazzy/baby_names
+DATASET=roneneldan/tinystories
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \

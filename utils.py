@@ -53,15 +53,24 @@ def text_to_indices_and_one_hot(examples, dataset_name):
 #     tensor = item['tensor']
 #     tensor = torch.tensor(tensor)
 #     return text, tensor
+# def collate_fn(batch):
+#     """ Collate function for DataLoader """
+#     item = batch[0]
+#     text = item['text']
+#     tensor = item['tensor']
+#     tensor = torch.tensor(tensor)
+#     onehot_tensor = item['onehot_tensor']
+#     onehot_tensor = torch.tensor(onehot_tensor)
+#     return text, tensor, onehot_tensor
+
+from torch.nn.utils.rnn import pad_sequence
+
 def collate_fn(batch):
     """ Collate function for DataLoader """
-    item = batch[0]
-    text = item['text']
-    tensor = item['tensor']
-    tensor = torch.tensor(tensor)
-    onehot_tensor = item['onehot_tensor']
-    onehot_tensor = torch.tensor(onehot_tensor)
-    return text, tensor, onehot_tensor
+    texts = [item['text'] for item in batch]
+    tensors = pad_sequence([torch.tensor(item['tensor']) for item in batch], batch_first=True)
+    onehot_tensors = pad_sequence([torch.tensor(item['onehot_tensor']) for item in batch], batch_first=True)
+    return texts, tensors, onehot_tensors
 
 
 def randomTrainingExample(dataloader):

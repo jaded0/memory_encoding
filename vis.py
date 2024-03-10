@@ -119,14 +119,14 @@ def visualize_all_layers_and_save(model, instance, save_path):
         # Plot weights
         if weight_tensor is not None:
             ax = axes[i][0]
-            im = ax.imshow(weight_tensor.detach().numpy(), cmap='viridis')
+            im = ax.imshow(weight_tensor.cpu().detach().numpy(), cmap='viridis')
             fig.colorbar(im, ax=ax)
             ax.set_title(f'Weights of {layer_name}')
 
         # Plot activations as bar chart
         if activation_tensor is not None and activation_tensor.ndim == 1:
             ax = axes[i][1]
-            ax.bar(range(len(activation_tensor)), activation_tensor.detach().numpy())
+            ax.bar(range(len(activation_tensor)), activation_tensor.cpu().detach().numpy())
             ax.set_title(f'Activations of {layer_name}')
 
     # Save the figure before showing it

@@ -12,84 +12,6 @@ import time
 import sys
 import numpy as np
 
-def relu(x):
-    return np.maximum(0, x)
-
-def relu_derivative(x):
-    return (x > 0).astype(x.dtype)
-
-# Sigmoid activation function and its derivative
-def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
-
-def sigmoid_derivative(x):
-    return x * (1 - x)
-
-# Mean Squared Error loss function and its derivative
-def mse_loss(y_true, y_pred):
-    return np.mean((y_true - y_pred).numpy() ** 2)
-
-def mse_loss_derivative(y_true, y_pred):
-    # return 2 * (y_pred - y_true.numpy()) / y_true.numpy().size
-    global_error = 2.0 / y_true.numpy().size * (y_pred - y_true.numpy())
-    return global_error
-
-# Neural Network class
-class NeuralNetwork:
-    def __init__(self, input_size, hidden_size, output_size):
-        # Initialize weights and biases
-        self.W1 = np.random.randn(input_size, hidden_size)
-        self.b1 = np.zeros(hidden_size)
-        self.W2 = np.random.randn(hidden_size, output_size)
-        self.b2 = np.zeros(output_size)
-        self.random_feedback = np.random.randn(self.W2.shape[1], self.W1.shape[1])
-
-    def forward(self, X):
-        X.numpy()
-        # Forward pass
-        self.Z1 = np.dot(X, self.W1) + self.b1
-        self.A1 = relu(self.Z1)
-        self.Z2 = np.dot(self.A1, self.W2) + self.b2
-        return torch.from_numpy(self.Z2).float()
-
-    def backpropagation(self, X, error, learning_rate):
-        # Backpropagation
-        # error = mse_loss_derivative(y, y_pred)
-        dW2 = np.dot(self.A1.T, error)
-        db2 = np.sum(error, axis=0)
-
-        error_hidden = np.dot(error, self.W2.T) * relu_derivative(self.A1)
-        dW1 = np.dot(X.T, error_hidden)
-        db1 = np.sum(error_hidden, axis=0)
-
-        # Update weights and biases
-        self.W1 -= learning_rate * dW1
-        self.b1 -= learning_rate * db1
-        self.W2 -= learning_rate * dW2
-        self.b2 -= learning_rate * db2
-
-    def direct_feedback_alignment(self, X, y, y_pred, error, learning_rate, reroll=True):
-        # Direct Feedback Alignment
-        # error = mse_loss_derivative(y, y_pred)
-        if reroll==True:
-          self.random_feedback = np.random.randn(self.W2.shape[1], self.W1.shape[1])
-        error_hidden = np.dot(error, self.random_feedback) * relu_derivative(self.A1)
-
-        # Calculate weight updates
-        dW1 = np.dot(X.T, error_hidden)
-        db1 = np.sum(error_hidden, axis=0)
-        print(f"A1 shape: {self.A1.T.shape}, error shape: {error.shape}")
-        dW2 = np.dot(self.A1.T, error)
-        print(f"dW2 shape: {dW2.shape}, W2 shape: {self.W2.shape}")
-        db2 = np.sum(error, axis=0)
-
-        # Update weights and biases
-        self.W1 -= learning_rate * dW1
-        self.b1 -= learning_rate * db1
-        self.W2 -= learning_rate * dW2
-        self.b2 -= learning_rate * db2
-
-
 def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     criterion = config['criterion']
 
@@ -117,24 +39,28 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     return output, report_loss, 0, 0
 
 def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
-    hidden = rnn.initHidden()
+    batch_size = onehot_line_tensor.shape[0]
+    # print(f"batch size: {batch_size}")
+    hidden = rnn.initHidden(batch_size=batch_size)
     losses, og_losses, reg_losses = [], [], []
     l2_reg, output = None, None
-
-    for i in range(onehot_line_tensor.size()[0] - 1):
+    # print(f"full tensor shape: {onehot_line_tensor.shape}")
+    for i in range(onehot_line_tensor.size()[1] - 1):
         l2_reg = None  # Reset L2 regularization term for each character
 
-        hot_input_char_tensor = onehot_line_tensor[i].unsqueeze(0)
+        hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
 
         # with torch.no_grad():  # Disable gradient calculations
         # Forward pass through the RNN
+        # print(hot_input_char_tensor.shape, hidden.shape)
         output, hidden = rnn(hot_input_char_tensor, hidden)
         # output = rnn.forward(hot_input_char_tensor)
 
         # Compute the loss for this step
-        final_char = onehot_line_tensor[i+1].squeeze(0)
+        final_char = onehot_line_tensor[:, i, :]
         # print(final_char)
-        noutput = output.squeeze(0)
+        noutput = output
+        # print(f"shapes. final char: {final_char.shape}, noutput: {noutput.shape}")
         # if isinstance(output, np.ndarray):
         #     noutput = torch.from_numpy(noutput).float() 
         loss = config['criterion'](final_char, noutput)
@@ -170,6 +96,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
             global_error = 2.0 / final_char.size()[-1] * (output - final_char)
             # global_error = 2.0 / onehot_line_tensor.size()[1] * (output - final_char)
             reward_update = -global_error
+            rnn.zero_grad()
         
         # Apply Hebbian updates to the network
         rnn.apply_imprints(reward_update, config["learning_rate"], config["imprint_rate"], config["stochasticity"])
@@ -253,6 +180,7 @@ def main():
             "delta_rewards": args.delta_rewards,
         })
 
+
     # Load data
     dataloader = load_and_preprocess_data(args.dataset)
 
@@ -269,6 +197,11 @@ def main():
         rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, clip_weights=args.clip_weights, update_rule=args.update_rule)
         # rnn = NeuralNetwork(input_size=n_characters, hidden_size=128, output_size=n_characters)
 
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+    if torch.cuda.is_available():
+        print("cuda available!")
+        rnn = rnn.to(device)
 
     # rnn.train()
     state = {
@@ -282,25 +215,34 @@ def main():
     current_loss = 0
     all_losses = []
     start = time.time()
+    step_start = time.time()
     try:
         for iter in range(1, args.n_iters + 1):
             sequence, line_tensor, onehot_line_tensor = randomTrainingExample(dataloader)
-            # print(sequence)
+            line_tensor = line_tensor.to(device)
+            onehot_line_tensor = onehot_line_tensor.to(device)
+
+            # print(line_tensor.shape)
             output, loss, og_loss, reg_loss = train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer)
+            output = output.detach()
+            # loss = loss.cpu()
             # Loss tracking
             current_loss += loss
             if iter % args.plot_freq == 0:
                 # Print training progress
                 topv, topi = output.topk(1, dim=1)
                 predicted_char = idx_to_char[topi[0, 0].item()]
-                target_char = sequence[-1]
+                target_char = sequence[0][-1]
                 correct = '✓' if predicted_char == target_char else '✗ (%s)' % target_char
-                sequence = sequence[-50:]
+                sequence = sequence[0][-50:]
                 if args.track:
                     wandb.log({"loss": loss, "avg_loss": current_loss / args.plot_freq, "correct": correct, "predicted_char": predicted_char, "target_char": target_char, "sequence": sequence})
                 print('%d %d%% (%s) %.4f %s / %s %s' % (iter, iter / args.n_iters * 100, timeSince(start), loss, sequence, predicted_char, correct))
                 all_losses.append(current_loss / args.plot_freq)
                 current_loss = 0
+                # sps = args.plot_freq/(time.time()-step_start)
+                # step_start = time.time()
+                # print(f"steps per second: {sps} (you want it to be high)")
     except KeyboardInterrupt:
         print("\nok, finishing up..")
 

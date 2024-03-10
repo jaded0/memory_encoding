@@ -27,7 +27,7 @@ class HebbianLinear(nn.Linear):
         gain = 1 / math.sqrt(6 / (in_features + out_features))
 
         # Initialize weights with the adjusted gain
-        self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(73, out_features), gain=gain)
+        self.feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(73, out_features), gain=gain), requires_grad=requires_grad)
         self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
         # self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(73, in_features))
@@ -165,15 +165,30 @@ class HebbianLinear(nn.Linear):
             #     projected_error *= self.dropout_mask
             # Assuming 'inputs' holds the inputs to the layer
             # out = output/(output.shape[1]) + projected_error
-            out = output/(input.shape[1])
-            candidate_update = projected_error*(input.T - out * self.weight.data.T) # oja's rule, reused
-            candidate_update = candidate_update.T
-            self.candidate_weights.data += candidate_update
+            # out = output/(input.shape[1])
+            # print(f"shapes. projected error: {projected_error.shape}, input.T: {input.T.shape}, input: {input.shape}, weights.T:{self.weight.data.T.shape}, weights: {self.weight.data.shape}")
+            # out = projected_error
+            # candidate_update = projected_error*(input.T - out * self.weight.data.T) # oja's rule, reused
+            # Assuming out = projected_error for simplicity
+            out = projected_error.unsqueeze(2)
+            # print(f"new out shape: {out.shape}")
+            out_weights_product = out * self.weight.data
+            # print(f"shape of input: {input.shape}")
+            # input = input.unsqueeze(2)
+            # print(f"shape of input: {input.shape}")
+            # Now, calculate the candidate_update
+            # Note that element-wise multiplication (*) is broadcasted over the batch dimension
+            # print(f"out shape: {out.shape},out_weights_product shape: {out_weights_product.shape}, input shape: {input.shape}")
+            candidate_update = out * (input.unsqueeze(1) - out_weights_product)
+            # candidate_update = candidate_update.T
+            # self.candidate_weights.data += candidate_update
+            # print(f"shapes. candidate_weights: {self.candidate_weights.data.shape}, update shape: {candidate_update.shape}, mean: {candidate_update.mean(dim=0).shape}")
+            self.candidate_weights.data += candidate_update.mean(dim=0)
 
             # update = learning_rate * inputs.T * projected_error
             # update = update.T + imprint_update * imprint_rate
             # update = global_error.T * learning_rate * self.feedback_weights
-            imprint_update = imprint_update.squeeze()
+            imprint_update = imprint_update
             update = learning_rate * imprint_update 
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
@@ -185,7 +200,7 @@ class HebbianLinear(nn.Linear):
         if hasattr(self, 'bias') and self.bias is not None:
             # print("has")
             # Bias is updated based on the mean error across the batch
-            bias_update = learning_rate * projected_error.mean(dim=-1)
+            bias_update = learning_rate * projected_error.mean(dim=-1).mean(dim=0)
             self.bias.data += bias_update
 
         if self.normalize:
@@ -260,8 +275,9 @@ class HebbyRNN(torch.nn.Module):
         # output = self.softmax(output)
         return output, hidden
 
-    def initHidden(self):
-        return torch.zeros(1, self.hidden_size)
+    def initHidden(self, batch_size):
+        device = next(self.parameters()).device
+        return torch.zeros(batch_size, self.hidden_size, device=device)
 
     def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
         # Apply imprints for all HebbianLinear layers
