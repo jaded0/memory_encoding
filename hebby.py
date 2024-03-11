@@ -15,15 +15,16 @@ import numpy as np
 def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     criterion = config['criterion']
 
-    hidden = rnn.initHidden()
+    batch_size = onehot_line_tensor.shape[0]
+    hidden = rnn.initHidden(batch_size=batch_size)
     rnn.zero_grad()
     loss = 0
     # losses = []
 
-    for i in range(onehot_line_tensor.size()[0] - 1): 
-        hot_input_char_tensor = onehot_line_tensor[i].unsqueeze(0)
+    for i in range(onehot_line_tensor.size()[1] - 1): 
+        hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
         output, hidden = rnn(hot_input_char_tensor, hidden)
-        final_char = onehot_line_tensor[i+1].unsqueeze(0).float()
+        final_char = onehot_line_tensor[:, i, :]
         loss += criterion(output, final_char)
         # loss = criterion(output, final_char)
         # losses.append(loss.item())

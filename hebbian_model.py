@@ -259,6 +259,7 @@ class HebbyRNN(torch.nn.Module):
     #             nn.init.zeros_(layer.bias)
 
     def forward(self, input, hidden):
+        # print(f"input shape: {input.shape}, hidden shape: {hidden.shape}")
         combined = torch.cat((input, hidden), dim=1)
         # Pass through the Hebbian linear layers with ReLU and Dropout
         for layer in self.linear_layers:
@@ -329,6 +330,7 @@ class SimpleRNN(nn.Module):
     #             nn.init.zeros_(layer.bias)
 
     def forward(self, input, hidden):
+        # print(f"input shape: {input.shape}, hidden shape: {hidden.shape}")
         combined = torch.cat((input, hidden), dim=1)
 
         # Pass through the linear layers with ReLU and Dropout
@@ -345,9 +347,12 @@ class SimpleRNN(nn.Module):
         # output = self.softmax(output)
         return output, hidden
 
-    def initHidden(self):
-        return torch.zeros(1, self.hidden_size)
+    # def initHidden(self):
+    #     return torch.zeros(1, self.hidden_size)
 
+    def initHidden(self, batch_size):
+        device = next(self.parameters()).device
+        return torch.zeros(batch_size, self.hidden_size, device=device)
 
 
 if __name__ == "__main__":

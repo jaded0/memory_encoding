@@ -23,7 +23,7 @@ def load_and_preprocess_data(dataset_name):
     # Create a DataLoader
     dataloader = torch.utils.data.DataLoader(
         dataset, 
-        batch_size=64, 
+        batch_size=32, 
         shuffle=True, 
         collate_fn=collate_fn
     )
