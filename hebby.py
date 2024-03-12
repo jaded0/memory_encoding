@@ -18,26 +18,26 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
     rnn.zero_grad()
-    loss = 0
+    loss_total = 0
     # losses = []
 
     for i in range(onehot_line_tensor.size()[1] - 1): 
         hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
         output, hidden = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[:, i, :]
-        loss += criterion(output, final_char)
+        loss_total += criterion(output, final_char)
         # loss = criterion(output, final_char)
         # losses.append(loss.item())
 
-    loss.backward()
+    loss_total.backward()
     # optimizer.step()
     for p in rnn.parameters():
         if p.grad is not None:
             p.data.add_(p.grad.data, alpha=-config['learning_rate'])
 
-    report_loss = loss.item()/onehot_line_tensor.size()[0]
-    # report_loss = sum(losses) / onehot_line_tensor.size()[0]
-    return output, report_loss, 0, 0
+    loss_sum = loss_total.item()/onehot_line_tensor.size()[1]
+    # loss_sum = sum(losses) / onehot_line_tensor.size()[0]
+    return output, loss_sum, 0, 0
 
 def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
     batch_size = onehot_line_tensor.shape[0]
@@ -46,7 +46,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
     losses, og_losses, reg_losses = [], [], []
     l2_reg, output = None, None
     # print(f"full tensor shape: {onehot_line_tensor.shape}")
-    for i in range(onehot_line_tensor.size()[1] - 1):
+    for i in range(onehot_line_tensor.shape[1] - 1):
         l2_reg = None  # Reset L2 regularization term for each character
 
         hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
@@ -112,7 +112,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         state['training_instance'] += 1
 
     # Calculate the average loss for the sequence
-    loss_avg = sum(losses) / onehot_line_tensor.size()[0]
+    loss_avg = sum(losses) / onehot_line_tensor.shape[1]
     # og_loss_avg = sum(og_losses) / len(og_losses)
     # reg_loss_avg = sum(reg_losses) / len(reg_losses)
     og_loss_avg, reg_loss_avg = 0,0 # i don wanna refactor rn
