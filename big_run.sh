@@ -3,7 +3,7 @@
 #SBATCH --time=48:00:00   # walltime.  hours:minutes:seconds
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
-#BATCH --gpus=1
+#SBATCH --gpus=1
 #SBATCH --mem-per-cpu=16000M   # 8G memory per CPU core
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-type=END
@@ -16,7 +16,7 @@
 set -e
 set -u
 
-#nvidia-smi
+nvidia-smi
 
 # LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
 source /apps/miniconda3/latest/etc/profile.d/conda.sh
