@@ -236,7 +236,7 @@ class HebbyRNN(torch.nn.Module):
 
         # Final layers for hidden and output, also using HebbianLinear
         self.i2h = HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)
-        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=True, is_last_layer=True)
+        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=False, is_last_layer=True)
         # self.softmax = torch.nn.LogSoftmax(dim=1)
     #     # Initialize weights
     #     self.init_weights()

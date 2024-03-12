@@ -12,6 +12,13 @@ import time
 import sys
 import numpy as np
 
+def print_graph(g, level=0):
+    if g is None: return
+    print(' ' * level * 4, g)
+    for sub_g in g.next_functions:
+        if sub_g[0] is not None:
+            print_graph(sub_g[0], level+1)
+
 def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     criterion = config['criterion']
 
@@ -60,11 +67,10 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         # Compute the loss for this step
         final_char = onehot_line_tensor[:, i, :]
         # print(final_char)
-        noutput = output
         # print(f"shapes. final char: {final_char.shape}, noutput: {noutput.shape}")
         # if isinstance(output, np.ndarray):
         #     noutput = torch.from_numpy(noutput).float() 
-        loss = config['criterion'](final_char, noutput)
+        loss = config['criterion'](final_char, output)
         # loss = mse_loss(final_char, output)
         # print(f"old loss: {old_loss}, new loss: {loss}")
         if math.isnan(loss):
@@ -90,11 +96,16 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
             last_n_reward_avg = sum(state['last_n_rewards']) / len(state['last_n_rewards'])
             reward_update = reward - last_n_reward_avg
         else:
-            # global_error = torch.autograd.grad(loss, output, retain_graph=True)
-            # global_error = global_error[0][0]
+            # print_graph(output.grad_fn)
+            global_error = torch.autograd.grad(loss, output, retain_graph=False)
+            global_error = global_error[0]
+            # print_graph(output.grad_fn)
+
+            # print(f"og grad shape: {global_error}")
             # print(global_error)
-            # global_error = 2.0 / final_char.numpy().size * (output.numpy() - final_char.numpy())
-            global_error = 2.0 / final_char.size()[-1] * (output - final_char)
+            # global_error = 2.0 / final_char.size()[-1] * (output - final_char) # only to be used with MSE, same as autograd, but done manually. for some reason it's faster tho.
+            # print(f"diff: {gglobal_error-global_error}")
+            # print(f"manual grad shape: {global_error.shape}")
             # global_error = 2.0 / onehot_line_tensor.size()[1] * (output - final_char)
             reward_update = -global_error
             rnn.zero_grad()

@@ -27,7 +27,7 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=0.001
+LEARNING_RATE=0.0001
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -54,7 +54,7 @@ NUM_LAYERS=3
 SAVE_FREQUENCY=1000000
 
 # Number of training iterations, like 100000
-N_ITERS=30000000000
+N_ITERS=1000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
