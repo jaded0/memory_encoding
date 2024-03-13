@@ -8,6 +8,12 @@ import sys
 class HebbianLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5, requires_grad=False, is_last_layer=False):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
+
+        # Set requires_grad for the base class parameters
+        self.weight.requires_grad = requires_grad
+        if bias:
+            self.bias.requires_grad = requires_grad
+
         self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
         self.normalize = normalize
         self.clip_weights = clip_weights
@@ -59,8 +65,9 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
 
     def forward(self, input):
-        # print(input)
+        # print(f"in forward. input requires grad? {input.requires_grad}")
         output = super(HebbianLinear, self).forward(input)
+        # print(f"in forward. output requires grad? {output.requires_grad}")
         self.update_imprints(input, output)
         # print(output)
         # max_activation = 1
@@ -271,6 +278,7 @@ class HebbyRNN(torch.nn.Module):
         hidden = self.i2h(combined)
         # hidden = torch.zeros_like(hidden)
         output = self.i2o(combined)
+        # output.requires_grad = True
         hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
         # output = self.dropout(output)  # Apply dropout to the output before softmax
         # output = self.softmax(output)
@@ -278,7 +286,7 @@ class HebbyRNN(torch.nn.Module):
 
     def initHidden(self, batch_size):
         device = next(self.parameters()).device
-        return torch.zeros(batch_size, self.hidden_size, device=device)
+        return torch.zeros(batch_size, self.hidden_size, device=device, requires_grad=False)
 
     def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
         # Apply imprints for all HebbianLinear layers

@@ -57,12 +57,14 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         l2_reg = None  # Reset L2 regularization term for each character
 
         hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
-
+        hot_input_char_tensor.requires_grad=False
         # with torch.no_grad():  # Disable gradient calculations
         # Forward pass through the RNN
         # print(hot_input_char_tensor.shape, hidden.shape)
+        # print(f"require_grad. hot_input_char_tensor: {hot_input_char_tensor.requires_grad}, hidden: {hidden.requires_grad}")
         output, hidden = rnn(hot_input_char_tensor, hidden)
-        # output = rnn.forward(hot_input_char_tensor)
+        # print(f"does output require grad? {output.requires_grad}. hidden? {hidden.requires_grad}")
+        output.requires_grad=True
 
         # Compute the loss for this step
         final_char = onehot_line_tensor[:, i, :]
@@ -97,14 +99,21 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
             reward_update = reward - last_n_reward_avg
         else:
             # print_graph(output.grad_fn)
-            global_error = torch.autograd.grad(loss, output, retain_graph=False)
-            global_error = global_error[0]
+            gglobal_error = torch.autograd.grad(loss, output, retain_graph=False)
+            global_error = gglobal_error[0]
+            # print("after")
             # print_graph(output.grad_fn)
-
-            # print(f"og grad shape: {global_error}")
+            # sys.exit()
+            # print(f"og grad shape: {gglobal_error.shape}")
             # print(global_error)
-            # global_error = 2.0 / final_char.size()[-1] * (output - final_char) # only to be used with MSE, same as autograd, but done manually. for some reason it's faster tho.
-            # print(f"diff: {gglobal_error-global_error}")
+            # print(final_char.shape[-1])
+            # global_error = 2.0 / final_char.shape[-1] * (output - final_char) # only to be used with MSE, same as autograd, but done manually. for some reason it's faster tho.
+            # print(f"my grad shape: {global_error.shape}")
+            # print(gglobal_error)
+            # print(global_error)
+            # print(f"diff: {global_error-3*gglobal_error}")
+            # print(f"shapes: output: {output.shape}, final char: {final_char.shape}")
+            # sys.exit()
             # print(f"manual grad shape: {global_error.shape}")
             # global_error = 2.0 / onehot_line_tensor.size()[1] * (output - final_char)
             reward_update = -global_error
