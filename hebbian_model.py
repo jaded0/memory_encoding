@@ -244,7 +244,7 @@ class HebbyRNN(torch.nn.Module):
         # Final layers for hidden and output, also using HebbianLinear
         self.i2h = HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)
         self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=False, is_last_layer=True)
-        # self.softmax = torch.nn.LogSoftmax(dim=1)
+        self.softmax = torch.nn.LogSoftmax(dim=1)
     #     # Initialize weights
     #     self.init_weights()
 
@@ -278,10 +278,11 @@ class HebbyRNN(torch.nn.Module):
         hidden = self.i2h(combined)
         # hidden = torch.zeros_like(hidden)
         output = self.i2o(combined)
-        # output.requires_grad = True
         hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
+
+        output.requires_grad = True
         # output = self.dropout(output)  # Apply dropout to the output before softmax
-        # output = self.softmax(output)
+        output = self.softmax(output)
         return output, hidden
 
     def initHidden(self, batch_size):

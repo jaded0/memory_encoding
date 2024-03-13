@@ -64,7 +64,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         # print(f"require_grad. hot_input_char_tensor: {hot_input_char_tensor.requires_grad}, hidden: {hidden.requires_grad}")
         output, hidden = rnn(hot_input_char_tensor, hidden)
         # print(f"does output require grad? {output.requires_grad}. hidden? {hidden.requires_grad}")
-        output.requires_grad=True
+        # output.requires_grad=True
 
         # Compute the loss for this step
         final_char = onehot_line_tensor[:, i, :]
@@ -87,7 +87,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         # og_losses.append(loss.item())  # Store the original loss for this step
         # reg_losses.append(config['l2_lambda']*l2_reg.item())
         # loss = loss + config['l2_lambda'] * l2_reg  # Add the L2 regularization term to the loss
-        losses.append(loss.item())  # Store the loss for this step
+        losses.append(-loss.item())  # Store the loss for this step
 
         # Convert loss to a reward signal for Hebbian updates
         if config["delta_rewards"]:
@@ -104,7 +104,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
             # print("after")
             # print_graph(output.grad_fn)
             # sys.exit()
-            # print(f"og grad shape: {gglobal_error.shape}")
+            # print(f"og grad shape: {global_error.shape}")
             # print(global_error)
             # print(final_char.shape[-1])
             # global_error = 2.0 / final_char.shape[-1] * (output - final_char) # only to be used with MSE, same as autograd, but done manually. for some reason it's faster tho.
@@ -172,8 +172,8 @@ def main():
         "stochasticity": args.stochasticity,
         "len_reward_history": args.len_reward_history,
         "save_frequency": args.save_frequency,
-        "criterion": torch.nn.MSELoss(),
-        # "criterion": torch.nn.CrossEntropyLoss(),
+        # "criterion": torch.nn.MSELoss(),
+        "criterion": torch.nn.CrossEntropyLoss(),
         "l2_lambda": 0.000,  # Example static hyperparameter
         "n_hidden": args.hidden_size,
         "n_layers": args.num_layers,
