@@ -163,3 +163,4 @@ data/
 wandb/
 model_data/
 model_evolution*
+long_range_memory_dataset/

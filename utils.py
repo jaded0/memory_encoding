@@ -6,7 +6,8 @@ import argparse
 dataset_keys = {
     "roneneldan/tinystories": "text",
     "jbrazzy/baby_names": "Names",
-    "brucewlee1/htest-palindrome": "centerpiece"
+    "brucewlee1/htest-palindrome": "centerpiece",
+    "long_range_memory_dataset": "text",
 }
 
 # Your charset
