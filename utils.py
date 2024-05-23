@@ -5,7 +5,8 @@ import argparse
 
 dataset_keys = {
     "roneneldan/tinystories": "text",
-    "jbrazzy/baby_names": "Names"
+    "jbrazzy/baby_names": "Names",
+    "brucewlee1/htest-palindrome": "centerpiece"
 }
 
 # Your charset
@@ -22,7 +23,8 @@ def filter_text(examples, dataset_name):
     for text in examples[key]:
         # Filter out characters not in the charset
         filtered_text = ''.join([char for char in text if char in charset])
-
+        if 'á' in filtered_text:
+            print(f"problem with {filtered_text}")
         # Pad the text with spaces if it's shorter than 3 characters
         while len(filtered_text) < 3:
             filtered_text += ' '
@@ -34,13 +36,13 @@ def filter_text(examples, dataset_name):
 
 def text_to_indices(examples, dataset_name):
     key = dataset_keys.get(dataset_name)
-    tensors = [torch.tensor([char_to_idx[char] for char in text], dtype=torch.long) for text in examples[key]]
+    tensors = [torch.tensor([char_to_idx[char] for char in text], dtype=torch.long) for text in examples['text']]
     return {'tensor': tensors}
 
 def text_to_indices_and_one_hot(examples, dataset_name):
     key = dataset_keys.get(dataset_name)
     one_hot_tensors = []
-    for text in examples[key]:
+    for text in examples['text']:
         indices = [char_to_idx[char] for char in text]
         one_hot = torch.nn.functional.one_hot(torch.tensor(indices, dtype=torch.long), num_classes=n_characters).type(torch.float)
         one_hot_tensors.append(one_hot)

@@ -1,13 +1,22 @@
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 import torch.utils.data
 from utils import filter_text, text_to_indices, text_to_indices_and_one_hot, collate_fn
+
+dataset_keys = {
+    "roneneldan/tinystories": "train",
+    "jbrazzy/baby_names": "train",
+    "brucewlee1/htest-palindrome": "test"
+}
 
 # Load dataset
 def load_and_preprocess_data(dataset_name):
     dataset = load_dataset(dataset_name)
-    # dataset.cleanup_cache_files()
-    dataset = dataset['train'].select(range(10))
-    
+    # print(f"cleaned up from cache: {dataset.cleanup_cache_files()}")
+
+    dataset = dataset[dataset_keys[dataset_name]].select(range(200))
+    if dataset_name == "brucewlee1/htest-palindrome":
+        dataset = dataset.filter(lambda example: example["correct_options_idx"][0] == 0)
+
     print("mapping the filter")
     dataset = dataset.map(filter_text, batched=True, fn_kwargs={"dataset_name": dataset_name})
     print("mapping text to indices")
