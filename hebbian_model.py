@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import sys
-
+from utils import charset
 
 class HebbianLinear(nn.Linear):
     def __init__(self, in_features, out_features, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5, requires_grad=False, is_last_layer=False):
@@ -23,40 +23,40 @@ class HebbianLinear(nn.Linear):
         self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
 
         # Uniform distribution initialization
-        # self.feedback_weights = torch.nn.init.uniform_(torch.empty(73, in_features), -1, 1)
+        # self.feedback_weights = torch.nn.init.uniform_(torch.empty(len(charset), in_features), -1, 1)
         
         # Normal (Gaussian) distribution initialization
-        # self.feedback_weights = torch.nn.init.normal_(torch.empty(73, in_features), mean=0.0, std=1.0)
+        # self.feedback_weights = torch.nn.init.normal_(torch.empty(len(charset), in_features), mean=0.0, std=1.0)
 
         # Xavier (Glorot) uniform initialization
         # Calculate the adjusted gain for [-1, 1] range
         gain = 1 / math.sqrt(6 / (in_features + out_features))
 
         # Initialize weights with the adjusted gain
-        self.feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(73, out_features), gain=gain), requires_grad=requires_grad)
+        self.feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features), gain=gain), requires_grad=requires_grad)
         self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
-        # self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(73, in_features))
+        # self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(len(charset), in_features))
         # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features))
 
         # Xavier (Glorot) normal initialization
-        # self.feedback_weights = torch.nn.init.xavier_normal_(torch.empty(73, in_features))
+        # self.feedback_weights = torch.nn.init.xavier_normal_(torch.empty(len(charset), in_features))
         # self.weight.data = torch.nn.init.xavier_normal_(torch.empty(out_features, in_features))
 
         # Kaiming (He) uniform initialization
-        # self.feedback_weights = torch.nn.init.kaiming_uniform_(torch.empty(73, in_features), mode='fan_in', nonlinearity='relu')
+        # self.feedback_weights = torch.nn.init.kaiming_uniform_(torch.empty(len(charset), in_features), mode='fan_in', nonlinearity='relu')
 
         # Kaiming (He) normal initialization
-        # self.feedback_weights = torch.nn.init.kaiming_normal_(torch.empty(73, in_features), mode='fan_in', nonlinearity='relu')
+        # self.feedback_weights = torch.nn.init.kaiming_normal_(torch.empty(len(charset), in_features), mode='fan_in', nonlinearity='relu')
 
         # Orthogonal initialization
-        # self.feedback_weights = torch.nn.init.orthogonal_(torch.empty(73, in_features))
+        # self.feedback_weights = torch.nn.init.orthogonal_(torch.empty(len(charset), in_features))
 
         # Sparse initialization
-        # self.feedback_weights = torch.nn.init.sparse_(torch.empty(73, in_features), sparsity=0.1)
+        # self.feedback_weights = torch.nn.init.sparse_(torch.empty(len(charset), in_features), sparsity=0.1)
 
         # To use Truncated Normal, you'd need a custom implementation
-        # self.feedback_weights = custom_truncated_normal_(torch.empty(73, in_features), mean=0.0, std=1.0)
+        # self.feedback_weights = custom_truncated_normal_(torch.empty(len(charset), in_features), mean=0.0, std=1.0)
 
         if update_rule == 'covariance':
             self.alpha = alpha  # Decay factor for the exponential moving average

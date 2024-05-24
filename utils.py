@@ -11,7 +11,10 @@ dataset_keys = {
 }
 
 # Your charset
-charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n- "
+# charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n- "
+charset = "0123456789,.?!"
+print(f"length of the charset is {len(charset)}")
+
 char_to_idx = {char: idx for idx, char in enumerate(charset)}
 idx_to_char = {idx: char for char, idx in char_to_idx.items()}
 n_characters = len(charset)
