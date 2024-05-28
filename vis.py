@@ -33,7 +33,7 @@ def save_model_data(model, activations, epoch, track):
             activation_path = os.path.join(save_dir, f'activations_{name}_epoch{epoch}.pt')
             save_tensor(layer.weight, weight_path)
             if name in activations:
-                save_tensor(activations[name], activation_path)
+                save_tensor(activations[name][0], activation_path) # 0 bc I want the activations from only one of the batch of data
     
     # plot to image and log to wandb
     visualize_all_layers_and_save(model, epoch, os.path.join(save_dir, f'visualization_{epoch}.png'))
