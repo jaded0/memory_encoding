@@ -72,7 +72,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         # print(f"shapes. final char: {final_char.shape}, noutput: {noutput.shape}")
         # if isinstance(output, np.ndarray):
         #     noutput = torch.from_numpy(noutput).float() 
-        loss = config['criterion'](final_char, output)
+        loss = config['criterion'](output, final_char)
         # loss = mse_loss(final_char, output)
         # print(f"old loss: {old_loss}, new loss: {loss}")
         if math.isnan(loss):
@@ -87,7 +87,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         # og_losses.append(loss.item())  # Store the original loss for this step
         # reg_losses.append(config['l2_lambda']*l2_reg.item())
         # loss = loss + config['l2_lambda'] * l2_reg  # Add the L2 regularization term to the loss
-        losses.append(-loss.item())  # Store the loss for this step
+        losses.append(loss.item())  # Store the loss for this step
 
         # Convert loss to a reward signal for Hebbian updates
         if config["delta_rewards"]:
