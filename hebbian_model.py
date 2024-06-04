@@ -6,7 +6,7 @@ import sys
 from utils import charset
 
 class HebbianLinear(nn.Linear):
-    def __init__(self, in_features, out_features, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5, requires_grad=False, is_last_layer=False):
+    def __init__(self, in_features, out_features, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5, requires_grad=False, is_last_layer=False, candecay=0.9):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
 
         # Set requires_grad for the base class parameters
@@ -21,6 +21,7 @@ class HebbianLinear(nn.Linear):
         self.is_last_layer = is_last_layer
         self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
         self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
+        self.candecay = candecay
 
         # Uniform distribution initialization
         # self.feedback_weights = torch.nn.init.uniform_(torch.empty(len(charset), in_features), -1, 1)
@@ -165,7 +166,7 @@ class HebbianLinear(nn.Linear):
             imprint_update = self.candidate_weights.data
 
             # Reset or decay candidate_weights
-            self.candidate_weights.data *= 0.9  # Example: decay by half is 0.5
+            self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
 
             # If dropout was applied during forward pass, apply the same mask here
             # if self.dropout_mask is not None:
@@ -226,7 +227,7 @@ class HebbianLinear(nn.Linear):
             p.data += noise
 
 class HebbyRNN(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero', normalize=True, clip_weights=False, update_rule='damage'):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero', normalize=True, clip_weights=False, update_rule='damage', candecay=0.9):
         super(HebbyRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -236,14 +237,14 @@ class HebbyRNN(torch.nn.Module):
         # Using HebbianLinear instead of Linear
         self.linear_layers = torch.nn.ModuleList([HebbianLinear(input_size + hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)])
         for _ in range(1, num_layers):
-            self.linear_layers.append(HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule))
+            self.linear_layers.append(HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay))
 
         # Dropout layers
         # self.dropout = nn.Dropout(dropout_rate)
 
         # Final layers for hidden and output, also using HebbianLinear
-        self.i2h = HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)
-        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=False, is_last_layer=True)
+        self.i2h = HebbianLinear(hidden_size, hidden_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay)
+        self.i2o = HebbianLinear(hidden_size, output_size, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=False, is_last_layer=True, candecay=candecay)
         self.softmax = torch.nn.LogSoftmax(dim=1)
     #     # Initialize weights
     #     self.init_weights()

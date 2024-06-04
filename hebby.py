@@ -163,7 +163,8 @@ def main():
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
     parser.add_argument('--delta_rewards', type=str2bool, nargs='?', const=True, default=True, help='Whether to calculate rewards by change in reward instead.')
     parser.add_argument('--dataset', type=str, default='roneneldan/tinystories', help='The dataset used for training.')
-    
+    parser.add_argument('--candecay', type=float, default=0.9, help='Decay of the candidate weights, each step.')
+
     # Add other parameters as needed
     args = parser.parse_args()
     config = {
@@ -181,6 +182,7 @@ def main():
         "dataset": args.dataset,
         "update_rule": args.update_rule,
         "delta_rewards": args.delta_rewards,
+        "candecay": args.candecay,
     }
     print(args.track)
     if args.track:
@@ -199,6 +201,7 @@ def main():
             "normalize": args.normalize,
             "clip_weights": args.clip_weights,
             "delta_rewards": args.delta_rewards,
+            "candecay": args.candecay,
         })
 
 
@@ -215,7 +218,7 @@ def main():
         rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"])
         optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
     else:
-        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, clip_weights=args.clip_weights, update_rule=args.update_rule)
+        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"])
         # rnn = NeuralNetwork(input_size=n_characters, hidden_size=128, output_size=n_characters)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

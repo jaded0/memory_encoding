@@ -18,8 +18,9 @@ SAVE_FREQUENCY=990001
 N_ITERS=1000000
 PRINT_FREQ=300
 PLOT_FREQ=300
-TRACK=true
+TRACK=false
 DATASET=long_range_memory_dataset
+CANDECAY=0.1
 
 python hebby.py --learning_rate $LEARNING_RATE \
 --imprint_rate $IMPRINT_RATE \
@@ -36,4 +37,5 @@ python hebby.py --learning_rate $LEARNING_RATE \
 --clip_weights $CLIP_WEIGHTS \
 --track $TRACK \
 --dataset $DATASET \
---delta_rewards $DELTA_REWARDS
+--delta_rewards $DELTA_REWARDS \
+--candecay $CANDECAY
