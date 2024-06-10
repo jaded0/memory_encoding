@@ -4,7 +4,7 @@ from vis import register_hooks, save_model_data, visualize_model_data, visualize
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
-from utils import randomTrainingExample, timeSince, str2bool, idx_to_char, n_characters
+from utils import randomTrainingExample, timeSince, str2bool, initialize_charset
 import time
 import math
 import argparse
@@ -204,7 +204,7 @@ def main():
             "candecay": args.candecay,
         })
 
-
+    charset, char_to_idx, idx_to_char, n_characters = initialize_charset(args.dataset)
     # Load data
     dataloader = load_and_preprocess_data(args.dataset)
 
@@ -218,7 +218,7 @@ def main():
         rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"])
         optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
     else:
-        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], normalize=args.normalize, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"])
+        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"])
         # rnn = NeuralNetwork(input_size=n_characters, hidden_size=128, output_size=n_characters)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

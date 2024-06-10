@@ -10,19 +10,28 @@ dataset_keys = {
     "long_range_memory_dataset": "text",
 }
 
-# Your charset
-# charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n- "
-charset = "0123456789,.?!"
-print(f"length of the charset is {len(charset)}")
+def get_charset(dataset_name):
+    if dataset_name == "long_range_memory_dataset":
+        return "0123456789,.?!"
+    else:
+        return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n- "
 
-char_to_idx = {char: idx for idx, char in enumerate(charset)}
-idx_to_char = {idx: char for char, idx in char_to_idx.items()}
-n_characters = len(charset)
+def initialize_charset(dataset_name):
+    charset = get_charset(dataset_name)
+    print(f"length of the charset is {len(charset)}")
+
+    char_to_idx = {char: idx for idx, char in enumerate(charset)}
+    idx_to_char = {idx: char for char, idx in char_to_idx.items()}
+    n_characters = len(charset)
+    return charset, char_to_idx, idx_to_char, n_characters
+
+charset, char_to_idx, idx_to_char, n_characters = initialize_charset("roneneldan/tinystories")  # default dataset
 
 def filter_text(examples, dataset_name):
     """Filter out characters not in the charset and pad sequences to ensure a minimum length of 3 characters."""
     key = dataset_keys.get(dataset_name)
     filtered_and_padded_texts = []
+    charset, _, _, _ = initialize_charset(dataset_name)
 
     for text in examples[key]:
         # Filter out characters not in the charset
@@ -40,34 +49,19 @@ def filter_text(examples, dataset_name):
 
 def text_to_indices(examples, dataset_name):
     key = dataset_keys.get(dataset_name)
+    _, char_to_idx, _, _ = initialize_charset(dataset_name)
     tensors = [torch.tensor([char_to_idx[char] for char in text], dtype=torch.long) for text in examples['text']]
     return {'tensor': tensors}
 
 def text_to_indices_and_one_hot(examples, dataset_name):
     key = dataset_keys.get(dataset_name)
+    _, char_to_idx, _, n_characters = initialize_charset(dataset_name)
     one_hot_tensors = []
     for text in examples['text']:
         indices = [char_to_idx[char] for char in text]
         one_hot = torch.nn.functional.one_hot(torch.tensor(indices, dtype=torch.long), num_classes=n_characters).type(torch.float)
         one_hot_tensors.append(one_hot)
     return {'onehot_tensor': one_hot_tensors}
-
-# def collate_fn(batch):
-#     """ Collate function for DataLoader """
-#     item = batch[0]
-#     text = item['text']
-#     tensor = item['tensor']
-#     tensor = torch.tensor(tensor)
-#     return text, tensor
-# def collate_fn(batch):
-#     """ Collate function for DataLoader """
-#     item = batch[0]
-#     text = item['text']
-#     tensor = item['tensor']
-#     tensor = torch.tensor(tensor)
-#     onehot_tensor = item['onehot_tensor']
-#     onehot_tensor = torch.tensor(onehot_tensor)
-#     return text, tensor, onehot_tensor
 
 from torch.nn.utils.rnn import pad_sequence
 
@@ -77,7 +71,6 @@ def collate_fn(batch):
     tensors = pad_sequence([torch.tensor(item['tensor']) for item in batch], batch_first=True)
     onehot_tensors = pad_sequence([torch.tensor(item['onehot_tensor']) for item in batch], batch_first=True)
     return texts, tensors, onehot_tensors
-
 
 def randomTrainingExample(dataloader):
     """ Get a random training example """
