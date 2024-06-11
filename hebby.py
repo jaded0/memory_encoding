@@ -202,6 +202,7 @@ def main():
             "clip_weights": args.clip_weights,
             "delta_rewards": args.delta_rewards,
             "candecay": args.candecay,
+            "plot_frequency": args.plot_freq,
         })
 
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset(args.dataset)
