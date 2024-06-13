@@ -14,7 +14,7 @@ def get_charset(dataset_name):
     if dataset_name == "long_range_memory_dataset":
         return "0123456789,.?!"
     else:
-        return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n- "
+        return " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n-"
 
 def initialize_charset(dataset_name):
     charset = get_charset(dataset_name)

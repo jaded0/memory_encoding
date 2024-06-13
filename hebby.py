@@ -8,7 +8,6 @@ from utils import randomTrainingExample, timeSince, str2bool, initialize_charset
 import time
 import math
 import argparse
-import time
 import sys
 import numpy as np
 
@@ -19,7 +18,7 @@ def print_graph(g, level=0):
         if sub_g[0] is not None:
             print_graph(sub_g[0], level+1)
 
-def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
+def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_outputs=False):
     criterion = config['criterion']
 
     batch_size = onehot_line_tensor.shape[0]
@@ -27,6 +26,9 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
     rnn.zero_grad()
     loss_total = 0
     # losses = []
+
+    all_outputs = []
+    all_labels = []
 
     for i in range(onehot_line_tensor.size()[1] - 1): 
         hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
@@ -36,6 +38,10 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
         # loss = criterion(output, final_char)
         # losses.append(loss.item())
 
+        if log_outputs:
+            all_outputs.append(output[0])
+            all_labels.append(final_char[0])
+
     loss_total.backward()
     # optimizer.step()
     for p in rnn.parameters():
@@ -44,20 +50,23 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer):
 
     loss_sum = loss_total.item()/onehot_line_tensor.size()[1]
     # loss_sum = sum(losses) / onehot_line_tensor.size()[0]
-    return output, loss_sum, 0, 0
+    return output, loss_sum, 0, 0, all_outputs, all_labels
 
-def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
+def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs=False):
     batch_size = onehot_line_tensor.shape[0]
     # print(f"batch size: {batch_size}")
     hidden = rnn.initHidden(batch_size=batch_size)
     losses, og_losses, reg_losses = [], [], []
     l2_reg, output = None, None
     # print(f"full tensor shape: {onehot_line_tensor.shape}")
+    all_outputs = []
+    all_labels = []
+
     for i in range(onehot_line_tensor.shape[1] - 1):
         l2_reg = None  # Reset L2 regularization term for each character
 
         hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
-        hot_input_char_tensor.requires_grad=False
+        hot_input_char_tensor.requires_grad = False
         # with torch.no_grad():  # Disable gradient calculations
         # Forward pass through the RNN
         # print(hot_input_char_tensor.shape, hidden.shape)
@@ -67,11 +76,16 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
         # output.requires_grad=True
 
         # Compute the loss for this step
-        final_char = onehot_line_tensor[:, i, :]
+        final_char = onehot_line_tensor[:, i+1, :]
         # print(final_char)
         # print(f"shapes. final char: {final_char.shape}, noutput: {noutput.shape}")
         # if isinstance(output, np.ndarray):
         #     noutput = torch.from_numpy(noutput).float() 
+        # if log_outputs:
+        #     charset, char_to_idx, idx_to_char, n_characters = initialize_charset("jbrazzy/baby_names")
+        #     print(f"so I guess that's {idx_to_char.get(torch.argmax(output[0]).item())}")
+        #     print(f"versus {idx_to_char.get(torch.argmax(final_char[0]).item())}")
+        #     print(f"what's given was {idx_to_char.get(torch.argmax(hot_input_char_tensor[0]).item())}")
         loss = config['criterion'](output, final_char)
         # loss = mse_loss(final_char, output)
         # print(f"old loss: {old_loss}, new loss: {loss}")
@@ -98,32 +112,13 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
             last_n_reward_avg = sum(state['last_n_rewards']) / len(state['last_n_rewards'])
             reward_update = reward - last_n_reward_avg
         else:
-            # print_graph(output.grad_fn)
             gglobal_error = torch.autograd.grad(loss, output, retain_graph=False)
             global_error = gglobal_error[0]
-            # print("after")
-            # print_graph(output.grad_fn)
-            # sys.exit()
-            # print(f"og grad shape: {global_error.shape}")
-            # print(global_error)
-            # print(final_char.shape[-1])
-            # global_error = 2.0 / final_char.shape[-1] * (output - final_char) # only to be used with MSE, same as autograd, but done manually. for some reason it's faster tho.
-            # print(f"my grad shape: {global_error.shape}")
-            # print(gglobal_error)
-            # print(global_error)
-            # print(f"diff: {global_error-3*gglobal_error}")
-            # print(f"shapes: output: {output.shape}, final char: {final_char.shape}")
-            # sys.exit()
-            # print(f"manual grad shape: {global_error.shape}")
-            # global_error = 2.0 / onehot_line_tensor.size()[1] * (output - final_char)
             reward_update = -global_error
             rnn.zero_grad()
         
         # Apply Hebbian updates to the network
         rnn.apply_imprints(reward_update, config["learning_rate"], config["imprint_rate"], config["stochasticity"])
-        # rnn.direct_feedback_alignment(hot_input_char_tensor.numpy(), final_char, output, global_error.numpy(), config['learning_rate'])
-        # rnn.direct_feedback_alignment(hot_input_char_tensor.numpy(), final_char, output, global_error.numpy(), config['learning_rate'], reroll=False)
-        # rnn.backpropagation(hot_input_char_tensor.numpy(), final_char, output, config['learning_rate'])
 
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
             # Save the model and activations periodically
@@ -131,18 +126,22 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state):
 
         state['training_instance'] += 1
 
+        if log_outputs:
+            all_outputs.append(output[0])
+            all_labels.append(final_char[0])
+
     # Calculate the average loss for the sequence
     loss_avg = sum(losses) / onehot_line_tensor.shape[1]
     # og_loss_avg = sum(og_losses) / len(og_losses)
     # reg_loss_avg = sum(reg_losses) / len(reg_losses)
     og_loss_avg, reg_loss_avg = 0,0 # i don wanna refactor rn
-    return output, loss_avg, og_loss_avg, reg_loss_avg
+    return output, loss_avg, og_loss_avg, reg_loss_avg, all_outputs, all_labels
 
-def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None):
+def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
     if config['update_rule'] == "backprop":
-        return train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer)
+        return train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_outputs)
     else:
-        return train_hebby(line_tensor, onehot_line_tensor, rnn, config, state)
+        return train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs)
 
 def main():
     # Parse command-line arguments
@@ -206,7 +205,8 @@ def main():
         })
 
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset(args.dataset)
-    # Load data
+    # Ensure that idx_to_char contains all necessary mappings
+    print(f"Character set size: {n_characters}")
     dataloader = load_and_preprocess_data(args.dataset)
 
     # Model Initialization
@@ -220,7 +220,6 @@ def main():
         optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
     else:
         rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"])
-        # rnn = NeuralNetwork(input_size=n_characters, hidden_size=128, output_size=n_characters)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -247,48 +246,50 @@ def main():
             line_tensor = line_tensor.to(device)
             onehot_line_tensor = onehot_line_tensor.to(device)
 
-            # print(line_tensor.shape)
-            output, loss, og_loss, reg_loss = train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer)
+            log_outputs = (iter % (args.plot_freq * 5) == 0)
+            output, loss, og_loss, reg_loss, all_outputs, all_labels = train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
             output = output.detach()
-            # loss = loss.cpu()
+
             # Loss tracking
             current_loss += loss
-            if iter % args.plot_freq == 0:
-                # Print training progress
+            if iter % (args.plot_freq * 5) == 0:  # Logging less frequently
                 topv, topi = output.topk(1, dim=1)
                 predicted_char = idx_to_char[topi[0, 0].item()]
                 target_char = sequence[0][-1]
                 correct = '✓' if predicted_char == target_char else '✗ (%s)' % target_char
                 sequence = sequence[0][-50:]
+
+                # Check for invalid indices before logging
+                valid_outputs = [idx_to_char.get(torch.argmax(o).item(), None) for o in all_outputs]
+                valid_labels = [idx_to_char.get(torch.argmax(l).item(), None) for l in all_labels]
+
+                # Filter out None values
+                valid_outputs = [char for char in valid_outputs if char is not None]
+
                 if args.track:
-                    wandb.log({"loss": loss, "avg_loss": current_loss / args.plot_freq, "correct": correct, "predicted_char": predicted_char, "target_char": target_char, "sequence": sequence})
-                print('%d %d%% (%s) %.4f %s / %s %s' % (iter, iter / args.n_iters * 100, timeSince(start), loss, sequence, predicted_char, correct))
-                all_losses.append(current_loss / args.plot_freq)
+                    wandb.log({
+                        "loss": loss, 
+                        "avg_loss": current_loss / (args.plot_freq * 5), 
+                        "correct": correct, 
+                        "predicted_char": predicted_char, 
+                        "target_char": target_char, 
+                        "sequence": sequence,
+                        "all_outputs": valid_outputs,
+                        "all_labels": valid_labels
+                    })
+
+                # Print the progression of the entire sequence
+                progression = ''.join(valid_outputs)  # Convert list of characters to a string
+                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} Sequence: {sequence} / {progression} {correct}')
+                all_losses.append(current_loss / (args.plot_freq * 5))
                 current_loss = 0
-                # sps = args.plot_freq/(time.time()-step_start)
-                # step_start = time.time()
-                # print(f"steps per second: {sps} (you want it to be high)")
+
     except KeyboardInterrupt:
         print("\nok, finishing up..")
 
     if args.track:
         wandb.finish()
-
-    # Plotting the Training Loss
-    # plt.figure()
-    # plt.plot(all_losses)
-    # plt.title("Training Loss Over Time")
-    # plt.xlabel("Iterations")
-    # plt.ylabel("Loss")
-    # plt.show()
-
-    # # Visualization and Animations
-    # visualize_model_data('i2h', 0)
-    # visualize_all_layers_and_save(rnn, 0, "jusone.png")
     create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
-
-    # hidden = rnn.initHidden()
-    # output, hidden = rnn(hot_input_char_tensor, hidden)
 
 
 if __name__ == '__main__':

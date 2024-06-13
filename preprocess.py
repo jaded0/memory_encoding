@@ -15,10 +15,10 @@ def load_and_preprocess_data(dataset_name):
         dataset = load_from_disk("long_range_memory_dataset")
     else:
         dataset = load_dataset(dataset_name)
-    # print(f"cleaned up from cache: {dataset.cleanup_cache_files()}")
+    print(f"cleaned up from cache: {dataset.cleanup_cache_files()}")
     # print(f"first dataset is {dataset}")
     # print(f"dataset is {dataset[dataset_keys[dataset_name]]}")
-    dataset = dataset[dataset_keys[dataset_name]]#.select(range(200))
+    dataset = dataset[dataset_keys[dataset_name]].select(range(200))
     if dataset_name == "brucewlee1/htest-palindrome":
         dataset = dataset.filter(lambda example: example["correct_options_idx"][0] == 0)
 
