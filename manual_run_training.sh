@@ -65,12 +65,12 @@ PRINT_FREQ=30
 PLOT_FREQ=30
 
 # true or false
-TRACK=false
+TRACK=true
 
 # roneneldan/tinystories
 # jbrazzy/baby_names
 # brucewlee1/htest-palindrome
-DATASET=jbrazzy/baby_names
+DATASET=long_range_memory_dataset
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \

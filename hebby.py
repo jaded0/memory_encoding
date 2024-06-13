@@ -274,8 +274,8 @@ def main():
                         "predicted_char": predicted_char, 
                         "target_char": target_char, 
                         "sequence": sequence,
-                        "all_outputs": valid_outputs,
-                        "all_labels": valid_labels
+                        # "all_outputs": valid_outputs,
+                        # "all_labels": valid_labels
                     })
 
                 # Print the progression of the entire sequence
