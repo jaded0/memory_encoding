@@ -1,8 +1,10 @@
 import random
 from datasets import Dataset, DatasetDict
-from utils import charset
+from utils import initialize_charset
 
 def generate_sample():
+    charset, char_to_idx, idx_to_char, n_characters = initialize_charset("long_range_memory_dataset")  # default dataset
+
     random_char = random.choice(charset)
     
     # Generate random number of zeroes before '?'
