@@ -27,7 +27,7 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=5e-4
+LEARNING_RATE=1e-7
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -44,10 +44,10 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=128
+HIDDEN_SIZE=64
 
 # Number of layers in RNN
-NUM_LAYERS=5
+NUM_LAYERS=4
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
@@ -72,6 +72,9 @@ TRACK=true
 # brucewlee1/htest-palindrome
 DATASET=long_range_memory_dataset
 
+CANDECAY=0.99
+
+
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
                        --imprint_rate $IMPRINT_RATE \
@@ -88,4 +91,5 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --clip_weights $CLIP_WEIGHTS \
                        --track $TRACK \
                        --dataset $DATASET \
-                       --delta_rewards $DELTA_REWARDS
+                       --delta_rewards $DELTA_REWARDS \
+                       --candecay $CANDECAY

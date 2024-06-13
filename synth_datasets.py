@@ -11,7 +11,7 @@ def generate_sample():
     zeroes_before_question = "0" * random.randint(1, 5)
     
     # Generate random number of zeroes between '?' and '!'
-    zeroes_between_question_exclamation = "0" * random.randint(1, 5)
+    zeroes_between_question_exclamation = "0" * random.randint(1, 2)
     
     # Generate random number of zeroes after '!'
     zeroes_after_exclamation = "0" * random.randint(1, 5)

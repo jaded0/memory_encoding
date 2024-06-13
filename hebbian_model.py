@@ -163,7 +163,7 @@ class HebbianLinear(nn.Linear):
             update = learning_rate * imprint_update * projected_error.T
         elif self.update_rule == 'candidate':
             # only evaluate past weight updates with the current reward signal
-            imprint_update = self.candidate_weights.data
+            imprint_update = self.candidate_weights.data.clone()  # Clone the candidate weights to avoid modifying imprint_update
 
             # Reset or decay candidate_weights
             self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
@@ -197,6 +197,7 @@ class HebbianLinear(nn.Linear):
             # update = update.T + imprint_update * imprint_rate
             # update = global_error.T * learning_rate * self.feedback_weights
             imprint_update = imprint_update
+            # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
             update = learning_rate * imprint_update 
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
