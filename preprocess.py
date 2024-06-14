@@ -6,13 +6,17 @@ dataset_keys = {
     "roneneldan/tinystories": "train",
     "jbrazzy/baby_names": "train",
     "brucewlee1/htest-palindrome": "test",
-    "long_range_memory_dataset": "train"
+    "long_range_memory_dataset": "train",
+    "1_resequence": "train",
+    "2_resequence": "train",
+    "3_resequence": "train",
+    "4_resequence": "train",
 }
 
 # Load dataset
 def load_and_preprocess_data(dataset_name):
-    if dataset_name == "long_range_memory_dataset":
-        dataset = load_from_disk("long_range_memory_dataset")
+    if dataset_name == "long_range_memory_dataset" or "resequence" in dataset_name:
+        dataset = load_from_disk(dataset_name)
     else:
         dataset = load_dataset(dataset_name)
     # print(f"cleaned up from cache: {dataset.cleanup_cache_files()}")
@@ -37,7 +41,7 @@ def load_and_preprocess_data(dataset_name):
     # Create a DataLoader
     dataloader = torch.utils.data.DataLoader(
         dataset, 
-        batch_size=5, 
+        batch_size=32, 
         shuffle=True, 
         collate_fn=collate_fn
     )

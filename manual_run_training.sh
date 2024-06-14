@@ -27,7 +27,7 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-7
+LEARNING_RATE=1e-5
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -44,10 +44,10 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=64
+HIDDEN_SIZE=128
 
 # Number of layers in RNN
-NUM_LAYERS=4
+NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
@@ -70,7 +70,8 @@ TRACK=true
 # roneneldan/tinystories
 # jbrazzy/baby_names
 # brucewlee1/htest-palindrome
-DATASET=long_range_memory_dataset
+# long_range_memory_dataset
+DATASET=2_resequence
 
 CANDECAY=0.99
 

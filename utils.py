@@ -8,10 +8,14 @@ dataset_keys = {
     "jbrazzy/baby_names": "Names",
     "brucewlee1/htest-palindrome": "centerpiece",
     "long_range_memory_dataset": "text",
+    "1_resequence": "text",
+    "2_resequence": "text",
+    "3_resequence": "text",
+    "4_resequence": "text",
 }
 
 def get_charset(dataset_name):
-    if dataset_name == "long_range_memory_dataset":
+    if dataset_name == "long_range_memory_dataset" or "resequence" in dataset_name:
         return "0123456789,.?!"
     else:
         return " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n-"
