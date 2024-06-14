@@ -33,7 +33,7 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
     for i in range(onehot_line_tensor.size()[1] - 1): 
         hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
         output, hidden = rnn(hot_input_char_tensor, hidden)
-        final_char = onehot_line_tensor[:, i, :]
+        final_char = onehot_line_tensor[:, i+1, :]
         loss_total += criterion(output, final_char)
         # loss = criterion(output, final_char)
         # losses.append(loss.item())
