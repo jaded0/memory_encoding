@@ -16,7 +16,7 @@ rm model_data/*
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
 UPDATE_RULE='plastic_candidate'
 
-
+GROUP='clip_plasticity'
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -27,8 +27,9 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-7
-PLAST_LEARNING_RATE=1e-7
+LEARNING_RATE=1e-5
+PLAST_LEARNING_RATE=1e-5
+PLAST_CLIP=1
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -45,7 +46,7 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=256
+HIDDEN_SIZE=128
 
 # Number of layers in RNN
 NUM_LAYERS=3
@@ -79,8 +80,10 @@ CANDECAY=0.99
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
+                       --group $GROUP \
                        --imprint_rate $IMPRINT_RATE \
                        --plast_learning_rate $PLAST_LEARNING_RATE \
+                       --plast_clip $PLAST_CLIP \
                        --stochasticity $STOCHASTICITY \
                        --len_reward_history $LEN_REWARD_HISTORY \
                        --save_frequency $SAVE_FREQUENCY \

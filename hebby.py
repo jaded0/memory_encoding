@@ -118,7 +118,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             rnn.zero_grad()
         
         # Apply Hebbian updates to the network
-        rnn.apply_imprints(reward_update, config["learning_rate"], config["plast_learning_rate"], config["imprint_rate"], config["stochasticity"])
+        rnn.apply_imprints(reward_update, config["learning_rate"], config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])
 
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
             # Save the model and activations periodically
@@ -148,6 +148,7 @@ def main():
     parser = argparse.ArgumentParser(description='Train a model with specified hyperparameters.')
     parser.add_argument('--learning_rate', type=float, default=0.005, help='Learning rate for the optimizer')
     parser.add_argument('--plast_learning_rate', type=float, default=0.005, help='Learning rate for the plasticity')
+    parser.add_argument('--plast_clip', type=float, default=0.005, help='How high the plasticity can go.')
     parser.add_argument('--imprint_rate', type=float, default=0.00, help='Imprint rate for Hebbian updates')
     parser.add_argument('--stochasticity', type=float, default=0.0001, help='Stochasticity in Hebbian updates')
     parser.add_argument('--len_reward_history', type=int, default=1000, help='Number of rewards to track')
@@ -164,12 +165,14 @@ def main():
     parser.add_argument('--delta_rewards', type=str2bool, nargs='?', const=True, default=True, help='Whether to calculate rewards by change in reward instead.')
     parser.add_argument('--dataset', type=str, default='roneneldan/tinystories', help='The dataset used for training.')
     parser.add_argument('--candecay', type=float, default=0.9, help='Decay of the candidate weights, each step.')
+    parser.add_argument('--group', type=str, default="nothing_in_particular", help='Description of what sort of experiment is being run, here.')
 
     # Add other parameters as needed
     args = parser.parse_args()
     config = {
         "learning_rate": args.learning_rate,
         "plast_learning_rate": args.plast_learning_rate,
+        "plast_clip": args.plast_clip,
         "imprint_rate": args.imprint_rate,
         "stochasticity": args.stochasticity,
         "len_reward_history": args.len_reward_history,
@@ -188,9 +191,10 @@ def main():
     print(args.track)
     if args.track:
         # wandb initialization
-        wandb.init(project="hebby", config={
+        wandb.init(project="hebby", group=args.group, config={
             "learning_rate": args.learning_rate,
-            "plast_learning_rate":args.plast_learning_rate,
+            "plast_learning_rate": args.plast_learning_rate,
+            "plast_clip": args.plast_clip,
             "architecture": "crazy hebbian thing",
             "update_rule": args.update_rule,
             "n_hidden": args.hidden_size,
