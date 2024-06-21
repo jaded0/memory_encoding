@@ -58,7 +58,7 @@ class HebbianLinear(nn.Linear):
         self.in_traces.data = input
         self.out_traces.data = output
 
-    def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
+    def apply_imprints(self, reward, learning_rate, plast_learning_rate, imprint_rate, stochasticity):
         input = self.in_traces.data
         output = self.out_traces.data    
         # Reshape input and output for broadcasting
@@ -219,7 +219,7 @@ class HebbianLinear(nn.Linear):
             update = learning_rate * imprint_update
             update = update * self.plasticity
 
-            self.plasticity += 1e-6 * plasticity_imprint_update
+            self.plasticity += plast_learning_rate * plasticity_imprint_update
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
 
@@ -312,12 +312,12 @@ class HebbyRNN(torch.nn.Module):
         device = next(self.parameters()).device
         return torch.zeros(batch_size, self.hidden_size, device=device, requires_grad=False)
 
-    def apply_imprints(self, reward, learning_rate, imprint_rate, stochasticity):
+    def apply_imprints(self, reward, learning_rate, plast_learning_rate, imprint_rate, stochasticity):
         # Apply imprints for all HebbianLinear layers
         for layer in self.linear_layers:
-            layer.apply_imprints(reward, learning_rate, imprint_rate, stochasticity)
-        self.i2h.apply_imprints(reward, learning_rate, imprint_rate, stochasticity)
-        self.i2o.apply_imprints(reward, learning_rate, imprint_rate, stochasticity)
+            layer.apply_imprints(reward, learning_rate, plast_learning_rate, imprint_rate, stochasticity)
+        self.i2h.apply_imprints(reward, learning_rate, plast_learning_rate, imprint_rate, stochasticity)
+        self.i2o.apply_imprints(reward, learning_rate, plast_learning_rate, imprint_rate, stochasticity)
 
 
 class SimpleRNN(nn.Module):
@@ -403,7 +403,7 @@ if __name__ == "__main__":
     output = layer(input_data)
 
     print("Weights:\n ", layer.weight)
-    layer.apply_imprints(reward=0.5, learning_rate=0.1, imprint_rate=0.1)
+    layer.apply_imprints(reward=0.5, learning_rate=0.1, plast_learning_rate=0.01, imprint_rate=0.1)
     print("Weights after imprint:\n ", layer.weight)
 
     # Ensure the input size matches the number of features for each input

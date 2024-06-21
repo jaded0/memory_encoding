@@ -118,7 +118,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             rnn.zero_grad()
         
         # Apply Hebbian updates to the network
-        rnn.apply_imprints(reward_update, config["learning_rate"], config["imprint_rate"], config["stochasticity"])
+        rnn.apply_imprints(reward_update, config["learning_rate"], config["plast_learning_rate"], config["imprint_rate"], config["stochasticity"])
 
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
             # Save the model and activations periodically
@@ -147,6 +147,7 @@ def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Train a model with specified hyperparameters.')
     parser.add_argument('--learning_rate', type=float, default=0.005, help='Learning rate for the optimizer')
+    parser.add_argument('--plast_learning_rate', type=float, default=0.005, help='Learning rate for the plasticity')
     parser.add_argument('--imprint_rate', type=float, default=0.00, help='Imprint rate for Hebbian updates')
     parser.add_argument('--stochasticity', type=float, default=0.0001, help='Stochasticity in Hebbian updates')
     parser.add_argument('--len_reward_history', type=int, default=1000, help='Number of rewards to track')
@@ -168,6 +169,7 @@ def main():
     args = parser.parse_args()
     config = {
         "learning_rate": args.learning_rate,
+        "plast_learning_rate": args.plast_learning_rate,
         "imprint_rate": args.imprint_rate,
         "stochasticity": args.stochasticity,
         "len_reward_history": args.len_reward_history,
@@ -188,6 +190,7 @@ def main():
         # wandb initialization
         wandb.init(project="hebby", config={
             "learning_rate": args.learning_rate,
+            "plast_learning_rate":args.plast_learning_rate,
             "architecture": "crazy hebbian thing",
             "update_rule": args.update_rule,
             "n_hidden": args.hidden_size,

@@ -14,7 +14,7 @@ rm model_data/*
 # candidate - Custom reward-based update: Introduces candidate weight changes that are temporarily applied and evaluated. Permanent updates to weights are made based on a reward signal, modulating the efficacy of the changes.
 # backprop - Standard backpropagation: Computes gradients using chain rule and updates weights based on gradient descent. Relies on global error propagated from the output layer.
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
-UPDATE_RULE='candidate'
+UPDATE_RULE='plastic_candidate'
 
 
 
@@ -27,7 +27,8 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-5
+LEARNING_RATE=1e-7
+PLAST_LEARNING_RATE=1e-7
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -79,6 +80,7 @@ CANDECAY=0.99
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
                        --imprint_rate $IMPRINT_RATE \
+                       --plast_learning_rate $PLAST_LEARNING_RATE \
                        --stochasticity $STOCHASTICITY \
                        --len_reward_history $LEN_REWARD_HISTORY \
                        --save_frequency $SAVE_FREQUENCY \
