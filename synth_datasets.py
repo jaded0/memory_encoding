@@ -28,7 +28,7 @@ def generate_long_range_sample():
     
     return sample
 
-def generate_resequence_sample(length=5, n=1):
+def generate_resequence_sample(length=10, n=1):
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset("long_range_memory_dataset")  # default dataset
     random_n = random.randint(1, n)  # Select a random number between 1 and n
     if random_n > len(charset):

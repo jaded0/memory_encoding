@@ -31,11 +31,11 @@ LEARNING_RATE=1e-5
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=1e-6
+IMPRINT_RATE=5e-6
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=1e-10
+STOCHASTICITY=1e-30
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
@@ -44,7 +44,7 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=128
+HIDDEN_SIZE=256
 
 # Number of layers in RNN
 NUM_LAYERS=3
@@ -58,11 +58,11 @@ N_ITERS=1000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=30
+PRINT_FREQ=50
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=30
+PLOT_FREQ=50
 
 # true or false
 TRACK=true

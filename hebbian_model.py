@@ -23,13 +23,6 @@ class HebbianLinear(nn.Linear):
         self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
         self.candecay = candecay
 
-        # Uniform distribution initialization
-        # self.feedback_weights = torch.nn.init.uniform_(torch.empty(len(charset), in_features), -1, 1)
-        
-        # Normal (Gaussian) distribution initialization
-        # self.feedback_weights = torch.nn.init.normal_(torch.empty(len(charset), in_features), mean=0.0, std=1.0)
-
-        # Xavier (Glorot) uniform initialization
         # Calculate the adjusted gain for [-1, 1] range
         gain = 1 / math.sqrt(6 / (in_features + out_features))
 
@@ -37,33 +30,15 @@ class HebbianLinear(nn.Linear):
         self.feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features), gain=gain), requires_grad=requires_grad)
         self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
-        # self.feedback_weights = torch.nn.init.xavier_uniform_(torch.empty(len(charset), in_features))
-        # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features))
-
-        # Xavier (Glorot) normal initialization
-        # self.feedback_weights = torch.nn.init.xavier_normal_(torch.empty(len(charset), in_features))
-        # self.weight.data = torch.nn.init.xavier_normal_(torch.empty(out_features, in_features))
-
-        # Kaiming (He) uniform initialization
-        # self.feedback_weights = torch.nn.init.kaiming_uniform_(torch.empty(len(charset), in_features), mode='fan_in', nonlinearity='relu')
-
-        # Kaiming (He) normal initialization
-        # self.feedback_weights = torch.nn.init.kaiming_normal_(torch.empty(len(charset), in_features), mode='fan_in', nonlinearity='relu')
-
-        # Orthogonal initialization
-        # self.feedback_weights = torch.nn.init.orthogonal_(torch.empty(len(charset), in_features))
-
-        # Sparse initialization
-        # self.feedback_weights = torch.nn.init.sparse_(torch.empty(len(charset), in_features), sparsity=0.1)
-
-        # To use Truncated Normal, you'd need a custom implementation
-        # self.feedback_weights = custom_truncated_normal_(torch.empty(len(charset), in_features), mean=0.0, std=1.0)
-
         if update_rule == 'covariance':
             self.alpha = alpha  # Decay factor for the exponential moving average
         
         if update_rule == 'candidate':
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
+        if update_rule == 'plastic_candidate':
+            self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
+            self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
+            self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
 
     def forward(self, input):
         # print(f"in forward. input requires grad? {input.requires_grad}")
@@ -198,7 +173,53 @@ class HebbianLinear(nn.Linear):
             # update = global_error.T * learning_rate * self.feedback_weights
             imprint_update = imprint_update
             # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
-            update = learning_rate * imprint_update 
+            update = learning_rate * imprint_update
+        elif self.update_rule == 'plastic_candidate':
+            # only evaluate past weight updates with the current reward signal
+            imprint_update = self.candidate_weights.data.clone()  # Clone the candidate weights to avoid modifying imprint_update
+            plasticity_imprint_update = self.plasticity_candidate_weights.data.clone()  # Clone the candidate weights to avoid modifying imprint_update
+
+            # Reset or decay candidate_weights
+            self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
+            self.plasticity_candidate_weights.data *= 0.999  # Example: decay by half is 0.5
+
+            # If dropout was applied during forward pass, apply the same mask here
+            # if self.dropout_mask is not None:
+            #     projected_error *= self.dropout_mask
+            # Assuming 'inputs' holds the inputs to the layer
+            # out = output/(output.shape[1]) + projected_error
+            # out = output/(input.shape[1])
+            # print(f"shapes. projected error: {projected_error.shape}, input.T: {input.T.shape}, input: {input.shape}, weights.T:{self.weight.data.T.shape}, weights: {self.weight.data.shape}")
+            # out = projected_error
+            # candidate_update = projected_error*(input.T - out * self.weight.data.T) # oja's rule, reused
+            # Assuming out = projected_error for simplicity
+            out = projected_error.unsqueeze(2)
+            # print(f"new out shape: {out.shape}")
+            out_weights_product = out * self.weight.data
+            plasticity_out_weights_product = out * self.weight.data
+            # print(f"shape of input: {input.shape}")
+            # input = input.unsqueeze(2)
+            # print(f"shape of input: {input.shape}")
+            # Now, calculate the candidate_update
+            # Note that element-wise multiplication (*) is broadcasted over the batch dimension
+            # print(f"out shape: {out.shape},out_weights_product shape: {out_weights_product.shape}, input shape: {input.shape}")
+            candidate_update = out * (input.unsqueeze(1) - out_weights_product)
+            plasticity_candidate_update = out * (input.unsqueeze(1) - plasticity_out_weights_product)
+            # candidate_update = candidate_update.T
+            # self.candidate_weights.data += candidate_update
+            # print(f"shapes. candidate_weights: {self.candidate_weights.data.shape}, update shape: {candidate_update.shape}, mean: {candidate_update.mean(dim=0).shape}")
+            self.candidate_weights.data += candidate_update.mean(dim=0)
+            self.plasticity_candidate_weights.data += plasticity_candidate_update.mean(dim=0)
+
+            # update = learning_rate * inputs.T * projected_error
+            # update = update.T + imprint_update * imprint_rate
+            # update = global_error.T * learning_rate * self.feedback_weights
+            imprint_update = imprint_update
+            # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
+            update = learning_rate * imprint_update
+            update = update * self.plasticity
+
+            self.plasticity += 1e-6 * plasticity_imprint_update
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
 
