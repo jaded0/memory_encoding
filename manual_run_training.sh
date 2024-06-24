@@ -14,9 +14,10 @@ rm model_data/*
 # candidate - Custom reward-based update: Introduces candidate weight changes that are temporarily applied and evaluated. Permanent updates to weights are made based on a reward signal, modulating the efficacy of the changes.
 # backprop - Standard backpropagation: Computes gradients using chain rule and updates weights based on gradient descent. Relies on global error propagated from the output layer.
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
-UPDATE_RULE='plastic_candidate'
+# plastic_candidate
+UPDATE_RULE='candidate'
 
-GROUP='clip_plasticity'
+GROUP='fixperf'
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -27,9 +28,10 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-5
-PLAST_LEARNING_RATE=1e-5
-PLAST_CLIP=1
+LEARNING_RATE=1e-4
+PLAST_LEARNING_RATE=1e-40
+PLAST_CLIP=2
+RESIDUAL_CONNECTION=true
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -74,7 +76,7 @@ TRACK=true
 # brucewlee1/htest-palindrome
 # long_range_memory_dataset
 DATASET=2_resequence
-
+BATCH_SIZE=32
 CANDECAY=0.99
 
 
@@ -98,4 +100,6 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --track $TRACK \
                        --dataset $DATASET \
                        --delta_rewards $DELTA_REWARDS \
-                       --candecay $CANDECAY
+                       --candecay $CANDECAY \
+                       --batch_size $BATCH_SIZE \
+                       --residual_connection $RESIDUAL_CONNECTION

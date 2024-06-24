@@ -14,7 +14,7 @@ dataset_keys = {
 }
 
 # Load dataset
-def load_and_preprocess_data(dataset_name):
+def load_and_preprocess_data(dataset_name, batch_size=4):
     if dataset_name == "long_range_memory_dataset" or "resequence" in dataset_name:
         dataset = load_from_disk(dataset_name)
     else:
@@ -41,7 +41,7 @@ def load_and_preprocess_data(dataset_name):
     # Create a DataLoader
     dataloader = torch.utils.data.DataLoader(
         dataset, 
-        batch_size=32, 
+        batch_size=batch_size, 
         shuffle=True, 
         collate_fn=collate_fn
     )

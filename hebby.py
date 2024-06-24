@@ -153,6 +153,7 @@ def main():
     parser.add_argument('--stochasticity', type=float, default=0.0001, help='Stochasticity in Hebbian updates')
     parser.add_argument('--len_reward_history', type=int, default=1000, help='Number of rewards to track')
     parser.add_argument('--save_frequency', type=int, default=100000, help='How often to save and display model weights.')
+    parser.add_argument('--residual_connection', type=str2bool, nargs='?', const=True, default=True, help='whether to have a skip connection')
     parser.add_argument('--hidden_size', type=int, default=128, help='Size of hidden layers in RNN')
     parser.add_argument('--num_layers', type=int, default=3, help='Number of layers in RNN')
     parser.add_argument('--n_iters', type=int, default=10000, help='Number of training iterations')
@@ -166,6 +167,7 @@ def main():
     parser.add_argument('--dataset', type=str, default='roneneldan/tinystories', help='The dataset used for training.')
     parser.add_argument('--candecay', type=float, default=0.9, help='Decay of the candidate weights, each step.')
     parser.add_argument('--group', type=str, default="nothing_in_particular", help='Description of what sort of experiment is being run, here.')
+    parser.add_argument('--batch_size', type=int, default=4, help='how much to stuff in at once')
 
     # Add other parameters as needed
     args = parser.parse_args()
@@ -180,6 +182,7 @@ def main():
         # "criterion": torch.nn.MSELoss(),
         "criterion": torch.nn.CrossEntropyLoss(),
         "l2_lambda": 0.000,  # Example static hyperparameter
+        "residual_connection": args.residual_connection,
         "n_hidden": args.hidden_size,
         "n_layers": args.num_layers,
         "track": args.track,
@@ -187,6 +190,7 @@ def main():
         "update_rule": args.update_rule,
         "delta_rewards": args.delta_rewards,
         "candecay": args.candecay,
+        "batch_size": args.batch_size,
     }
     print(args.track)
     if args.track:
@@ -197,6 +201,7 @@ def main():
             "plast_clip": args.plast_clip,
             "architecture": "crazy hebbian thing",
             "update_rule": args.update_rule,
+            "residual_connection": args.residual_connection,
             "n_hidden": args.hidden_size,
             "n_layers": args.num_layers,
             "dataset": args.dataset,
@@ -209,12 +214,13 @@ def main():
             "delta_rewards": args.delta_rewards,
             "candecay": args.candecay,
             "plot_frequency": args.plot_freq,
+            "batch_size": args.batch_size,
         })
 
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset(args.dataset)
     # Ensure that idx_to_char contains all necessary mappings
     print(f"Character set size: {n_characters}")
-    dataloader = load_and_preprocess_data(args.dataset)
+    dataloader = load_and_preprocess_data(args.dataset, args.batch_size)
 
     # Model Initialization
     input_size = n_characters
@@ -226,7 +232,7 @@ def main():
         rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"])
         optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
     else:
-        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"])
+        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, residual_connection=args.residual_connection, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"])
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")

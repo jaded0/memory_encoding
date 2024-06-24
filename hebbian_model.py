@@ -219,7 +219,7 @@ class HebbianLinear(nn.Linear):
             update = learning_rate * imprint_update
             update = update * self.plasticity
 
-            self.plasticity += plast_learning_rate * plasticity_imprint_update
+            self.plasticity.data += plast_learning_rate * plasticity_imprint_update
             self.plasticity.data.clamp_(0.1,plast_clip)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
@@ -250,24 +250,25 @@ class HebbianLinear(nn.Linear):
             p.data += noise
 
 class HebbyRNN(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, charset, dropout_rate=0.1, init_type='zero', normalize=True, clip_weights=False, update_rule='damage', candecay=0.9):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, charset, dropout_rate=0.1, residual_connection=False, init_type='zero', normalize=True, clip_weights=False, update_rule='damage', candecay=0.9):
         super(HebbyRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout_rate = dropout_rate
         self.init_type = init_type
-
+        inner_size = input_size+hidden_size
+        self.residual_connection = residual_connection
         # Using HebbianLinear instead of Linear
-        self.linear_layers = torch.nn.ModuleList([HebbianLinear(input_size + hidden_size, hidden_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)])
+        self.linear_layers = torch.nn.ModuleList([HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)])
         for _ in range(1, num_layers):
-            self.linear_layers.append(HebbianLinear(hidden_size, hidden_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay))
+            self.linear_layers.append(HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay))
 
         # Dropout layers
         # self.dropout = nn.Dropout(dropout_rate)
 
         # Final layers for hidden and output, also using HebbianLinear
-        self.i2h = HebbianLinear(hidden_size, hidden_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay)
-        self.i2o = HebbianLinear(hidden_size, output_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=False, is_last_layer=True, candecay=candecay)
+        self.i2h = HebbianLinear(inner_size, hidden_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay)
+        self.i2o = HebbianLinear(inner_size, output_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=False, is_last_layer=True, candecay=candecay)
         self.softmax = torch.nn.LogSoftmax(dim=1)
     #     # Initialize weights
     #     self.init_weights()
@@ -292,11 +293,18 @@ class HebbyRNN(torch.nn.Module):
     def forward(self, input, hidden):
         # print(f"input shape: {input.shape}, hidden shape: {hidden.shape}")
         combined = torch.cat((input, hidden), dim=1)
+        if self.residual_connection:
+            residual = combined.clone()  # Store the original combined tensor for residual connection
         # Pass through the Hebbian linear layers with ReLU and Dropout
         for layer in self.linear_layers:
             combined = layer(combined)
             combined = F.relu(combined)
             # combined = self.dropout(combined)
+
+        # Add the residual (original combined tensor) to the output of the layers
+        # print(f"residual_shape: {residual.shape}, combined shape: {combined.shape}")
+        if self.residual_connection:
+            combined += residual
 
         # Split into hidden and output
         hidden = self.i2h(combined)
