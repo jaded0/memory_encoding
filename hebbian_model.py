@@ -39,6 +39,8 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
+            self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features), gain=gain), requires_grad=requires_grad)
+
 
     def forward(self, input):
         # print(f"in forward. input requires grad? {input.requires_grad}")
@@ -194,9 +196,10 @@ class HebbianLinear(nn.Linear):
             # candidate_update = projected_error*(input.T - out * self.weight.data.T) # oja's rule, reused
             # Assuming out = projected_error for simplicity
             out = projected_error.unsqueeze(2)
+            out_plasticity = (global_error @ self.plasticity_feedback_weights).unsqueeze(2)
             # print(f"new out shape: {out.shape}")
             out_weights_product = out * self.weight.data
-            plasticity_out_weights_product = out * self.weight.data
+            plasticity_out_weights_product = out_plasticity * self.plasticity.data
             # print(f"shape of input: {input.shape}")
             # input = input.unsqueeze(2)
             # print(f"shape of input: {input.shape}")

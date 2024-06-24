@@ -15,7 +15,7 @@ rm model_data/*
 # backprop - Standard backpropagation: Computes gradients using chain rule and updates weights based on gradient descent. Relies on global error propagated from the output layer.
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
 # plastic_candidate
-UPDATE_RULE='candidate'
+UPDATE_RULE='plastic_candidate'
 
 GROUP='fixperf'
 
@@ -28,8 +28,8 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-4
-PLAST_LEARNING_RATE=1e-40
+LEARNING_RATE=1e-5
+PLAST_LEARNING_RATE=1e-4
 PLAST_CLIP=2
 RESIDUAL_CONNECTION=true
 
@@ -58,7 +58,7 @@ NUM_LAYERS=3
 SAVE_FREQUENCY=100000000
 
 # Number of training iterations, like 100000
-N_ITERS=1000000
+N_ITERS=1000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
@@ -76,7 +76,7 @@ TRACK=true
 # brucewlee1/htest-palindrome
 # long_range_memory_dataset
 DATASET=2_resequence
-BATCH_SIZE=32
+BATCH_SIZE=4
 CANDECAY=0.99
 
 

@@ -53,9 +53,9 @@ def generate_dataset(num_samples, split, sample_type="long_range"):
     return Dataset.from_dict({"text": samples}, split=split)
 
 # Generate train, validation, and test datasets for long range memory dataset
-train_dataset = generate_dataset(num_samples=100000, split="train")
-validation_dataset = generate_dataset(num_samples=5000, split="validation")
-test_dataset = generate_dataset(num_samples=20000, split="test")
+train_dataset = generate_dataset(num_samples=1000000, split="train")
+validation_dataset = generate_dataset(num_samples=50000, split="validation")
+test_dataset = generate_dataset(num_samples=200000, split="test")
 
 # Create a DatasetDict with the train, validation, and test datasets
 dataset_dict = DatasetDict({
