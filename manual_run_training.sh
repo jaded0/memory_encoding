@@ -17,7 +17,7 @@ rm model_data/*
 # plastic_candidate
 UPDATE_RULE='plastic_candidate'
 
-GROUP='fixperf'
+GROUP='whatever'
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -28,10 +28,10 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-5
-PLAST_LEARNING_RATE=1e-4
-PLAST_CLIP=2
-RESIDUAL_CONNECTION=true
+LEARNING_RATE=1e-3
+PLAST_LEARNING_RATE=1e-15
+PLAST_CLIP=5
+RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -39,7 +39,7 @@ IMPRINT_RATE=5e-6
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=1e-30
+STOCHASTICITY=1e-4
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
@@ -48,7 +48,7 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=128
+HIDDEN_SIZE=512
 
 # Number of layers in RNN
 NUM_LAYERS=3
@@ -76,8 +76,8 @@ TRACK=true
 # brucewlee1/htest-palindrome
 # long_range_memory_dataset
 DATASET=2_resequence
-BATCH_SIZE=4
-CANDECAY=0.99
+BATCH_SIZE=32
+CANDECAY=0.2
 
 
 # Running the training script with the specified hyperparameters

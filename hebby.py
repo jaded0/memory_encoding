@@ -48,7 +48,7 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
         if p.grad is not None:
             p.data.add_(p.grad.data, alpha=-config['learning_rate'])
 
-    loss_sum = loss_total.item()/onehot_line_tensor.size()[1]
+    loss_sum = loss_total.item()/onehot_line_tensor.shape[1]
     # loss_sum = sum(losses) / onehot_line_tensor.size()[0]
     return output, loss_sum, 0, 0, all_outputs, all_labels
 

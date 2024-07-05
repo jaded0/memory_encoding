@@ -22,13 +22,14 @@ class HebbianLinear(nn.Linear):
         self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
         self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
         self.candecay = candecay
+        self.t = 1000
 
         # Calculate the adjusted gain for [-1, 1] range
         gain = 1 / math.sqrt(6 / (in_features + out_features))
 
         # Initialize weights with the adjusted gain
         self.feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features), gain=gain), requires_grad=requires_grad)
-        self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
+        # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
         if update_rule == 'covariance':
             self.alpha = alpha  # Decay factor for the exponential moving average
@@ -211,8 +212,15 @@ class HebbianLinear(nn.Linear):
             # candidate_update = candidate_update.T
             # self.candidate_weights.data += candidate_update
             # print(f"shapes. candidate_weights: {self.candidate_weights.data.shape}, update shape: {candidate_update.shape}, mean: {candidate_update.mean(dim=0).shape}")
-            self.candidate_weights.data += candidate_update.mean(dim=0)
-            self.plasticity_candidate_weights.data += plasticity_candidate_update.mean(dim=0)
+            # self.candidate_weights.data += candidate_update.sum(dim=0)
+            # self.plasticity_candidate_weights.data += plasticity_candidate_update.sum(dim=0)
+            # self.candidate_weights.data += candidate_update.mean(dim=0)
+            # self.plasticity_candidate_weights.data += plasticity_candidate_update.mean(dim=0)
+            self.candidate_weights.data += candidate_update.mean(dim=0)*(1-self.candecay)
+            self.plasticity_candidate_weights.data += plasticity_candidate_update.mean(dim=0)*(1-0.999)
+            # self.candidate_weights.data *= 1/(1-self.candecay**self.t)
+            # self.plasticity_candidate_weights.data *= 1/(1-0.999**self.t)
+            # self.t += 1
 
             # update = learning_rate * inputs.T * projected_error
             # update = update.T + imprint_update * imprint_rate
@@ -223,7 +231,7 @@ class HebbianLinear(nn.Linear):
             update = update * self.plasticity
 
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
-            self.plasticity.data.clamp_(0.1,plast_clip)
+            self.plasticity.data.clamp_(0.00000001,plast_clip)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
 
@@ -267,7 +275,7 @@ class HebbyRNN(torch.nn.Module):
             self.linear_layers.append(HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay))
 
         # Dropout layers
-        # self.dropout = nn.Dropout(dropout_rate)
+        self.dropout = nn.Dropout(dropout_rate)
 
         # Final layers for hidden and output, also using HebbianLinear
         self.i2h = HebbianLinear(inner_size, hidden_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay)
@@ -313,11 +321,12 @@ class HebbyRNN(torch.nn.Module):
         hidden = self.i2h(combined)
         # hidden = torch.zeros_like(hidden)
         output = self.i2o(combined)
-        hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
+        # hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences, as well as control for magnitude of recurrent connection
+        hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
 
         output.requires_grad = True
         # output = self.dropout(output)  # Apply dropout to the output before softmax
-        output = self.softmax(output)
+        # output = self.softmax(output)
         return output, hidden
 
     def initHidden(self, batch_size):
@@ -381,13 +390,13 @@ class SimpleRNN(nn.Module):
         for layer in self.linear_layers:
             combined = layer(combined)
             combined = F.relu(combined)
-            combined = self.dropout(combined)
+            # combined = self.dropout(combined)
 
         # Split into hidden and output
         hidden = self.i2h(combined)
         output = self.i2o(combined)
         hidden = torch.tanh(hidden)
-        output = self.dropout(output)
+        # output = self.dropout(output)
         # output = self.softmax(output)
         return output, hidden
 
