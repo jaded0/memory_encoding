@@ -6,7 +6,8 @@ channels:
   - defaults
 dependencies:
   - python  # You can specify the Python version you need
-  - pytorch=11.8
+  - pytorch
+  - pytorch-cuda=12.1
   - imageio
   - torchvision
   - torchaudio
