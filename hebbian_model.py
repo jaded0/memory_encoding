@@ -141,7 +141,7 @@ class HebbianLinear(nn.Linear):
             update = learning_rate * imprint_update * projected_error.T
         elif self.update_rule == 'candidate':
             # only evaluate past weight updates with the current reward signal
-            imprint_update = self.candidate_weights.data.clone()  # Clone the candidate weights to avoid modifying imprint_update
+            # imprint_update = self.candidate_weights.data.clone()  # Clone the candidate weights to avoid modifying imprint_update
 
             # Reset or decay candidate_weights
             self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
@@ -169,12 +169,12 @@ class HebbianLinear(nn.Linear):
             # candidate_update = candidate_update.T
             # self.candidate_weights.data += candidate_update
             # print(f"shapes. candidate_weights: {self.candidate_weights.data.shape}, update shape: {candidate_update.shape}, mean: {candidate_update.mean(dim=0).shape}")
-            self.candidate_weights.data += candidate_update.mean(dim=0)
+            self.candidate_weights.data += candidate_update.mean(dim=0)*(1-self.candecay)
 
             # update = learning_rate * inputs.T * projected_error
             # update = update.T + imprint_update * imprint_rate
             # update = global_error.T * learning_rate * self.feedback_weights
-            imprint_update = imprint_update
+            imprint_update = self.candidate_weights.data
             # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
             update = learning_rate * imprint_update
         elif self.update_rule == 'plastic_candidate':
@@ -231,7 +231,9 @@ class HebbianLinear(nn.Linear):
             update = update * self.plasticity
 
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
-            self.plasticity.data.clamp_(0.00000001,plast_clip)
+            self.plasticity.data.clamp_(0.0000000000001,plast_clip)
+        elif self.update_rule == "just_dfa":
+            update = projected_error.unsqueeze(2).mean(dim=0)*learning_rate
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
 

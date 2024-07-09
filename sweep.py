@@ -8,7 +8,7 @@ from itertools import product
 
 # Define your configuration values here
 config_values = {
-    "learning_rate": [5e-3, 1e-3, 5e-4, 1e-4, 5e-5],
+    "learning_rate": [5e-3],
     "plast_learning_rate": [1e-15],
     "update_rule": ['plastic_candidate'],
     "group": ['firstsweep'],
@@ -29,7 +29,7 @@ config_values = {
     "track": [True],
     "dataset": ['2_resequence'],
     "candecay": [0.99],
-    "batch_size": [16,8]
+    "batch_size": [32]
 }
 
 def upload_script_to_database(script, prod_supabase_url, prod_supabase_anon_key):

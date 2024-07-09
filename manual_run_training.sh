@@ -15,7 +15,7 @@ rm model_data/*
 # backprop - Standard backpropagation: Computes gradients using chain rule and updates weights based on gradient descent. Relies on global error propagated from the output layer.
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
 # plastic_candidate
-UPDATE_RULE='plastic_candidate'
+UPDATE_RULE='candidate'
 
 GROUP='whatever'
 
@@ -30,7 +30,7 @@ CLIP_WEIGHTS=0
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
 LEARNING_RATE=1e-3
 PLAST_LEARNING_RATE=1e-15
-PLAST_CLIP=5
+PLAST_CLIP=20
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -39,7 +39,7 @@ IMPRINT_RATE=5e-6
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=1e-4
+STOCHASTICITY=1e-40
 
 # Number of rewards to track for averaging
 # Higher values smooth out the reward signal over more steps.
@@ -77,7 +77,7 @@ TRACK=true
 # long_range_memory_dataset
 DATASET=2_resequence
 BATCH_SIZE=32
-CANDECAY=0.2
+CANDECAY=0.99
 
 
 # Running the training script with the specified hyperparameters
