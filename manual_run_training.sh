@@ -35,7 +35,7 @@ RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=5e-6
+IMPRINT_RATE=1e-9
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
@@ -77,7 +77,7 @@ TRACK=true
 # long_range_memory_dataset
 DATASET=2_resequence
 BATCH_SIZE=32
-CANDECAY=0.999
+CANDECAY=0.9
 
 
 # Running the training script with the specified hyperparameters

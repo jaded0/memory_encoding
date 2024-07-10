@@ -119,7 +119,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         
         # Apply Hebbian updates to the network
         threshold = 200000
-        lr = 1e-3 if state["training_instance"] < threshold else config["learning_rate"]
+        lr = 1e-2 if state["training_instance"] < threshold else config["learning_rate"]
         if state["training_instance"] == threshold:
             print(f"reached threshold at {threshold}")
         rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])

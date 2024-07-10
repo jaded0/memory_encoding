@@ -145,15 +145,16 @@ class HebbianLinear(nn.Linear):
             # Reset or decay candidate_weights
             self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
 
+            dfa = projected_error.unsqueeze(2) * input.unsqueeze(1)
             # If dropout was applied during forward pass, apply the same mask here
             # if self.dropout_mask is not None:
             #     projected_error *= self.dropout_mask
-            out = projected_error.unsqueeze(2)
-            # out_weights_product = out * self.weight.data
+            out = output.unsqueeze(2)
+            out_weights_product = out * self.weight.data
             # Now, calculate the candidate_update
             # Note that element-wise multiplication (*) is broadcasted over the batch dimension
-            candidate_update = out * input.unsqueeze(1)#* (input.unsqueeze(1) - out_weights_product)
-            self.candidate_weights.data += candidate_update.mean(dim=0)*(1-self.candecay)
+            candidate_update = out * (input.unsqueeze(1) - out_weights_product)
+            self.candidate_weights.data += (dfa + imprint_rate*candidate_update).mean(dim=0)*(1-self.candecay)
 
             imprint_update = self.candidate_weights.data  # Clone the candidate weights to avoid modifying imprint_update
             update = learning_rate * imprint_update
