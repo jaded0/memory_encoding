@@ -8,15 +8,15 @@ from itertools import product
 
 # Define your configuration values here
 config_values = {
-    "learning_rate": [5e-3],
+    "learning_rate": [1e-4, 1e-5, 1e-6, 1e-7, 1e-8],
     "plast_learning_rate": [1e-15],
-    "update_rule": ['plastic_candidate'],
-    "group": ['firstsweep'],
+    "update_rule": ['candidate'],
+    "group": ['separar'],
     "normalize": [False],
     "clip_weights": [0],
     "plast_clip": [20],
-    "residual_connection": [False, True],
-    "imprint_rate": [1e-8],
+    "residual_connection": [True],
+    "imprint_rate": [1e-7, 1e-8, 1e-9, 1e-15, 1e-30],
     "stochasticity": [1e-30],
     "len_reward_history": [10],
     "delta_rewards": [False],

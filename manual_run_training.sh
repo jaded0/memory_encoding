@@ -77,7 +77,7 @@ TRACK=true
 # long_range_memory_dataset
 DATASET=2_resequence
 BATCH_SIZE=32
-CANDECAY=0.9
+CANDECAY=0.99
 
 
 # Running the training script with the specified hyperparameters
