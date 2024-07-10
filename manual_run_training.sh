@@ -28,7 +28,7 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-3
+LEARNING_RATE=1e-6
 PLAST_LEARNING_RATE=1e-15
 PLAST_CLIP=20
 RESIDUAL_CONNECTION=false
@@ -77,7 +77,7 @@ TRACK=true
 # long_range_memory_dataset
 DATASET=2_resequence
 BATCH_SIZE=32
-CANDECAY=0.99
+CANDECAY=0.999
 
 
 # Running the training script with the specified hyperparameters

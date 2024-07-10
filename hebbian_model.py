@@ -141,7 +141,6 @@ class HebbianLinear(nn.Linear):
             update = learning_rate * imprint_update * projected_error.T
         elif self.update_rule == 'candidate':
             # only evaluate past weight updates with the current reward signal
-            # imprint_update = self.candidate_weights.data.clone()  # Clone the candidate weights to avoid modifying imprint_update
 
             # Reset or decay candidate_weights
             self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
@@ -149,33 +148,14 @@ class HebbianLinear(nn.Linear):
             # If dropout was applied during forward pass, apply the same mask here
             # if self.dropout_mask is not None:
             #     projected_error *= self.dropout_mask
-            # Assuming 'inputs' holds the inputs to the layer
-            # out = output/(output.shape[1]) + projected_error
-            # out = output/(input.shape[1])
-            # print(f"shapes. projected error: {projected_error.shape}, input.T: {input.T.shape}, input: {input.shape}, weights.T:{self.weight.data.T.shape}, weights: {self.weight.data.shape}")
-            # out = projected_error
-            # candidate_update = projected_error*(input.T - out * self.weight.data.T) # oja's rule, reused
-            # Assuming out = projected_error for simplicity
             out = projected_error.unsqueeze(2)
-            # print(f"new out shape: {out.shape}")
-            out_weights_product = out * self.weight.data
-            # print(f"shape of input: {input.shape}")
-            # input = input.unsqueeze(2)
-            # print(f"shape of input: {input.shape}")
+            # out_weights_product = out * self.weight.data
             # Now, calculate the candidate_update
             # Note that element-wise multiplication (*) is broadcasted over the batch dimension
-            # print(f"out shape: {out.shape},out_weights_product shape: {out_weights_product.shape}, input shape: {input.shape}")
-            candidate_update = out * (input.unsqueeze(1) - out_weights_product)
-            # candidate_update = candidate_update.T
-            # self.candidate_weights.data += candidate_update
-            # print(f"shapes. candidate_weights: {self.candidate_weights.data.shape}, update shape: {candidate_update.shape}, mean: {candidate_update.mean(dim=0).shape}")
+            candidate_update = out * input.unsqueeze(1)#* (input.unsqueeze(1) - out_weights_product)
             self.candidate_weights.data += candidate_update.mean(dim=0)*(1-self.candecay)
 
-            # update = learning_rate * inputs.T * projected_error
-            # update = update.T + imprint_update * imprint_rate
-            # update = global_error.T * learning_rate * self.feedback_weights
-            imprint_update = self.candidate_weights.data
-            # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
+            imprint_update = self.candidate_weights.data  # Clone the candidate weights to avoid modifying imprint_update
             update = learning_rate * imprint_update
         elif self.update_rule == 'plastic_candidate':
             # only evaluate past weight updates with the current reward signal
@@ -186,29 +166,14 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
             self.plasticity_candidate_weights.data *= 0.999  # Example: decay by half is 0.5
 
-            # If dropout was applied during forward pass, apply the same mask here
-            # if self.dropout_mask is not None:
-            #     projected_error *= self.dropout_mask
-            # Assuming 'inputs' holds the inputs to the layer
-            # out = output/(output.shape[1]) + projected_error
-            # out = output/(input.shape[1])
-            # print(f"shapes. projected error: {projected_error.shape}, input.T: {input.T.shape}, input: {input.shape}, weights.T:{self.weight.data.T.shape}, weights: {self.weight.data.shape}")
-            # out = projected_error
-            # candidate_update = projected_error*(input.T - out * self.weight.data.T) # oja's rule, reused
-            # Assuming out = projected_error for simplicity
             out = projected_error.unsqueeze(2)
             out_plasticity = (global_error @ self.plasticity_feedback_weights).unsqueeze(2)
-            # print(f"new out shape: {out.shape}")
-            out_weights_product = out * self.weight.data
-            plasticity_out_weights_product = out_plasticity * self.plasticity.data
-            # print(f"shape of input: {input.shape}")
-            # input = input.unsqueeze(2)
-            # print(f"shape of input: {input.shape}")
-            # Now, calculate the candidate_update
-            # Note that element-wise multiplication (*) is broadcasted over the batch dimension
-            # print(f"out shape: {out.shape},out_weights_product shape: {out_weights_product.shape}, input shape: {input.shape}")
-            candidate_update = out * (input.unsqueeze(1) - out_weights_product)
-            plasticity_candidate_update = out * (input.unsqueeze(1) - plasticity_out_weights_product)
+            # out_weights_product = out * self.weight.data
+            # plasticity_out_weights_product = out_plasticity * self.plasticity.data
+
+            candidate_update = out #* (input.unsqueeze(1) - out_weights_product)
+            plasticity_candidate_update = out #* (input.unsqueeze(1) - plasticity_out_weights_product)
+
             # candidate_update = candidate_update.T
             # self.candidate_weights.data += candidate_update
             # print(f"shapes. candidate_weights: {self.candidate_weights.data.shape}, update shape: {candidate_update.shape}, mean: {candidate_update.mean(dim=0).shape}")
@@ -231,9 +196,7 @@ class HebbianLinear(nn.Linear):
             update = update * self.plasticity
 
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
-            self.plasticity.data.clamp_(0.0000000000001,plast_clip)
-        elif self.update_rule == "just_dfa":
-            update = projected_error.unsqueeze(2).mean(dim=0)*learning_rate
+            self.plasticity.data.clamp_(0.00000001,plast_clip)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
 
@@ -244,7 +207,8 @@ class HebbianLinear(nn.Linear):
         if hasattr(self, 'bias') and self.bias is not None:
             # print("has")
             # Bias is updated based on the mean error across the batch
-            bias_update = learning_rate * projected_error.mean(dim=-1).mean(dim=0)
+            # print(f'shape of bias:{self.bias.data.shape}, shape of mean: {projected_error.mean(dim=0).shape}')
+            bias_update = learning_rate * projected_error.mean(dim=0).mean(dim=0)
             self.bias.data += bias_update
 
         if self.normalize:
