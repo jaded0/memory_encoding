@@ -279,17 +279,19 @@ class HebbyRNN(torch.nn.Module):
             residual = combined.clone()  # Store the original combined tensor for residual connection
 
         # try out some sort of inner activation matmul inspired by attention
-        # a1 = self.linear1(combined)  # Shape: [batch_size, input_dim]
-        # a2 = self.linear2(combined)  # Shape: [batch_size, output_dim]
+        a1 = self.linear1(combined)  # Shape: [batch_size, input_dim]
+        a1 = F.relu(a1)
+        a2 = self.linear2(combined)  # Shape: [batch_size, output_dim]
+        a2 = F.relu(a2)
         
-        # # Compute the outer product of the activations
-        # # Note: we need to reshape tensors to make the outer product
-        # outer_product = torch.bmm(a1.unsqueeze(2), a2.unsqueeze(1))
-        # # Shape: [batch_size, input_dim, output_dim]
+        # Compute the outer product of the activations
+        # Note: we need to reshape tensors to make the outer product
+        outer_product = torch.bmm(a1.unsqueeze(2), a2.unsqueeze(1))
+        # Shape: [batch_size, input_dim, output_dim]
 
-        # # Now, use the outer product as the dynamic weight matrix
-        # # Apply the dynamic weight matrix to the input
-        # combined = torch.bmm(combined.unsqueeze(1), outer_product).squeeze(1)
+        # Now, use the outer product as the dynamic weight matrix
+        # Apply the dynamic weight matrix to the input
+        combined = torch.bmm(combined.unsqueeze(1), outer_product).squeeze(1)
         # combined = F.relu(combined)
 
         # Pass through the Hebbian linear layers with ReLU and Dropout
@@ -321,6 +323,8 @@ class HebbyRNN(torch.nn.Module):
 
     def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity):
         # Apply imprints for all HebbianLinear layers
+        self.linear1.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
+        self.linear2.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
         for layer in self.linear_layers:
             layer.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
         self.i2h.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
