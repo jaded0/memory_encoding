@@ -149,14 +149,14 @@ class HebbianLinear(nn.Linear):
             # If dropout was applied during forward pass, apply the same mask here
             # if self.dropout_mask is not None:
             #     projected_error *= self.dropout_mask
-            out = projected_error.unsqueeze(2) #dfa #+ imprint_rate*output.unsqueeze(2)
+            out = projected_error.unsqueeze(2)
             out_weights_product = out * self.weight.data
             # Now, calculate the candidate_update
             # Note that element-wise multiplication (*) is broadcasted over the batch dimension
-            candidate_update = out * (input.unsqueeze(1) - out_weights_product)
+            candidate_update = (input.unsqueeze(1) - out_weights_product)
             self.candidate_weights.data += (candidate_update).mean(dim=0)*(1-self.candecay)
 
-            imprint_update = self.candidate_weights.data  # Clone the candidate weights to avoid modifying imprint_update
+            imprint_update = out.mean(dim=0) * self.candidate_weights.data  # Clone the candidate weights to avoid modifying imprint_update
             update = learning_rate * imprint_update
         elif self.update_rule == 'plastic_candidate':
             # only evaluate past weight updates with the current reward signal
@@ -237,9 +237,10 @@ class HebbyRNN(torch.nn.Module):
         inner_size = input_size+hidden_size
         self.residual_connection = residual_connection
 
-        # some peculiar new layers for outer product-ing
-        self.linear1 = HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay)
-        self.linear2 = HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay)
+        # # some peculiar new layers for outer product-ing
+        # self.linear1 = HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay)
+        # self.linear2 = HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay)
+
         # Using HebbianLinear instead of Linear
         self.linear_layers = torch.nn.ModuleList([HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule)])
         for _ in range(1, num_layers):
@@ -278,21 +279,21 @@ class HebbyRNN(torch.nn.Module):
         if self.residual_connection:
             residual = combined.clone()  # Store the original combined tensor for residual connection
 
-        # try out some sort of inner activation matmul inspired by attention
-        a1 = self.linear1(combined)  # Shape: [batch_size, input_dim]
-        a1 = F.relu(a1)
-        a2 = self.linear2(combined)  # Shape: [batch_size, output_dim]
-        a2 = F.relu(a2)
+        # # try out some sort of inner activation matmul inspired by attention
+        # a1 = self.linear1(combined)  # Shape: [batch_size, input_dim]
+        # a1 = F.relu(a1)
+        # a2 = self.linear2(combined)  # Shape: [batch_size, output_dim]
+        # a2 = F.relu(a2)
         
-        # Compute the outer product of the activations
-        # Note: we need to reshape tensors to make the outer product
-        outer_product = torch.bmm(a1.unsqueeze(2), a2.unsqueeze(1))
-        # Shape: [batch_size, input_dim, output_dim]
+        # # Compute the outer product of the activations
+        # # Note: we need to reshape tensors to make the outer product
+        # outer_product = torch.bmm(a1.unsqueeze(2), a2.unsqueeze(1))
+        # # Shape: [batch_size, input_dim, output_dim]
 
-        # Now, use the outer product as the dynamic weight matrix
-        # Apply the dynamic weight matrix to the input
-        combined = torch.bmm(combined.unsqueeze(1), outer_product).squeeze(1)
-        # combined = F.relu(combined)
+        # # Now, use the outer product as the dynamic weight matrix
+        # # Apply the dynamic weight matrix to the input
+        # combined = torch.bmm(combined.unsqueeze(1), outer_product).squeeze(1)
+        # # combined = F.relu(combined)
 
         # Pass through the Hebbian linear layers with ReLU and Dropout
         for layer in self.linear_layers:
@@ -323,8 +324,8 @@ class HebbyRNN(torch.nn.Module):
 
     def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity):
         # Apply imprints for all HebbianLinear layers
-        self.linear1.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
-        self.linear2.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
+        # self.linear1.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
+        # self.linear2.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
         for layer in self.linear_layers:
             layer.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
         self.i2h.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)

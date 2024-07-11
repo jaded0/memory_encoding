@@ -28,14 +28,14 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-6
+LEARNING_RATE=1e-4
 PLAST_LEARNING_RATE=1e-15
 PLAST_CLIP=20
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=1e-9
+IMPRINT_RATE=5e-6
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
@@ -77,7 +77,7 @@ TRACK=true
 # long_range_memory_dataset
 DATASET=2_resequence
 BATCH_SIZE=32
-CANDECAY=0.99
+CANDECAY=0.999
 
 
 # Running the training script with the specified hyperparameters
