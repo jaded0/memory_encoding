@@ -118,7 +118,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             rnn.zero_grad()
         
         # Apply Hebbian updates to the network
-        threshold = 200000
+        threshold = 0
         lr = 1e-3 if state["training_instance"] < threshold else config["learning_rate"]
         if state["training_instance"] == threshold:
             print(f"reached threshold at {threshold}")

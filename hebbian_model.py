@@ -310,8 +310,8 @@ class HebbyRNN(torch.nn.Module):
         hidden = self.i2h(combined)
         # hidden = torch.zeros_like(hidden)
         output = self.i2o(combined)
-        # hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences, as well as control for magnitude of recurrent connection
-        hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
+        hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences, as well as control for magnitude of recurrent connection
+        # hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
 
         output.requires_grad = True
         # output = self.dropout(output)  # Apply dropout to the output before softmax
