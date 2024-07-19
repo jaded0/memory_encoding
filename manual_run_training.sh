@@ -29,7 +29,7 @@ CLIP_WEIGHTS=1
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
 LEARNING_RATE=1e-4
-PLAST_LEARNING_RATE=1e-2
+PLAST_LEARNING_RATE=1e-3
 PLAST_CLIP=1e8
 RESIDUAL_CONNECTION=false
 

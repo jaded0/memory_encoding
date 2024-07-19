@@ -26,4 +26,4 @@ export WANDB_MODE=offline
 
 export HF_DATASETS_OFFLINE=1
 
-bash run_training.sh
+bash manual_run_training.sh
