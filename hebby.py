@@ -274,7 +274,7 @@ def main():
                 predicted_char = idx_to_char[topi[0, 0].item()]
                 target_char = sequence[0][-1]
                 correct = '✓' if predicted_char == target_char else '✗ (%s)' % target_char
-                sequence = sequence[0][-50:]
+                sequence = sequence[0]
 
                 # Check for invalid indices before logging
                 valid_outputs = [idx_to_char.get(torch.argmax(o).item(), None) for o in all_outputs]
@@ -297,7 +297,7 @@ def main():
 
                 # Print the progression of the entire sequence
                 progression = ''.join(valid_outputs)  # Convert list of characters to a string
-                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} Sequence: {sequence} / {progression} {correct}')
+                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} Sequence: \n{sequence}\n {progression} {correct}')
                 all_losses.append(current_loss / (args.plot_freq * 5))
                 current_loss = 0
 

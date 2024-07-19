@@ -15,7 +15,7 @@ rm model_data/*
 # backprop - Standard backpropagation: Computes gradients using chain rule and updates weights based on gradient descent. Relies on global error propagated from the output layer.
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
 # plastic_candidate
-UPDATE_RULE='candidate'
+UPDATE_RULE='plastic_candidate'
 
 GROUP='whatever'
 
@@ -24,18 +24,18 @@ GROUP='whatever'
 # true or false
 NORMALIZE=false
 
-CLIP_WEIGHTS=0
+CLIP_WEIGHTS=1
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-3
-PLAST_LEARNING_RATE=1e-15
-PLAST_CLIP=20
-RESIDUAL_CONNECTION=true
+LEARNING_RATE=1e-4
+PLAST_LEARNING_RATE=1e-2
+PLAST_CLIP=1e8
+RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=5e-6
+IMPRINT_RATE=1e-6
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
@@ -48,7 +48,7 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=512
+HIDDEN_SIZE=1024
 
 # Number of layers in RNN
 NUM_LAYERS=3
@@ -75,9 +75,9 @@ TRACK=true
 # jbrazzy/baby_names
 # brucewlee1/htest-palindrome
 # long_range_memory_dataset
-DATASET=2_resequence
-BATCH_SIZE=8
-CANDECAY=0.9
+DATASET=4_resequence
+BATCH_SIZE=1
+CANDECAY=0.0001
 
 
 # Running the training script with the specified hyperparameters

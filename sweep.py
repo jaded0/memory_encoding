@@ -8,28 +8,28 @@ from itertools import product
 
 # Define your configuration values here
 config_values = {
-    "learning_rate": [1e-4, 1e-5, 1e-6, 1e-7, 1e-8],
-    "plast_learning_rate": [1e-15],
-    "update_rule": ['candidate'],
-    "group": ['delayed'],
+    "learning_rate": [1e-4],
+    "plast_learning_rate": [1e-2,1e-3],
+    "update_rule": ['plastic_candidate'],
+    "group": ['add_noise_init'],
     "normalize": [False],
-    "clip_weights": [0],
-    "plast_clip": [20],
-    "residual_connection": [True],
-    "imprint_rate": [1e-7],
-    "stochasticity": [1e-30],
+    "clip_weights": [5],
+    "plast_clip": [1e8],
+    "residual_connection": [False],
+    "imprint_rate": [1e-6],
+    "stochasticity": [1e-3, 1e-4, 1e-5,1e-6,1e-7],
     "len_reward_history": [10],
     "delta_rewards": [False],
-    "hidden_size": [512],
+    "hidden_size": [1024],
     "num_layers": [3],
     "save_frequency": [1000000],
     "n_iters": [1000000000],
     "print_freq": [50],
     "plot_freq": [50],
     "track": [True],
-    "dataset": ['2_resequence'],
-    "candecay": [0.99],
-    "batch_size": [32,4,64]
+    "dataset": ['4_resequence'],
+    "candecay": [0.001],
+    "batch_size": [1]
 }
 
 def upload_script_to_database(script, prod_supabase_url, prod_supabase_anon_key):
@@ -51,7 +51,7 @@ def upload_script_to_database(script, prod_supabase_url, prod_supabase_anon_key)
 
 job_template = """#!/bin/bash
 
-#SBATCH --time=12:00:00   # walltime.  hours:minutes:seconds
+#SBATCH --time=72:00:00   # walltime.  hours:minutes:seconds
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
 #SBATCH --gpus=1

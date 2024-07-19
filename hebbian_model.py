@@ -39,7 +39,9 @@ class HebbianLinear(nn.Linear):
         if update_rule == 'plastic_candidate':
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
-            self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
+            # self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
+            self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight), gain=gain), requires_grad=requires_grad)
+            nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
             self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features), gain=gain), requires_grad=requires_grad)
 
 
@@ -149,14 +151,15 @@ class HebbianLinear(nn.Linear):
             # If dropout was applied during forward pass, apply the same mask here
             # if self.dropout_mask is not None:
             #     projected_error *= self.dropout_mask
-            out = projected_error.unsqueeze(2)
+            # out = projected_error.unsqueeze(2)
+            out = output.unsqueeze(2)
             out_weights_product = out * self.weight.data
             # Now, calculate the candidate_update
             # Note that element-wise multiplication (*) is broadcasted over the batch dimension
-            candidate_update = (input.unsqueeze(1) - out_weights_product)
+            candidate_update = projected_error.unsqueeze(2)**2 * out * (input.unsqueeze(1) - out_weights_product)
             self.candidate_weights.data += (candidate_update).mean(dim=0)*(1-self.candecay)
 
-            imprint_update = out.mean(dim=0) * self.candidate_weights.data  # Clone the candidate weights to avoid modifying imprint_update
+            imprint_update = self.candidate_weights.data  # Clone the candidate weights to avoid modifying imprint_update
             update = learning_rate * imprint_update
         elif self.update_rule == 'plastic_candidate':
             # only evaluate past weight updates with the current reward signal
@@ -165,15 +168,15 @@ class HebbianLinear(nn.Linear):
 
             # Reset or decay candidate_weights
             self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
-            self.plasticity_candidate_weights.data *= 0.999  # Example: decay by half is 0.5
+            self.plasticity_candidate_weights.data *= 0.99  # Example: decay by half is 0.5
 
             out = projected_error.unsqueeze(2)
             out_plasticity = (global_error @ self.plasticity_feedback_weights).unsqueeze(2)
-            # out_weights_product = out * self.weight.data
-            # plasticity_out_weights_product = out_plasticity * self.plasticity.data
+            out_weights_product = out * self.weight.data
+            plasticity_out_weights_product = out_plasticity * self.plasticity.data
 
-            candidate_update = out #* (input.unsqueeze(1) - out_weights_product)
-            plasticity_candidate_update = out #* (input.unsqueeze(1) - plasticity_out_weights_product)
+            candidate_update = out * (input.unsqueeze(1) - out_weights_product)
+            plasticity_candidate_update = out * (input.unsqueeze(1) - plasticity_out_weights_product)
 
             # candidate_update = candidate_update.T
             # self.candidate_weights.data += candidate_update
@@ -183,7 +186,7 @@ class HebbianLinear(nn.Linear):
             # self.candidate_weights.data += candidate_update.mean(dim=0)
             # self.plasticity_candidate_weights.data += plasticity_candidate_update.mean(dim=0)
             self.candidate_weights.data += candidate_update.mean(dim=0)*(1-self.candecay)
-            self.plasticity_candidate_weights.data += plasticity_candidate_update.mean(dim=0)*(1-0.999)
+            self.plasticity_candidate_weights.data += plasticity_candidate_update.mean(dim=0)*(1-0.99)
             # self.candidate_weights.data *= 1/(1-self.candecay**self.t)
             # self.plasticity_candidate_weights.data *= 1/(1-0.999**self.t)
             # self.t += 1
@@ -198,6 +201,7 @@ class HebbianLinear(nn.Linear):
 
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
             self.plasticity.data.clamp_(0.00000001,plast_clip)
+            # print(plast_learning_rate * plasticity_imprint_update)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
 
@@ -219,8 +223,8 @@ class HebbianLinear(nn.Linear):
         
         if self.clip_weights != 0:
             max_weight_value = self.clip_weights
-            for p in self.parameters():
-                p.data.clamp_(-max_weight_value, max_weight_value)
+            # for p in self.weight:
+            self.weight.data.clamp_(-max_weight_value, max_weight_value)
 
         # Apply stochastic noise to the weights
         for p in self.parameters():
@@ -308,10 +312,10 @@ class HebbyRNN(torch.nn.Module):
 
         # Split into hidden and output
         hidden = self.i2h(combined)
-        # hidden = torch.zeros_like(hidden)
+        hidden = torch.zeros_like(hidden)
         output = self.i2o(combined)
-        hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences, as well as control for magnitude of recurrent connection
-        # hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
+        # hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences, as well as control for magnitude of recurrent connection
+        hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
 
         output.requires_grad = True
         # output = self.dropout(output)  # Apply dropout to the output before softmax
@@ -433,4 +437,4 @@ if __name__ == "__main__":
 
 
     # In your training loop, after the weight update step
-    clip_weights(rnn, max_norm=0.5)  # Choose an appropriate max_norm value
+    # clip_weights(rnn, max_norm=0.5)  # Choose an appropriate max_norm value
