@@ -24,13 +24,13 @@ GROUP='whatever'
 # true or false
 NORMALIZE=false
 
-CLIP_WEIGHTS=1
+CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-4
-PLAST_LEARNING_RATE=1e-3
-PLAST_CLIP=1e8
+LEARNING_RATE=1e-6
+PLAST_LEARNING_RATE=1e-4
+PLAST_CLIP=1e5
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -75,7 +75,7 @@ TRACK=true
 # jbrazzy/baby_names
 # brucewlee1/htest-palindrome
 # long_range_memory_dataset
-DATASET=4_resequence
+DATASET=3_resequence
 BATCH_SIZE=1
 CANDECAY=0.0001
 

@@ -40,8 +40,8 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
-            self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight), gain=gain), requires_grad=requires_grad)
-            nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
+            self.plasticity = nn.Parameter(torch.nn.init.xavier_uniform_(torch.ones_like(self.weight), gain=gain), requires_grad=requires_grad)
+            # nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
             self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features), gain=gain), requires_grad=requires_grad)
 
 
@@ -197,10 +197,14 @@ class HebbianLinear(nn.Linear):
             imprint_update = imprint_update
             # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
             update = learning_rate * imprint_update
-            update = update * self.plasticity
+            # Scale and shift the plasticity values
+            shift, scale = 0,plast_clip
+            shifted_plasticity = self.plasticity + shift
+            scaled_plasticity = scale / (1 + torch.exp(shifted_plasticity) + 1e-40)
+            update = update * scaled_plasticity
 
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
-            self.plasticity.data.clamp_(0.00000001,plast_clip)
+            # self.plasticity.data.clamp_(1e-40,plast_clip)
             # print(plast_learning_rate * plasticity_imprint_update)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
