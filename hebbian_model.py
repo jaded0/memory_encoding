@@ -25,10 +25,10 @@ class HebbianLinear(nn.Linear):
         self.t = 1000
 
         # Calculate the adjusted gain for [-1, 1] range
-        gain = 1 / math.sqrt(6 / (in_features + out_features))
+        # gain = 1 / math.sqrt(6 / (in_features + out_features))
 
         # Initialize weights with the adjusted gain
-        self.feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features), gain=gain), requires_grad=requires_grad)
+        self.feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
         # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
         if update_rule == 'covariance':
@@ -40,9 +40,9 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
-            self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight), gain=gain), requires_grad=requires_grad)
+            self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight)), requires_grad=requires_grad)
             # nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
-            self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features), gain=gain), requires_grad=requires_grad)
+            self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
 
 
     def forward(self, input):
@@ -171,6 +171,7 @@ class HebbianLinear(nn.Linear):
             self.plasticity_candidate_weights.data *= 0.999  # Example: decay by half is 0.5
 
             out = projected_error.unsqueeze(2)
+            # out_plasticity = (global_error @ self.feedback_weights).unsqueeze(2)
             out_plasticity = (global_error @ self.plasticity_feedback_weights).unsqueeze(2)
             out_weights_product = out * self.weight.data
             plasticity_out_weights_product = out_plasticity * self.plasticity.data
