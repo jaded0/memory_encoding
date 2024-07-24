@@ -297,7 +297,7 @@ def main():
 
                 # Print the progression of the entire sequence
                 progression = ''.join(valid_outputs)  # Convert list of characters to a string
-                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} Sequence: \n{sequence}\n {progression} {correct}')
+                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} avg: {(current_loss/(args.plot_freq*5)):.5f} Sequence: \n{sequence}\n {progression} {correct}')
                 all_losses.append(current_loss / (args.plot_freq * 5))
                 current_loss = 0
 
