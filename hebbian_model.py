@@ -186,8 +186,10 @@ class HebbianLinear(nn.Linear):
             # self.plasticity_candidate_weights.data += plasticity_candidate_update.sum(dim=0)
             # self.candidate_weights.data += candidate_update.mean(dim=0)
             # self.plasticity_candidate_weights.data += plasticity_candidate_update.mean(dim=0)
-            self.candidate_weights.data += candidate_update.mean(dim=0)*(1-self.candecay)
-            self.plasticity_candidate_weights.data += plasticity_candidate_update.mean(dim=0)*(1-0.999)
+            batch_agg_candidate_update = candidate_update.mean(dim=0)
+            batch_agg_plasticity_candidate_update = plasticity_candidate_update.mean(dim=0)
+            self.candidate_weights.data += batch_agg_candidate_update*(1-self.candecay)
+            self.plasticity_candidate_weights.data += batch_agg_plasticity_candidate_update*(1-0.999)
             # self.candidate_weights.data *= 1/(1-self.candecay**self.t)
             # self.plasticity_candidate_weights.data *= 1/(1-0.999**self.t)
             # self.t += 1
@@ -196,6 +198,8 @@ class HebbianLinear(nn.Linear):
             # update = update.T + imprint_update * imprint_rate
             # update = global_error.T * learning_rate * self.feedback_weights
 
+            # imprint_update = batch_agg_candidate_update*self.candidate_weights.data / torch.sqrt(batch_agg_candidate_update**2 +1e-40)
+            # plasticity_imprint_update = batch_agg_plasticity_candidate_update*self.plasticity_candidate_weights.data / torch.sqrt(batch_agg_plasticity_candidate_update**2 +1e-40)
             imprint_update = self.candidate_weights.data
             plasticity_imprint_update = self.plasticity_candidate_weights.data
             # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
