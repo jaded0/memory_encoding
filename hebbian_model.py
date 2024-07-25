@@ -265,7 +265,7 @@ class HebbyRNN(torch.nn.Module):
         # Using HebbianLinear instead of Linear
         self.linear_layers = torch.nn.ModuleList([HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay, plast_candecay=plast_candecay)])
         for _ in range(1, num_layers):
-            self.linear_layers.append(HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay))
+            self.linear_layers.append(HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay, plast_candecay=plast_candecay))
 
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
