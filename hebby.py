@@ -170,6 +170,7 @@ def main():
     parser.add_argument('--delta_rewards', type=str2bool, nargs='?', const=True, default=True, help='Whether to calculate rewards by change in reward instead.')
     parser.add_argument('--dataset', type=str, default='roneneldan/tinystories', help='The dataset used for training.')
     parser.add_argument('--candecay', type=float, default=0.9, help='Decay of the candidate weights, each step.')
+    parser.add_argument('--plast_candecay', type=float, default=0.5, help='Decay rate for plastic candidate weights')
     parser.add_argument('--group', type=str, default="nothing_in_particular", help='Description of what sort of experiment is being run, here.')
     parser.add_argument('--batch_size', type=int, default=4, help='how much to stuff in at once')
 
@@ -194,6 +195,7 @@ def main():
         "update_rule": args.update_rule,
         "delta_rewards": args.delta_rewards,
         "candecay": args.candecay,
+        "plast_candecay": args.plast_candecay,
         "batch_size": args.batch_size,
     }
     print(args.track)
@@ -217,6 +219,7 @@ def main():
             "clip_weights": args.clip_weights,
             "delta_rewards": args.delta_rewards,
             "candecay": args.candecay,
+            "plast_candecay": args.plast_candecay,
             "plot_frequency": args.plot_freq,
             "batch_size": args.batch_size,
         })
@@ -236,7 +239,7 @@ def main():
         rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"])
         optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
     else:
-        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, residual_connection=args.residual_connection, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"])
+        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, residual_connection=args.residual_connection, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"], plast_candecay=config["plast_candecay"])
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")

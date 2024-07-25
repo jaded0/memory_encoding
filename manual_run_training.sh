@@ -30,7 +30,7 @@ CLIP_WEIGHTS=0
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
 LEARNING_RATE=1e-8
 PLAST_LEARNING_RATE=1e-3
-PLAST_CLIP=1e6
+PLAST_CLIP=1e7
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -62,11 +62,11 @@ N_ITERS=1000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=50
+PRINT_FREQ=20
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=50
+PLOT_FREQ=20
 
 # true or false
 TRACK=true
@@ -78,7 +78,7 @@ TRACK=true
 DATASET=4_resequence
 BATCH_SIZE=1
 CANDECAY=0
-
+PLAST_CANDECAY=0.99
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
@@ -101,5 +101,6 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --dataset $DATASET \
                        --delta_rewards $DELTA_REWARDS \
                        --candecay $CANDECAY \
+                       --plast_candecay $PLAST_CANDECAY \
                        --batch_size $BATCH_SIZE \
                        --residual_connection $RESIDUAL_CONNECTION
