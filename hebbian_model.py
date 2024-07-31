@@ -40,8 +40,8 @@ class HebbianLinear(nn.Linear):
         if update_rule == 'plastic_candidate':
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
-            # self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
-            self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight)), requires_grad=requires_grad)
+            self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
+            # self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight)), requires_grad=requires_grad)
             # nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
             self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
 
@@ -167,9 +167,7 @@ class HebbianLinear(nn.Linear):
             # imprint_update = self.candidate_weights.data.clone()  # Clone the candidate weights to avoid modifying imprint_update
             # plasticity_imprint_update = self.plasticity_candidate_weights.data.clone()  # Clone the candidate weights to avoid modifying imprint_update
 
-            # Reset or decay candidate_weights
-            self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
-            self.plasticity_candidate_weights.data *= self.plast_candecay  # Example: decay by half is 0.5
+
 
             out = projected_error.unsqueeze(2)
             # out_plasticity = (global_error @ self.feedback_weights).unsqueeze(2)
@@ -178,7 +176,11 @@ class HebbianLinear(nn.Linear):
             plasticity_out_weights_product = out_plasticity * self.plasticity.data
 
             candidate_update = out * (input.unsqueeze(1) - out_weights_product)
-            plasticity_candidate_update = out * (input.unsqueeze(1) - plasticity_out_weights_product)
+            plasticity_candidate_update = out * (self.candidate_weights.data - plasticity_out_weights_product)
+            
+            # Reset or decay candidate_weights
+            self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
+            self.plasticity_candidate_weights.data *= self.plast_candecay  # Example: decay by half is 0.5
 
             # candidate_update = candidate_update.T
             # self.candidate_weights.data += candidate_update
@@ -210,13 +212,14 @@ class HebbianLinear(nn.Linear):
             # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
             update = learning_rate * imprint_update
             # Scale and shift the plasticity values
-            shift, scale = 0,plast_clip
-            shifted_plasticity = self.plasticity + shift
-            scaled_plasticity = scale / (1 + torch.exp(shifted_plasticity) + 1e-40)
-            update = update * scaled_plasticity
-
+            # shift, scale = 1,1e8
+            # shifted_plasticity = self.plasticity.data + shift
+            # scaled_plasticity = scale / (1 + torch.exp(shifted_plasticity) + 1e-40)
+            # update = update * scaled_plasticity
+            update = update * self.plasticity.data
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
             # self.plasticity.data.clamp_(1e-40,plast_clip)
+            self.plasticity.data.clamp_(-plast_clip,plast_clip)
             # print(plast_learning_rate * plasticity_imprint_update)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update

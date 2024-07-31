@@ -9,26 +9,27 @@ from itertools import product
 # Define your configuration values here
 config_values = {
     "learning_rate": [1e-8],
-    "plast_learning_rate": [1e-2,1e-3,1e-4],
+    "plast_learning_rate": [1e-1,1e-1,1e-1,1e-1,1e-2,1e-2,1e-2,1e-2],
     "update_rule": ['plastic_candidate'],
-    "group": ['sweep_working_long'],
+    "group": ['static_plasticity'],
     "normalize": [False],
-    "clip_weights": [5],
-    "plast_clip": [1e8,1e7,1e6,1e5],
+    "clip_weights": [0],
+    "plast_clip": [1e7],
     "residual_connection": [False],
     "imprint_rate": [1e-6],
     "stochasticity": [1e-40],
     "len_reward_history": [10],
     "delta_rewards": [False],
-    "hidden_size": [1024,2048],
+    "hidden_size": [1024],
     "num_layers": [3],
     "save_frequency": [1000000],
     "n_iters": [1000000000],
     "print_freq": [50],
     "plot_freq": [50],
     "track": [True],
-    "dataset": ['3_resequence'],
+    "dataset": ['4_resequence'],
     "candecay": [0],
+    "plast_candecay": [0.999],
     "batch_size": [1]
 }
 
@@ -102,6 +103,7 @@ PLOT_FREQ={plot_freq}
 TRACK={track}
 DATASET={dataset}
 CANDECAY={candecay}
+PLAST_CANDECAY={plast_candecay}
 BATCH_SIZE={batch_size}
 
 python synth_datasets.py
@@ -127,7 +129,8 @@ python hebby.py --learning_rate $LEARNING_RATE \\
 --delta_rewards $DELTA_REWARDS \\
 --residual_connection $RESIDUAL_CONNECTION \\
 --batch_size $BATCH_SIZE \\
---candecay $CANDECAY
+--candecay $CANDECAY \\
+--plast_candecay $PLAST_CANDECAY
 """
 
 os.makedirs("jobs", exist_ok=True)

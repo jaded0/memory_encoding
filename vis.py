@@ -31,14 +31,20 @@ def save_model_data(model, activations, epoch, track):
         if isinstance(layer, nn.Linear):  # Replace with your layer types if different
             weight_path = os.path.join(save_dir, f'weights_{name}_epoch{epoch}.pt')
             activation_path = os.path.join(save_dir, f'activations_{name}_epoch{epoch}.pt')
+            plasticity_path = os.path.join(save_dir, f'plasticity_{name}_epoch{epoch}.pt')
+
             save_tensor(layer.weight, weight_path)
             if name in activations:
                 save_tensor(activations[name][0], activation_path) # 0 bc I want the activations from only one of the batch of data
+            
+            if hasattr(layer, 'plasticity'):
+                save_tensor(layer.plasticity, plasticity_path)
     
     # plot to image and log to wandb
     visualize_all_layers_and_save(model, epoch, os.path.join(save_dir, f'visualization_{epoch}.png'))
     if track: 
         wandb.log({"model_evolution": wandb.Image(os.path.join(save_dir, f'visualization_{epoch}.png'))},commit=False)
+
 
 # Example usage
 # rnn = SimpleRNN(input_size, n_hidden, output_size, 3)
@@ -56,9 +62,9 @@ def load_tensor(path):
     else:
         return None
 
-def plot_tensors(weight_tensor, activation_tensor, layer_name, instance):
-    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-    
+def plot_tensors(weight_tensor, activation_tensor, plasticity_tensor, layer_name, instance):
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))  # Update to 1x3 layout
+
     # Plotting weights
     if weight_tensor is not None:
         ax = axes[0]
@@ -66,33 +72,39 @@ def plot_tensors(weight_tensor, activation_tensor, layer_name, instance):
         ax.set_title(f'Weights of {layer_name}')
         fig.colorbar(im, ax=ax)
 
-    print(activation_tensor.shape)
     # Plotting activations
     if activation_tensor is not None:
         ax = axes[1]
-        # Remove singleton dimensions
         activation_tensor = activation_tensor.squeeze()
         if activation_tensor.ndim == 1:
-            # Convert tensor to numpy array and plot as a bar chart
             ax.bar(range(len(activation_tensor)), activation_tensor.detach().numpy())
         else:
-            # For multi-dimensional activations, retain the heatmap representation
             im = ax.imshow(activation_tensor.detach().numpy(), cmap='viridis')
             fig.colorbar(im, ax=ax)
         ax.set_title(f'Activations of {layer_name}')
 
+    # Plotting plasticity
+    if plasticity_tensor is not None:
+        ax = axes[2]
+        im = ax.imshow(plasticity_tensor.detach().numpy(), cmap='viridis')
+        ax.set_title(f'Plasticity of {layer_name}')
+        fig.colorbar(im, ax=ax)
+
     plt.suptitle(f'Layer {layer_name} at Instance {instance}')
     plt.show()
+
 
 def visualize_model_data(layer_name, instance):
     weight_path = os.path.join(save_dir, f'weights_{layer_name}_epoch{instance}.pt')
     activation_path = os.path.join(save_dir, f'activations_{layer_name}_epoch{instance}.pt')
+    plasticity_path = os.path.join(save_dir, f'plasticity_{layer_name}_epoch{instance}.pt')
 
     weight_tensor = load_tensor(weight_path)
     activation_tensor = load_tensor(activation_path)
-    # print(weight_tensor)
-    # print(activation_tensor)
-    plot_tensors(weight_tensor, activation_tensor, layer_name, instance)
+    plasticity_tensor = load_tensor(plasticity_path)
+    
+    plot_tensors(weight_tensor, activation_tensor, plasticity_tensor, layer_name, instance)
+
 
 # Example usage: visualize_model_data('layer1', 10)
 
@@ -101,38 +113,40 @@ def visualize_model_data(layer_name, instance):
 import matplotlib.pyplot as plt
 
 def visualize_all_layers_and_save(model, instance, save_path):
-    print("Visualizing all layers and saving to", save_path)
-    # Assuming model layers are stored in a list or accessible by named_modules()
     layer_names = [name for name, layer in model.named_modules() if isinstance(layer, nn.Linear)]
-
-    # Create a large figure
     num_layers = len(layer_names)
-    fig, axes = plt.subplots(num_layers, 2, figsize=(12, num_layers * 4))  # Adjust the size as needed
+    fig, axes = plt.subplots(num_layers, 3, figsize=(18, num_layers * 4))  # Update to 3 columns
 
     for i, layer_name in enumerate(layer_names):
-        # Load tensors for each layer
         weight_path = os.path.join(save_dir, f'weights_{layer_name}_epoch{instance}.pt')
         activation_path = os.path.join(save_dir, f'activations_{layer_name}_epoch{instance}.pt')
+        plasticity_path = os.path.join(save_dir, f'plasticity_{layer_name}_epoch{instance}.pt')
+
         weight_tensor = load_tensor(weight_path)
         activation_tensor = load_tensor(activation_path).squeeze()
+        plasticity_tensor = load_tensor(plasticity_path)
 
-        # Plot weights
         if weight_tensor is not None:
             ax = axes[i][0]
             im = ax.imshow(weight_tensor.cpu().detach().numpy(), cmap='viridis')
             fig.colorbar(im, ax=ax)
             ax.set_title(f'Weights of {layer_name}')
 
-        # Plot activations as bar chart
         if activation_tensor is not None and activation_tensor.ndim == 1:
             ax = axes[i][1]
             ax.bar(range(len(activation_tensor)), activation_tensor.cpu().detach().numpy())
             ax.set_title(f'Activations of {layer_name}')
 
-    # Save the figure before showing it
+        if plasticity_tensor is not None:
+            ax = axes[i][2]
+            im = ax.imshow(plasticity_tensor.cpu().detach().numpy(), cmap='viridis')
+            fig.colorbar(im, ax=ax)
+            ax.set_title(f'Plasticity of {layer_name}')
+
     plt.tight_layout()
     plt.savefig(save_path)
     plt.close()
+
 
     # Optionally, show the plot in Jupyter Notebook
     # plt.show()

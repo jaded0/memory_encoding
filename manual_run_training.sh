@@ -24,13 +24,13 @@ GROUP='whatever'
 # true or false
 NORMALIZE=false
 
-CLIP_WEIGHTS=0
+CLIP_WEIGHTS=1
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-8
-PLAST_LEARNING_RATE=0
-PLAST_CLIP=1e7
+LEARNING_RATE=1e-2
+PLAST_LEARNING_RATE=1e-4
+PLAST_CLIP=1e8
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -48,14 +48,14 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=1024
+HIDDEN_SIZE=64
 
 # Number of layers in RNN
 NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=100000000
+SAVE_FREQUENCY=10000
 
 # Number of training iterations, like 100000
 N_ITERS=1000000000
@@ -78,7 +78,7 @@ TRACK=true
 DATASET=4_resequence
 BATCH_SIZE=1
 CANDECAY=0
-PLAST_CANDECAY=0.999
+PLAST_CANDECAY=0
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
