@@ -15,7 +15,8 @@ rm model_data/*
 # backprop - Standard backpropagation: Computes gradients using chain rule and updates weights based on gradient descent. Relies on global error propagated from the output layer.
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
 # plastic_candidate
-UPDATE_RULE='plastic_candidate'
+# static_plastic_candidate
+UPDATE_RULE='static_plastic_candidate'
 
 GROUP='whatever'
 
@@ -28,9 +29,9 @@ CLIP_WEIGHTS=1
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-3
+LEARNING_RATE=1e-4
 PLAST_LEARNING_RATE=0
-PLAST_CLIP=1e2
+PLAST_CLIP=1e4
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -48,7 +49,7 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=2048
+HIDDEN_SIZE=1024
 
 # Number of layers in RNN
 NUM_LAYERS=5

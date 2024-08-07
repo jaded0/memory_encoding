@@ -38,11 +38,11 @@ class HebbianLinear(nn.Linear):
         
         if update_rule == 'candidate':
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
-        if update_rule == 'plastic_candidate':
+        if update_rule == 'plastic_candidate' or update_rule == 'static_plastic_candidate':
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            log_uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-2), np.log(1e2)))
+            log_uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-1), np.log(1e4)))
             uniform = torch.empty_like(self.weight).uniform_(1e-2, 1e4)
             # Initialize plasticity parameters with the generated values
             if self.is_last_layer == False:
@@ -175,50 +175,36 @@ class HebbianLinear(nn.Linear):
             imprint_update = sign * torch.abs(product)**0.5
             update = learning_rate * imprint_update
         elif self.update_rule == 'plastic_candidate':
-            # # only evaluate past weight updates with the current reward signal
-            # imprint_update = self.candidate_weights.data.clone()  # Clone the candidate weights to avoid modifying imprint_update
-            # plasticity_imprint_update = self.plasticity_candidate_weights.data.clone()  # Clone the candidate weights to avoid modifying imprint_update
-
-
-
             out = projected_error.unsqueeze(2)
             # out_plasticity = (global_error @ self.feedback_weights).unsqueeze(2)
-            # out_plasticity = (global_error @ self.plasticity_feedback_weights).unsqueeze(2)
+            out_plasticity = (global_error @ self.plasticity_feedback_weights).unsqueeze(2)
             out_weights_product = out * self.weight.data
-            # plasticity_out_weights_product = out_plasticity * self.plasticity.data
+            plasticity_out_weights_product = out_plasticity * self.plasticity.data
 
             candidate_update = out * (input.unsqueeze(1) - out_weights_product)
-            # plasticity_candidate_update = out * (self.candidate_weights.data - plasticity_out_weights_product)
+            plasticity_candidate_update = out * (self.candidate_weights.data - plasticity_out_weights_product)
             
             # Reset or decay candidate_weights
             self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
-            # self.plasticity_candidate_weights.data *= self.plast_candecay  # Example: decay by half is 0.5
+            self.plasticity_candidate_weights.data *= self.plast_candecay  # Example: decay by half is 0.5
 
-            # candidate_update = candidate_update.T
-            # self.candidate_weights.data += candidate_update
-            # print(f"shapes. candidate_weights: {self.candidate_weights.data.shape}, update shape: {candidate_update.shape}, mean: {candidate_update.mean(dim=0).shape}")
-            # self.candidate_weights.data += candidate_update.sum(dim=0)
-            # self.plasticity_candidate_weights.data += plasticity_candidate_update.sum(dim=0)
             # self.candidate_weights.data += candidate_update.mean(dim=0)
             # self.plasticity_candidate_weights.data += plasticity_candidate_update.mean(dim=0)
             batch_agg_candidate_update = candidate_update.mean(dim=0)
-            # batch_agg_plasticity_candidate_update = plasticity_candidate_update.mean(dim=0)
+            batch_agg_plasticity_candidate_update = plasticity_candidate_update.mean(dim=0)
             self.candidate_weights.data += batch_agg_candidate_update*(1-self.candecay)
-            # self.plasticity_candidate_weights.data += batch_agg_plasticity_candidate_update*(1-self.plast_candecay)
+            self.plasticity_candidate_weights.data += batch_agg_plasticity_candidate_update*(1-self.plast_candecay)
             # self.candidate_weights.data *= 1/(1-self.candecay**self.t)
             # self.plasticity_candidate_weights.data *= 1/(1-0.999**self.t)
             # self.t += 1
 
-            # update = learning_rate * inputs.T * projected_error
-            # update = update.T + imprint_update * imprint_rate
-            # update = global_error.T * learning_rate * self.feedback_weights
 
             sign = torch.sign(batch_agg_candidate_update)
             product = batch_agg_candidate_update*self.candidate_weights.data
             imprint_update = sign * torch.abs(product)**0.5
-            # sign = torch.sign(batch_agg_plasticity_candidate_update)
-            # product = batch_agg_plasticity_candidate_update*self.plasticity_candidate_weights.data
-            # plasticity_imprint_update = sign * torch.abs(product)**0.5
+            sign = torch.sign(batch_agg_plasticity_candidate_update)
+            product = batch_agg_plasticity_candidate_update*self.plasticity_candidate_weights.data
+            plasticity_imprint_update = sign * torch.abs(product)**0.5
             # imprint_update = self.candidate_weights.data
             # plasticity_imprint_update = self.plasticity_candidate_weights.data
             # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
@@ -229,10 +215,26 @@ class HebbianLinear(nn.Linear):
             # scaled_plasticity = scale / (1 + torch.exp(shifted_plasticity) + 1e-40)
             # update = update * scaled_plasticity
             update = update * self.plasticity.data
-            # self.plasticity.data += plast_learning_rate * plasticity_imprint_update
+            self.plasticity.data += plast_learning_rate * plasticity_imprint_update
             # self.plasticity.data.clamp_(1e-40,plast_clip)
-            # self.plasticity.data.clamp_(1e-2,plast_clip)
+            self.plasticity.data.clamp_(1e-2,plast_clip)
             # print(plast_learning_rate * plasticity_imprint_update)
+
+        elif self.update_rule == 'static_plastic_candidate':
+            out = projected_error.unsqueeze(2)
+            out_weights_product = out * self.weight.data
+
+            candidate_update = out * (input.unsqueeze(1) - out_weights_product)
+            
+            # Reset or decay candidate_weights
+            self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
+            batch_agg_candidate_update = candidate_update.mean(dim=0)
+            self.candidate_weights.data += batch_agg_candidate_update*(1-self.candecay)
+            sign = torch.sign(batch_agg_candidate_update)
+            product = batch_agg_candidate_update*self.candidate_weights.data
+            imprint_update = sign * torch.abs(product)**0.5
+            update = learning_rate * imprint_update
+            update = update * self.plasticity.data
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
 
