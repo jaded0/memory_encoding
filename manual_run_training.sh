@@ -17,7 +17,7 @@ rm model_data/*
 # plastic_candidate
 UPDATE_RULE='plastic_candidate'
 
-GROUP='long_range_make_work_static'
+GROUP='whatever'
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -28,9 +28,9 @@ CLIP_WEIGHTS=1
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-7
+LEARNING_RATE=1e-3
 PLAST_LEARNING_RATE=0
-PLAST_CLIP=1e4
+PLAST_CLIP=1e2
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -48,14 +48,14 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=1024
+HIDDEN_SIZE=2048
 
 # Number of layers in RNN
 NUM_LAYERS=5
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=100000
+SAVE_FREQUENCY=10000
 
 # Number of training iterations, like 100000
 N_ITERS=1000000000

@@ -70,7 +70,7 @@ dataset_dict.save_to_disk("long_range_memory_dataset")
 # Generate resequence datasets
 for n in range(1, 5):
     sample_type = f"{n}_resequence"
-    train_dataset = generate_dataset(num_samples=10, split="train", sample_type=sample_type)
+    train_dataset = generate_dataset(num_samples=1000000, split="train", sample_type=sample_type)
     validation_dataset = generate_dataset(num_samples=5000, split="validation", sample_type=sample_type)
     test_dataset = generate_dataset(num_samples=20000, split="test", sample_type=sample_type)
     
