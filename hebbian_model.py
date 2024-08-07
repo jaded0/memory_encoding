@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import math
 import sys
 from utils import initialize_charset
+import numpy as np
 
 class HebbianLinear(nn.Linear):
     def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5, requires_grad=False, is_last_layer=False, candecay=0.9, plast_candecay=0.5):
@@ -40,7 +41,12 @@ class HebbianLinear(nn.Linear):
         if update_rule == 'plastic_candidate':
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
-            self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
+            # Generate random values with a log-uniform distribution between 1e-2 and 1e2
+            log_uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-2), np.log(1e4)))
+
+            # Initialize plasticity parameters with the generated values
+            self.plasticity = nn.Parameter(log_uniform, requires_grad=requires_grad)
+            # self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
             # self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight)), requires_grad=requires_grad)
             # nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
             self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
@@ -219,7 +225,7 @@ class HebbianLinear(nn.Linear):
             update = update * self.plasticity.data
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
             # self.plasticity.data.clamp_(1e-40,plast_clip)
-            self.plasticity.data.clamp_(-plast_clip,plast_clip)
+            self.plasticity.data.clamp_(1e-2,plast_clip)
             # print(plast_learning_rate * plasticity_imprint_update)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
