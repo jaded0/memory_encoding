@@ -5,6 +5,16 @@ import math
 import sys
 from utils import initialize_charset
 import numpy as np
+import torch.nn.utils.parametrize as parametrize
+
+class PlasticityNorm(nn.Module):
+    def __init__(self, lr):
+        super().__init__()
+        self.lr = lr
+
+    def forward(self, plasticity):
+        norm = plasticity.norm(p=2, dim=None, keepdim=True)
+        return self.lr * plasticity / norm
 
 class HebbianLinear(nn.Linear):
     def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, update_rule='damage', alpha=0.5, requires_grad=False, is_last_layer=False, candecay=0.9, plast_candecay=0.5):
@@ -25,6 +35,7 @@ class HebbianLinear(nn.Linear):
         self.candecay = candecay
         self.plast_candecay = plast_candecay
         self.t = 1000
+        self.learning_rate = 1e-4
 
         # Calculate the adjusted gain for [-1, 1] range
         # gain = 1 / math.sqrt(6 / (in_features + out_features))
@@ -42,13 +53,15 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            log_uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-1), np.log(1e4)))
+            log_uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-1), np.log(1e2)))
             uniform = torch.empty_like(self.weight).uniform_(1e-2, 1e4)
             # Initialize plasticity parameters with the generated values
             if self.is_last_layer == False:
                 self.plasticity = nn.Parameter(log_uniform, requires_grad=requires_grad)
             else:
                 self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
+                # keep the effective learning rate to be the learning rate, on average
+                parametrize.register_parametrization(self, 'plasticity', PlasticityNorm(self.learning_rate))
             # self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight)), requires_grad=requires_grad)
             # nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
             self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
@@ -208,7 +221,7 @@ class HebbianLinear(nn.Linear):
             # imprint_update = self.candidate_weights.data
             # plasticity_imprint_update = self.plasticity_candidate_weights.data
             # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
-            update = learning_rate * imprint_update
+            update = imprint_update
             # Scale and shift the plasticity values
             # shift, scale = 1,1e8
             # shifted_plasticity = self.plasticity.data + shift

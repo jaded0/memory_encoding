@@ -29,9 +29,9 @@ CLIP_WEIGHTS=1
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-4
-PLAST_LEARNING_RATE=0
-PLAST_CLIP=1e4
+LEARNING_RATE=1e-5
+PLAST_LEARNING_RATE=1e-3
+PLAST_CLIP=1e5
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -49,10 +49,10 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=1024
+HIDDEN_SIZE=256
 
 # Number of layers in RNN
-NUM_LAYERS=5
+NUM_LAYERS=15
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
