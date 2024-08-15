@@ -35,7 +35,7 @@ class HebbianLinear(nn.Linear):
         self.candecay = candecay
         self.plast_candecay = plast_candecay
         self.t = 1000
-        self.learning_rate = 1e-4
+        self.learning_rate = 1
 
         # Calculate the adjusted gain for [-1, 1] range
         # gain = 1 / math.sqrt(6 / (in_features + out_features))
@@ -221,7 +221,7 @@ class HebbianLinear(nn.Linear):
             # imprint_update = self.candidate_weights.data
             # plasticity_imprint_update = self.plasticity_candidate_weights.data
             # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
-            update = imprint_update
+            update = learning_rate * imprint_update
             # Scale and shift the plasticity values
             # shift, scale = 1,1e8
             # shifted_plasticity = self.plasticity.data + shift

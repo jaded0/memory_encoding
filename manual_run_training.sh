@@ -52,7 +52,7 @@ DELTA_REWARDS=false
 HIDDEN_SIZE=256
 
 # Number of layers in RNN
-NUM_LAYERS=15
+NUM_LAYERS=5
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
