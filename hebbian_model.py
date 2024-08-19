@@ -60,8 +60,8 @@ class HebbianLinear(nn.Linear):
                 self.plasticity = nn.Parameter(log_uniform, requires_grad=requires_grad)
             else:
                 self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
-                # keep the effective learning rate to be the learning rate, on average
-                parametrize.register_parametrization(self, 'plasticity', PlasticityNorm(self.learning_rate))
+            # keep the effective learning rate to be the learning rate, on average
+            parametrize.register_parametrization(self, 'plasticity', PlasticityNorm(self.learning_rate))
             # self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight)), requires_grad=requires_grad)
             # nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
             self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
@@ -230,7 +230,7 @@ class HebbianLinear(nn.Linear):
             update = update * self.plasticity.data
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
             # self.plasticity.data.clamp_(1e-40,plast_clip)
-            self.plasticity.data.clamp_(1e-2,plast_clip)
+            self.plasticity.data.clamp_(1e-7,plast_clip)
             # print(plast_learning_rate * plasticity_imprint_update)
 
         elif self.update_rule == 'static_plastic_candidate':
