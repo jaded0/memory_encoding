@@ -29,8 +29,8 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-3
-PLAST_LEARNING_RATE=1e-5
+LEARNING_RATE=1e-4
+PLAST_LEARNING_RATE=1e-4
 PLAST_CLIP=1e5
 RESIDUAL_CONNECTION=false
 
@@ -49,16 +49,16 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=1024
+HIDDEN_SIZE=256
 
 # Number of layers in RNN
-NUM_LAYERS=15
+NUM_LAYERS=10
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
 SAVE_FREQUENCY=100000
 
-# Number of training iterations, like 100000
+# Number of training iterations, like 1000000000
 N_ITERS=1000000000
 
 # Frequency of printing training progress
@@ -70,7 +70,7 @@ PRINT_FREQ=20
 PLOT_FREQ=20
 
 # true or false
-TRACK=true
+TRACK=false
 
 # roneneldan/tinystories
 # jbrazzy/baby_names
@@ -78,7 +78,7 @@ TRACK=true
 # long_range_memory_dataset
 DATASET=long_range_memory_dataset
 BATCH_SIZE=1
-CANDECAY=0
+CANDECAY=0.9
 PLAST_CANDECAY=0.9
 
 # Running the training script with the specified hyperparameters

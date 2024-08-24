@@ -16,13 +16,13 @@ dataset_keys = {
 
 def get_charset(dataset_name):
     if dataset_name == "long_range_memory_dataset" or "resequence" in dataset_name:
-        return "0123456789,.?!"
+        return "0123,.?!"
     else:
         return " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n-"
 
 def initialize_charset(dataset_name):
     charset = get_charset(dataset_name)
-    print(f"length of the charset is {len(charset)}")
+    # print(f"length of the charset is {len(charset)}")
 
     char_to_idx = {char: idx for idx, char in enumerate(charset)}
     idx_to_char = {idx: char for char, idx in char_to_idx.items()}

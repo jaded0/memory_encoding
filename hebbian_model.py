@@ -34,7 +34,7 @@ class HebbianLinear(nn.Linear):
         self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
         self.candecay = candecay
         self.plast_candecay = plast_candecay
-        self.t = 1000
+        self.t = 1
         self.learning_rate = 1
 
         # Calculate the adjusted gain for [-1, 1] range
@@ -53,15 +53,17 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            log_uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-1), np.log(1e2)))
-            uniform = torch.empty_like(self.weight).uniform_(1e-2, 1e4)
+            log_uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-4), np.log(1e2)))
+            uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-5), np.log(1e5)))
+            print(uniform)
             # Initialize plasticity parameters with the generated values
             if self.is_last_layer == False:
                 self.plasticity = nn.Parameter(log_uniform, requires_grad=requires_grad)
+                self.frequency = nn.Parameter(uniform, requires_grad=requires_grad)  # Initialize plasticity parameters
             else:
                 self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
             # keep the effective learning rate to be the learning rate, on average
-            parametrize.register_parametrization(self, 'plasticity', PlasticityNorm(self.learning_rate))
+            # parametrize.register_parametrization(self, 'plasticity', PlasticityNorm(self.learning_rate))
             # self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight)), requires_grad=requires_grad)
             # nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
             self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
@@ -195,7 +197,7 @@ class HebbianLinear(nn.Linear):
             plasticity_out_weights_product = out_plasticity * self.plasticity.data
 
             candidate_update = out * (input.unsqueeze(1) - out_weights_product)
-            plasticity_candidate_update = out * (self.candidate_weights.data - plasticity_out_weights_product)
+            plasticity_candidate_update = out_plasticity * (self.candidate_weights.data - plasticity_out_weights_product)
             
             # Reset or decay candidate_weights
             self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
@@ -213,7 +215,7 @@ class HebbianLinear(nn.Linear):
 
 
             sign = torch.sign(batch_agg_candidate_update)
-            product = batch_agg_candidate_update*self.candidate_weights.data
+            product = batch_agg_candidate_update**2#self.candidate_weights.data
             imprint_update = sign * torch.abs(product)**0.5
             sign = torch.sign(batch_agg_plasticity_candidate_update)
             product = batch_agg_plasticity_candidate_update*self.plasticity_candidate_weights.data
@@ -227,11 +229,21 @@ class HebbianLinear(nn.Linear):
             # shifted_plasticity = self.plasticity.data + shift
             # scaled_plasticity = scale / (1 + torch.exp(shifted_plasticity) + 1e-40)
             # update = update * scaled_plasticity
-            update = update * self.plasticity.data
+
+            # fluctuate with sine wave
+            if not self.is_last_layer:
+                # update = update * torch.sin(0.0001*self.t*self.plasticity.data)
+                update = update * self.plasticity.data * (torch.sin(self.t*self.frequency.data)/2+1)
+            self.t += 1
+
+
+            # update = update * self.plasticity.data
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
-            # self.plasticity.data.clamp_(1e-40,plast_clip)
-            self.plasticity.data.clamp_(1e-7,plast_clip)
+            self.plasticity.data.clamp_(1e-1,plast_clip)
+            # self.plasticity.data.clamp_(-plast_clip,plast_clip)
             # print(plast_learning_rate * plasticity_imprint_update)
+
+            # self.weight.data -= self.weight.data*(learning_rate/100)*self.plasticity.data
 
         elif self.update_rule == 'static_plastic_candidate':
             out = projected_error.unsqueeze(2)
