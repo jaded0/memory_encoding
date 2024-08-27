@@ -53,7 +53,7 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            log_uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-4), np.log(1e2)))
+            log_uniform = torch.empty_like(self.weight).uniform_(0, 2)
             uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-5), np.log(1e5)))
             print(uniform)
             # Initialize plasticity parameters with the generated values
@@ -194,10 +194,10 @@ class HebbianLinear(nn.Linear):
             # out_plasticity = (global_error @ self.feedback_weights).unsqueeze(2)
             out_plasticity = (global_error @ self.plasticity_feedback_weights).unsqueeze(2)
             out_weights_product = out * self.weight.data
-            plasticity_out_weights_product = out_plasticity * self.plasticity.data
+            # plasticity_out_weights_product = out_plasticity * self.plasticity.data
 
             candidate_update = out * (input.unsqueeze(1) - out_weights_product)
-            plasticity_candidate_update = out_plasticity * (self.candidate_weights.data - plasticity_out_weights_product)
+            plasticity_candidate_update = out_plasticity * self.candidate_weights.data #(self.candidate_weights.data - plasticity_out_weights_product)
             
             # Reset or decay candidate_weights
             self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
@@ -233,13 +233,15 @@ class HebbianLinear(nn.Linear):
             # fluctuate with sine wave
             if not self.is_last_layer:
                 # update = update * torch.sin(0.0001*self.t*self.plasticity.data)
-                update = update * self.plasticity.data * (torch.sin(self.t*self.frequency.data)/2+1)
+                update = update * torch.exp(self.plasticity.data) * (torch.sin(self.t*self.frequency.data)/2+1)
+            else:
+                update *= 1e-2
             self.t += 1
 
 
             # update = update * self.plasticity.data
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
-            self.plasticity.data.clamp_(1e-1,plast_clip)
+            self.plasticity.data.clamp_(-5,plast_clip)
             # self.plasticity.data.clamp_(-plast_clip,plast_clip)
             # print(plast_learning_rate * plasticity_imprint_update)
 

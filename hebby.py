@@ -118,15 +118,16 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             rnn.zero_grad()
         
         # Apply Hebbian updates to the network
-        threshold = 0
-        lr = 1e-3 if state["training_instance"] < threshold else config["learning_rate"]
+        threshold = 10000
+        lr = 1e-2 if state["training_instance"] < threshold else config["learning_rate"]
         if state["training_instance"] == threshold:
             print(f"reached threshold at {threshold}")
         rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])
 
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
             # Save the model and activations periodically
-            save_model_data(rnn, state["activations"], state["training_instance"], config['track'])
+            print("---\nsaving activations\n---")
+            save_model_data(rnn, state["activations"], state["training_instance"], False)#config['track'])
 
         state['training_instance'] += 1
 
@@ -281,6 +282,7 @@ def main():
 
                 # Check for invalid indices before logging
                 valid_outputs = [idx_to_char.get(torch.argmax(o).item(), None) for o in all_outputs]
+                valid_outputs_2 = [idx_to_char.get(torch.topk(o, 2).indices[1].item(), None) for o in all_outputs]
                 valid_labels = [idx_to_char.get(torch.argmax(l).item(), None) for l in all_labels]
 
                 # Filter out None values
@@ -300,7 +302,8 @@ def main():
 
                 # Print the progression of the entire sequence
                 progression = ''.join(valid_outputs)  # Convert list of characters to a string
-                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} avg: {(current_loss/(args.plot_freq*5)):.5f} Sequence: \n{sequence}\n {progression} {correct}')
+                progression2 = ''.join(valid_outputs_2)
+                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} avg: {(current_loss/(args.plot_freq*5)):.5f} Sequence: \n{sequence}\n {progression} {correct}\n {progression2}')
                 all_losses.append(current_loss / (args.plot_freq * 5))
                 current_loss = 0
 
@@ -309,7 +312,7 @@ def main():
 
     if args.track:
         wandb.finish()
-    # create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
+    create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
 
 
 if __name__ == '__main__':

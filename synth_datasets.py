@@ -5,7 +5,7 @@ from utils import initialize_charset
 def generate_long_range_sample():
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset("long_range_memory_dataset")  # default dataset
 
-    random_char = random.choice(charset[1:])
+    random_char = random.choice(charset[3:])
     
     # Generate random number of zeroes before '?'
     zeroes_before_question = "0" * random.randint(1, 5)
