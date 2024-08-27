@@ -53,9 +53,9 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            log_uniform = torch.empty_like(self.weight).uniform_(0, 2)
+            log_uniform = torch.empty_like(self.weight).uniform_(-1, 2)
             uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-5), np.log(1e5)))
-            print(uniform)
+            # print(uniform)
             # Initialize plasticity parameters with the generated values
             if self.is_last_layer == False:
                 self.plasticity = nn.Parameter(log_uniform, requires_grad=requires_grad)
@@ -241,7 +241,7 @@ class HebbianLinear(nn.Linear):
 
             # update = update * self.plasticity.data
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
-            self.plasticity.data.clamp_(-5,plast_clip)
+            self.plasticity.data.clamp_(-1,plast_clip)
             # self.plasticity.data.clamp_(-plast_clip,plast_clip)
             # print(plast_learning_rate * plasticity_imprint_update)
 

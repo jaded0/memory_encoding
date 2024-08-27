@@ -30,8 +30,8 @@ CLIP_WEIGHTS=0
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
 LEARNING_RATE=1e-3
-PLAST_LEARNING_RATE=1e2
-PLAST_CLIP=1
+PLAST_LEARNING_RATE=1e1
+PLAST_CLIP=3
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -56,7 +56,7 @@ NUM_LAYERS=5
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=1000
+SAVE_FREQUENCY=10000
 
 # Number of training iterations, like 1000000000
 N_ITERS=1000000000
@@ -70,7 +70,7 @@ PRINT_FREQ=20
 PLOT_FREQ=20
 
 # true or false
-TRACK=true
+TRACK=false
 
 # roneneldan/tinystories
 # jbrazzy/baby_names

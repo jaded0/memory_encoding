@@ -118,7 +118,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             rnn.zero_grad()
         
         # Apply Hebbian updates to the network
-        threshold = 10000
+        threshold = 0
         lr = 1e-2 if state["training_instance"] < threshold else config["learning_rate"]
         if state["training_instance"] == threshold:
             print(f"reached threshold at {threshold}")
@@ -127,7 +127,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
             # Save the model and activations periodically
             print("---\nsaving activations\n---")
-            save_model_data(rnn, state["activations"], state["training_instance"], False)#config['track'])
+            save_model_data(rnn, state["activations"], state["training_instance"], config['track'])
 
         state['training_instance'] += 1
 
