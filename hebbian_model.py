@@ -236,13 +236,14 @@ class HebbianLinear(nn.Linear):
             if not self.is_last_layer:
                 # update = update * torch.sin(0.0001*self.t*self.plasticity.data)
                 update = update * torch.exp(self.plasticity.data) * (torch.sin(self.t*self.frequency.data)/2+1)
+                self.plasticity.data += plast_learning_rate * plasticity_imprint_update
             else:
                 update *= 1e-2
             self.t += 1
 
 
             # update = update * self.plasticity.data
-            self.plasticity.data += plast_learning_rate * plasticity_imprint_update
+            # self.plasticity.data += plast_learning_rate * plasticity_imprint_update
             # self.plasticity.data.clamp_(-2,plast_clip)
             # self.plasticity.data.clamp_(-plast_clip,plast_clip)
             # print(plast_learning_rate * plasticity_imprint_update)
@@ -395,7 +396,7 @@ class HebbyRNN(torch.nn.Module):
         # self.linear2.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
         for layer in self.linear_layers:
             layer.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
-        self.i2h.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
+        # self.i2h.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
         self.i2o.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
 
 
