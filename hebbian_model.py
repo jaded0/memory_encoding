@@ -235,13 +235,13 @@ class HebbianLinear(nn.Linear):
             # fluctuate with sine wave
             if not self.is_last_layer:
                 # update = update * torch.sin(0.0001*self.t*self.plasticity.data)
-                update = update * torch.exp(self.plasticity.data) * ((torch.sin(self.t*self.frequency.data)))#+1)/2)
+                update = update * torch.exp(self.plasticity.clamp(-3,3)) * ((torch.sin(self.t*self.frequency.data)+1)/2)
                 self.plasticity.data += plast_learning_rate * plasticity_imprint_update
             else:
                 update *= 1e-2
             self.t += 1
 
-
+            update.clamp_(-plast_clip,plast_clip)
             # update = update * self.plasticity.data
             # self.plasticity.data += plast_learning_rate * plasticity_imprint_update
             # self.plasticity.data.clamp_(-2,plast_clip)
