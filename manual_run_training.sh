@@ -30,7 +30,7 @@ CLIP_WEIGHTS=0
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
 LEARNING_RATE=1e-3
-PLAST_LEARNING_RATE=1e1
+PLAST_LEARNING_RATE=1e0
 PLAST_CLIP=3
 RESIDUAL_CONNECTION=false
 
@@ -70,7 +70,7 @@ PRINT_FREQ=20
 PLOT_FREQ=20
 
 # true or false
-TRACK=false
+TRACK=true
 
 # roneneldan/tinystories
 # jbrazzy/baby_names
@@ -79,7 +79,7 @@ TRACK=false
 DATASET=long_range_memory_dataset
 BATCH_SIZE=1
 CANDECAY=0.9
-PLAST_CANDECAY=0.99
+PLAST_CANDECAY=0.9
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \

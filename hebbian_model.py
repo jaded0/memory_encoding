@@ -53,8 +53,8 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            log_uniform = torch.empty_like(self.weight).uniform_(-1, 2)
-            uniform = torch.exp(torch.empty_like(self.weight).uniform_(np.log(1e-5), np.log(1e5)))
+            log_uniform = torch.empty_like(self.weight).uniform_(-4, 4)
+            uniform = torch.empty_like(self.weight).uniform_(0, 3.141)
             # print(uniform)
             # Initialize plasticity parameters with the generated values
             if self.is_last_layer == False:
@@ -214,12 +214,14 @@ class HebbianLinear(nn.Linear):
             # self.t += 1
 
 
-            sign = torch.sign(batch_agg_candidate_update)
-            product = batch_agg_candidate_update**2#self.candidate_weights.data
-            imprint_update = sign * torch.abs(product)**0.5
-            sign = torch.sign(batch_agg_plasticity_candidate_update)
+            # sign = torch.sign(batch_agg_candidate_update)
+            # product = batch_agg_candidate_update*self.candidate_weights.data
+            # imprint_update = sign * torch.abs(product)**0.5
+            sign = torch.sign(self.plasticity_candidate_weights.data)
             product = batch_agg_plasticity_candidate_update*self.plasticity_candidate_weights.data
             plasticity_imprint_update = sign * torch.abs(product)**0.5
+
+            imprint_update = batch_agg_candidate_update
             # imprint_update = self.candidate_weights.data
             # plasticity_imprint_update = self.plasticity_candidate_weights.data
             # print(f"are imprint_update and self.candidate_weights different now? {imprint_update - self.candidate_weights.data}")
@@ -241,7 +243,7 @@ class HebbianLinear(nn.Linear):
 
             # update = update * self.plasticity.data
             self.plasticity.data += plast_learning_rate * plasticity_imprint_update
-            self.plasticity.data.clamp_(-1,plast_clip)
+            # self.plasticity.data.clamp_(-2,plast_clip)
             # self.plasticity.data.clamp_(-plast_clip,plast_clip)
             # print(plast_learning_rate * plasticity_imprint_update)
 

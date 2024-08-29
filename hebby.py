@@ -303,7 +303,7 @@ def main():
                 # Print the progression of the entire sequence
                 progression = ''.join(valid_outputs)  # Convert list of characters to a string
                 progression2 = ''.join(valid_outputs_2)
-                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} avg: {(current_loss/(args.plot_freq*5)):.5f} Sequence: \n{sequence}\n {progression} {correct}\n {progression2}')
+                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} avg: {(current_loss/(args.plot_freq*5)):.5f} Sequence: \n\033[91m{sequence}\033[0m\n \033[93m{progression}\033[0m {correct}\n \033[35m{progression2}\033[0m')
                 all_losses.append(current_loss / (args.plot_freq * 5))
                 current_loss = 0
 
@@ -312,7 +312,7 @@ def main():
 
     if args.track:
         wandb.finish()
-    create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
+    # create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
 
 
 if __name__ == '__main__':
