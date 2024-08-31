@@ -29,9 +29,9 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-3
-PLAST_LEARNING_RATE=1e0
-PLAST_CLIP=1e-1
+LEARNING_RATE=1e-4
+PLAST_LEARNING_RATE=1e-3
+PLAST_CLIP=1e1
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
