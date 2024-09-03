@@ -29,9 +29,9 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-4
-PLAST_LEARNING_RATE=1e-3
-PLAST_CLIP=1e1
+LEARNING_RATE=1e-3
+PLAST_LEARNING_RATE=1e1
+PLAST_CLIP=1e2
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -79,7 +79,7 @@ TRACK=true
 DATASET=long_range_memory_dataset
 BATCH_SIZE=1
 CANDECAY=0.99
-PLAST_CANDECAY=0.1
+PLAST_CANDECAY=0.9
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \

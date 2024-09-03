@@ -54,7 +54,7 @@ class HebbianLinear(nn.Linear):
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
             log_uniform = torch.empty_like(self.weight).uniform_(-4, 2)
-            uniform = torch.empty_like(self.weight).uniform_(0, 3.141)
+            uniform = torch.empty_like(self.weight).uniform_(0.1, 3.141)
             # print(uniform)
             # Initialize plasticity parameters with the generated values
             if self.is_last_layer == False:
@@ -62,6 +62,7 @@ class HebbianLinear(nn.Linear):
                 self.frequency = nn.Parameter(uniform, requires_grad=requires_grad)  # Initialize plasticity parameters
             else:
                 self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
+            self.plasticity.data = self.plasticity.data / (torch.norm(self.plasticity.data, p=1) + 1e-8)
             # keep the effective learning rate to be the learning rate, on average
             # parametrize.register_parametrization(self, 'plasticity', PlasticityNorm(self.learning_rate))
             # self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight)), requires_grad=requires_grad)
@@ -235,12 +236,15 @@ class HebbianLinear(nn.Linear):
             # fluctuate with sine wave
             if not self.is_last_layer:
                 # update = update * torch.sin(0.0001*self.t*self.plasticity.data)
-                update = update * torch.exp(self.plasticity) * ((torch.sin(self.t*self.frequency.data)+1)/2)
-                self.plasticity.data += (plast_learning_rate * plasticity_imprint_update)
+                update = update * self.plasticity * ((torch.sin(self.t*self.frequency.data)+1)/2)
+                self.plasticity.data += (plast_learning_rate * plasticity_imprint_update)#.clamp(-plast_clip,plast_clip)
             else:
                 update *= 1e-2
             self.t += 1
 
+            self.plasticity.data = plast_clip*self.plasticity.data / (torch.norm(self.plasticity.data, p=1) + 1e-8)
+
+            # update.clamp_(-1e2,1e2)
             # update.clamp_(-plast_clip,plast_clip)
             # update = update * self.plasticity.data
             # self.plasticity.data += plast_learning_rate * plasticity_imprint_update
