@@ -16,7 +16,7 @@ rm model_data/*
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
 # plastic_candidate
 # static_plastic_candidate
-UPDATE_RULE='plastic_candidate'
+UPDATE_RULE='static_plastic_candidate'
 
 GROUP='whatever'
 
@@ -29,9 +29,9 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-3
-PLAST_LEARNING_RATE=1e1
-PLAST_CLIP=1e2
+LEARNING_RATE=1e-2
+PLAST_LEARNING_RATE=1e-10
+PLAST_CLIP=1e-6
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -78,7 +78,7 @@ TRACK=true
 # long_range_memory_dataset
 DATASET=long_range_memory_dataset
 BATCH_SIZE=1
-CANDECAY=0.99
+CANDECAY=0.9
 PLAST_CANDECAY=0.9
 
 # Running the training script with the specified hyperparameters

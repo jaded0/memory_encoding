@@ -312,7 +312,7 @@ def main():
 
     if args.track:
         wandb.finish()
-    create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
+    # create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
 
 
 if __name__ == '__main__':
