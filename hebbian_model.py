@@ -41,7 +41,7 @@ class HebbianLinear(nn.Linear):
         # gain = 1 / math.sqrt(6 / (in_features + out_features))
 
         # Initialize weights with the adjusted gain
-        self.feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
+        self.feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
         # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
         if update_rule == 'covariance':
@@ -53,7 +53,7 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            log_uniform = torch.empty_like(self.weight).uniform_(0, 2)
+            log_uniform = torch.empty_like(self.weight).uniform_(-2000, 100).clamp_(0.1,100)
             uniform = torch.empty_like(self.weight).uniform_(0.1, 3.141)
             # print(uniform)
             # Initialize plasticity parameters with the generated values
@@ -67,7 +67,7 @@ class HebbianLinear(nn.Linear):
             # parametrize.register_parametrization(self, 'plasticity', PlasticityNorm(self.learning_rate))
             # self.plasticity = nn.Parameter(torch.nn.init.xavier_normal_(torch.ones_like(self.weight)), requires_grad=requires_grad)
             # nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
-            self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_uniform_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
+            self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
 
 
     def forward(self, input):
@@ -265,12 +265,12 @@ class HebbianLinear(nn.Linear):
 
         elif self.update_rule == 'static_plastic_candidate':
             out = projected_error.unsqueeze(2)
-            out_weights_product = out * self.weight.data
+            # out_weights_product = out * self.weight.data
 
             candidate_update = out * input.unsqueeze(1)#(input.unsqueeze(1) - out_weights_product)
             
             # Reset or decay candidate_weights
-            self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
+            # self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
             batch_agg_candidate_update = candidate_update.mean(dim=0)
             # self.candidate_weights.data += batch_agg_candidate_update*(1-self.candecay)
             update = learning_rate * batch_agg_candidate_update
@@ -301,9 +301,9 @@ class HebbianLinear(nn.Linear):
             self.weight.data.clamp_(-max_weight_value, max_weight_value)
 
         # Apply stochastic noise to the weights
-        for p in self.parameters():
-            noise = stochasticity * torch.randn_like(p.data)
-            p.data += noise
+        # for p in self.parameters():
+        #     noise = stochasticity * torch.randn_like(p.data)
+        #     p.data += noise
 
 class HebbyRNN(torch.nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, charset, dropout_rate=0.1, residual_connection=False, init_type='zero', normalize=True, clip_weights=False, update_rule='damage', candecay=0.9, plast_candecay=0.5):
@@ -377,7 +377,7 @@ class HebbyRNN(torch.nn.Module):
         # Pass through the Hebbian linear layers with ReLU and Dropout
         for layer in self.linear_layers:
             combined = layer(combined)
-            combined = F.relu(combined)
+            combined = F.sigmoid(combined)
             # combined = self.dropout(combined)
 
         # Add the residual (original combined tensor) to the output of the layers

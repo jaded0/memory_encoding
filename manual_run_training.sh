@@ -18,7 +18,7 @@ rm model_data/*
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='whatever'
+GROUP='static_clipped_ratios'
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -29,9 +29,9 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-2
+LEARNING_RATE=1e-4
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1e-6
+PLAST_CLIP=1e-1
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -63,14 +63,14 @@ N_ITERS=1000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=20
+PRINT_FREQ=10
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=20
+PLOT_FREQ=10
 
 # true or false
-TRACK=true
+TRACK=false
 
 # roneneldan/tinystories
 # jbrazzy/baby_names
