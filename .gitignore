@@ -166,3 +166,5 @@ model_evolution*
 long_range_memory_dataset/
 *_resequence/
 jobs/
+slurm*
+response.json
