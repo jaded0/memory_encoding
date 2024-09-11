@@ -53,7 +53,7 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            log_uniform = torch.pow(10,torch.empty_like(self.weight).normal_(0, plast_clip))#.clamp_(1e-1,1e5)
+            log_uniform = torch.empty_like(self.weight).normal_(0, plast_clip)#.clamp_(1e-1,1e5)
             uniform = torch.empty_like(self.weight).uniform_(0.1, 3.141)
             # print(uniform)
             # Initialize plasticity parameters with the generated values
