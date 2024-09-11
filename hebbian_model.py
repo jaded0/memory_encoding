@@ -110,8 +110,8 @@ class HebbianLinear(nn.Linear):
             # zeroed out in the actual output.
 
             # Apply ReLU derivative
-            relu_derivative = (output.squeeze() > 0).float()  # 1 for activated neurons, 0 otherwise
-            projected_error *= relu_derivative
+            # relu_derivative = (output.squeeze() > 0).float()  # 1 for activated neurons, 0 otherwise
+            # projected_error *= relu_derivative
 
         if self.update_rule == 'damage':
             # Element-wise multiplication with broadcasting
@@ -274,7 +274,10 @@ class HebbianLinear(nn.Linear):
             batch_agg_candidate_update = candidate_update.mean(dim=0)
             # self.candidate_weights.data += batch_agg_candidate_update*(1-self.candecay)
             update = learning_rate * batch_agg_candidate_update
-            update = update * self.plasticity.data
+            if self.is_last_layer:
+                update = update * 0.1
+            else:
+                update = update * self.plasticity.data
             # update.clamp_(-plast_clip, plast_clip)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
