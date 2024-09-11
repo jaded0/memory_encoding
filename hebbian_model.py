@@ -53,7 +53,7 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            log_uniform = torch.empty_like(self.weight).uniform_(-2000, 100).clamp_(0.1,100)
+            log_uniform = torch.pow(10,torch.empty_like(self.weight).normal_(0, 0.5)).clamp_(1e-1,1e5)
             uniform = torch.empty_like(self.weight).uniform_(0.1, 3.141)
             # print(uniform)
             # Initialize plasticity parameters with the generated values
@@ -275,12 +275,13 @@ class HebbianLinear(nn.Linear):
             # self.candidate_weights.data += batch_agg_candidate_update*(1-self.candecay)
             update = learning_rate * batch_agg_candidate_update
             update = update * self.plasticity.data
-            update.clamp_(-plast_clip, plast_clip)
+            # update.clamp_(-plast_clip, plast_clip)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
 
 
         self.weight.data += update
+        # self.weight.data *= 1/(1e-10 + self.weight.norm(p=2))
 
         # Update bias if applicable
         if hasattr(self, 'bias') and self.bias is not None:

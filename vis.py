@@ -4,7 +4,7 @@ import torch.nn as nn
 import wandb
 
 # Create a directory for saving data
-save_dir = 'model_data'
+save_dir = '/tmp/model_data'
 os.makedirs(save_dir, exist_ok=True)
 
 def save_tensor(tensor, path, scale=1.0, precision=torch.float16):
