@@ -18,7 +18,7 @@ rm model_data/*
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='whatever'
+GROUP='normal_plasticity'
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
