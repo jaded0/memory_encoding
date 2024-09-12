@@ -276,15 +276,19 @@ class HebbianLinear(nn.Linear):
             update = learning_rate * batch_agg_candidate_update
             if self.is_last_layer:
                 update = update * 0.1
+                self.weight.data += update
             else:
-                update = update * self.plasticity.data
+                update = update * self.plasticity.data #* torch.sin(self.t*self.frequency.data)
+                self.weight.data += update
+                # print(self.weight.norm(p=2))
+                # self.weight.data *= 1/(0.1*torch.abs(self.plasticity.data))
+                self.weight.data -= 0.1*self.plasticity.data
             # update.clamp_(-plast_clip, plast_clip)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
 
 
-        self.weight.data += update
-        # self.weight.data *= 1/(1e-10 + self.weight.norm(p=2))
+        # self.weight.data += update
 
         # Update bias if applicable
         if hasattr(self, 'bias') and self.bias is not None:

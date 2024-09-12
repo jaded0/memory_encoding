@@ -14,7 +14,7 @@ def generate_long_range_sample():
     zeroes_between_question_exclamation = "0" * random.randint(1, 2)
     
     # Generate random number of zeroes after '!'
-    zeroes_after_exclamation = "0" * random.randint(1, 5)
+    # zeroes_after_exclamation = "0" * random.randint(1, 5)
     
     sample = (
         zeroes_before_question
@@ -23,7 +23,7 @@ def generate_long_range_sample():
         + zeroes_between_question_exclamation
         + "!"
         + random_char
-        + zeroes_after_exclamation
+        # + zeroes_after_exclamation
     )
     
     return sample
@@ -53,7 +53,7 @@ def generate_dataset(num_samples, split, sample_type="long_range"):
     return Dataset.from_dict({"text": samples}, split=split)
 
 # Generate train, validation, and test datasets for long range memory dataset
-train_dataset = generate_dataset(num_samples=1000000, split="train")
+train_dataset = generate_dataset(num_samples=10000000, split="train")
 validation_dataset = generate_dataset(num_samples=50000, split="validation")
 test_dataset = generate_dataset(num_samples=200000, split="test")
 

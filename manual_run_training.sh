@@ -29,7 +29,7 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-2
+LEARNING_RATE=1e-3
 PLAST_LEARNING_RATE=1e-10
 PLAST_CLIP=5
 RESIDUAL_CONNECTION=false
@@ -49,10 +49,10 @@ DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=1024
+HIDDEN_SIZE=256
 
 # Number of layers in RNN
-NUM_LAYERS=10
+NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
@@ -63,11 +63,11 @@ N_ITERS=1000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=50
+PRINT_FREQ=1000
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=50
+PLOT_FREQ=1000
 
 # true or false
 TRACK=true

@@ -262,8 +262,10 @@ def main():
     start = time.time()
     step_start = time.time()
     try:
-        for iter in range(1, args.n_iters + 1):
-            sequence, line_tensor, onehot_line_tensor = randomTrainingExample(dataloader)
+        for iter, (sequence, line_tensor, onehot_line_tensor) in enumerate(dataloader, 1):
+            if iter > args.n_iters:
+                break
+            # sequence, line_tensor, onehot_line_tensor = randomTrainingExample(dataloader)
             line_tensor = line_tensor.to(device)
             onehot_line_tensor = onehot_line_tensor.to(device)
 
@@ -277,7 +279,8 @@ def main():
                 topv, topi = output.topk(1, dim=1)
                 predicted_char = idx_to_char[topi[0, 0].item()]
                 target_char = sequence[0][-1]
-                correct = '✓' if predicted_char == target_char else '✗ (%s)' % target_char
+                iscorrect = predicted_char == target_char
+                correct = '✓' if iscorrect else '✗ (%s)' % target_char
                 sequence = sequence[0]
 
                 # Check for invalid indices before logging
@@ -296,6 +299,7 @@ def main():
                         "predicted_char": predicted_char, 
                         "target_char": target_char, 
                         "sequence": sequence,
+                        "was_correct": 1 if iscorrect else 0,
                         # "all_outputs": valid_outputs,
                         # "all_labels": valid_labels
                     })
