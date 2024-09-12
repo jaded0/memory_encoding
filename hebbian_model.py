@@ -282,7 +282,7 @@ class HebbianLinear(nn.Linear):
                 self.weight.data += update
                 # print(self.weight.norm(p=2))
                 # self.weight.data *= 1/(0.1*torch.abs(self.plasticity.data))
-                self.weight.data -= 0.1*self.plasticity.data
+                # self.weight.data -= 0.0001*self.plasticity.data
             # update.clamp_(-plast_clip, plast_clip)
         else:
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update

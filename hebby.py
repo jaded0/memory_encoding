@@ -10,6 +10,7 @@ import math
 import argparse
 import sys
 import numpy as np
+import itertools
 
 def print_graph(g, level=0):
     if g is None: return
@@ -258,23 +259,35 @@ def main():
 
     # Training Loop
     current_loss = 0
+    current_correct = 0
     all_losses = []
     start = time.time()
     step_start = time.time()
     try:
-        for iter, (sequence, line_tensor, onehot_line_tensor) in enumerate(dataloader, 1):
+        for iter, (sequence, line_tensor, onehot_line_tensor) in enumerate(itertools.cycle(dataloader), 1):
             if iter > args.n_iters:
                 break
-            # sequence, line_tensor, onehot_line_tensor = randomTrainingExample(dataloader)
+
             line_tensor = line_tensor.to(device)
             onehot_line_tensor = onehot_line_tensor.to(device)
 
             log_outputs = (iter % (args.plot_freq * 5) == 0)
             output, loss, og_loss, reg_loss, all_outputs, all_labels = train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
             output = output.detach()
+            topv, topi = output.topk(2, dim=1)  # Get the top 2 predictions
+            correct_answer = line_tensor[0][-1]  # Get the correct answer
+
+            # Check if the correct answer is either the top-1 or top-2 prediction
+            if topi[0][0] == correct_answer:
+                corr = 1  # Correct prediction as the top pick
+            elif topi[0][1] == correct_answer:
+                corr = 0.5  # Correct prediction as the second highest
+            else:
+                corr = 0  # Incorrect prediction
 
             # Loss tracking
             current_loss += loss
+            current_correct += corr
             if iter % (args.plot_freq * 5) == 0:  # Logging less frequently
                 topv, topi = output.topk(1, dim=1)
                 predicted_char = idx_to_char[topi[0, 0].item()]
@@ -295,11 +308,11 @@ def main():
                     wandb.log({
                         "loss": loss, 
                         "avg_loss": current_loss / (args.plot_freq * 5), 
-                        "correct": correct, 
+                        "correct": current_correct / (args.plot_freq * 5), 
                         "predicted_char": predicted_char, 
                         "target_char": target_char, 
                         "sequence": sequence,
-                        "was_correct": 1 if iscorrect else 0,
+                        "was_correct": current_correct / (args.plot_freq * 5),
                         # "all_outputs": valid_outputs,
                         # "all_labels": valid_labels
                     })
@@ -310,6 +323,7 @@ def main():
                 print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} avg: {(current_loss/(args.plot_freq*5)):.5f} Sequence: \n\033[91m{sequence}\033[0m\n \033[93m{progression}\033[0m {correct}\n \033[35m{progression2}\033[0m')
                 all_losses.append(current_loss / (args.plot_freq * 5))
                 current_loss = 0
+                current_correct = 0
 
     except KeyboardInterrupt:
         print("\nok, finishing up..")
