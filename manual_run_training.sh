@@ -29,9 +29,9 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-2
+LEARNING_RATE=1e-3
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=5
+PLAST_CLIP=10
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -63,11 +63,11 @@ N_ITERS=1000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=300
+PRINT_FREQ=301
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=300
+PLOT_FREQ=301
 
 # true or false
 TRACK=true

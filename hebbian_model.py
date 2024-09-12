@@ -273,12 +273,12 @@ class HebbianLinear(nn.Linear):
             # self.candidate_weights.data *= self.candecay  # Example: decay by half is 0.5
             batch_agg_candidate_update = candidate_update.mean(dim=0)
             # self.candidate_weights.data += batch_agg_candidate_update*(1-self.candecay)
-            update = learning_rate * batch_agg_candidate_update
+            update = batch_agg_candidate_update
             if self.is_last_layer:
                 update = update * 0.1
                 self.weight.data += update
             else:
-                update = update * self.plasticity.data #* torch.sin(self.t*self.frequency.data)
+                update = update * (learning_rate * self.plasticity.data + learning_rate) #* torch.sin(self.t*self.frequency.data)
                 self.weight.data += update
                 # print(self.weight.norm(p=2))
                 # self.weight.data *= 1/(0.1*torch.abs(self.plasticity.data))
