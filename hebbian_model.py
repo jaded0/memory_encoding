@@ -53,15 +53,21 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            log_uniform = torch.empty_like(self.weight).normal_(0, plast_clip)#.clamp_(1e-1,1e5)
+            # distribution = torch.empty_like(self.weight).normal_(0, plast_clip)#.clamp_(1e-1,1e5)
+            distribution = torch.zeros_like(self.weight)
+            mask = torch.rand_like(self.weight) < 0.01
+            distribution[mask] = plast_clip
+
             uniform = torch.empty_like(self.weight).uniform_(0.1, 3.141)
             # print(uniform)
             # Initialize plasticity parameters with the generated values
             if self.is_last_layer == False:
-                self.plasticity = nn.Parameter(log_uniform, requires_grad=requires_grad)
+                self.plasticity = nn.Parameter(distribution, requires_grad=requires_grad)
                 self.frequency = nn.Parameter(uniform, requires_grad=requires_grad)  # Initialize plasticity parameters
             else:
                 self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
+            print(f"Number of non-zero values in self.plasticity: {torch.count_nonzero(self.plasticity).item()}")
+
             # self.plasticity.data = self.plasticity.data / (torch.norm(self.plasticity.data, p=1) + 1e-8)
             # keep the effective learning rate to be the learning rate, on average
             # parametrize.register_parametrization(self, 'plasticity', PlasticityNorm(self.learning_rate))
@@ -265,6 +271,7 @@ class HebbianLinear(nn.Linear):
 
         elif self.update_rule == 'static_plastic_candidate':
             out = projected_error.unsqueeze(2)
+            # out = torch.sigmoid(out)
             # out_weights_product = out * self.weight.data
 
             candidate_update = out * input.unsqueeze(1)#(input.unsqueeze(1) - out_weights_product)
@@ -275,7 +282,7 @@ class HebbianLinear(nn.Linear):
             # self.candidate_weights.data += batch_agg_candidate_update*(1-self.candecay)
             update = batch_agg_candidate_update
             if self.is_last_layer:
-                update = update * 0.1
+                update = update #* 0.1
                 self.weight.data += update
             else:
                 update = update * (learning_rate * self.plasticity.data + learning_rate) #* torch.sin(self.t*self.frequency.data)
