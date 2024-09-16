@@ -54,8 +54,8 @@ class HebbianLinear(nn.Linear):
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
             # distribution = torch.empty_like(self.weight).normal_(0, plast_clip)#.clamp_(1e-1,1e5)
-            distribution = torch.zeros_like(self.weight)
-            mask = torch.rand_like(self.weight) < 0.01
+            distribution = torch.ones_like(self.weight)
+            mask = torch.rand_like(self.weight) < 0.1
             distribution[mask] = plast_clip
 
             uniform = torch.empty_like(self.weight).uniform_(0.1, 3.141)
@@ -274,6 +274,14 @@ class HebbianLinear(nn.Linear):
             # out = torch.sigmoid(out)
             # out_weights_product = out * self.weight.data
 
+            # selective norm
+            mask = self.plasticity > 1
+            # self.weight[mask] *= 10/self.weight.norm(p=2)
+            # self.weight[mask] -= 1e-8*self.weight.norm(p=2)
+            self.weight[mask] *= 0.9
+            # not selective norm
+            # self.weight.div_(self.plasticity.data*self.weight.norm(2))
+
             candidate_update = out * input.unsqueeze(1)#(input.unsqueeze(1) - out_weights_product)
             
             # Reset or decay candidate_weights
@@ -282,10 +290,10 @@ class HebbianLinear(nn.Linear):
             # self.candidate_weights.data += batch_agg_candidate_update*(1-self.candecay)
             update = batch_agg_candidate_update
             if self.is_last_layer:
-                update = update #* 0.1
+                update = update * learning_rate #* 0.1
                 self.weight.data += update
             else:
-                update = update * (learning_rate * self.plasticity.data + learning_rate) #* torch.sin(self.t*self.frequency.data)
+                update = update * (learning_rate * self.plasticity.data) #- 1e-10 * self.plasticity.data*self.weight.norm(2) * mask#* torch.sin(self.t*self.frequency.data)
                 self.weight.data += update
                 # print(self.weight.norm(p=2))
                 # self.weight.data *= 1/(0.1*torch.abs(self.plasticity.data))
