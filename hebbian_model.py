@@ -279,7 +279,8 @@ class HebbianLinear(nn.Linear):
             # self.weight[mask] *= 10/self.weight.norm(p=2)
             # self.weight[mask] -= 1e-8*self.weight.norm(p=2)
             # self.weight[mask] *= 0.9
-            self.weight[mask] -= 0.5*self.weight[mask]/self.weight.norm(p=2)
+            # self.weight[mask] -= 0.5*self.weight[mask]/self.weight.norm(p=2)
+            self.weight[mask] -= imprint_rate*self.weight[mask]
             # self.weight[mask] *= 0.9/plast_clip
             # not selective norm
             # self.weight.div_(self.plasticity.data*self.weight.norm(2))
