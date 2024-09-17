@@ -31,12 +31,12 @@ CLIP_WEIGHTS=0
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
 LEARNING_RATE=1e-3
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1000
+PLAST_CLIP=1e3
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=1e-6
+IMPRINT_RATE=0.0000005
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
@@ -56,7 +56,7 @@ NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=100000
+SAVE_FREQUENCY=1000000
 
 # Number of training iterations, like 1000000000
 N_ITERS=1000000000
