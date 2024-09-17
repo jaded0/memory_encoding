@@ -278,7 +278,9 @@ class HebbianLinear(nn.Linear):
             mask = self.plasticity > 1
             # self.weight[mask] *= 10/self.weight.norm(p=2)
             # self.weight[mask] -= 1e-8*self.weight.norm(p=2)
-            self.weight[mask] *= 0.9
+            # self.weight[mask] *= 0.9
+            self.weight[mask] -= 0.5*self.weight[mask]/self.weight.norm(p=2)
+            # self.weight[mask] *= 0.9/plast_clip
             # not selective norm
             # self.weight.div_(self.plasticity.data*self.weight.norm(2))
 
@@ -400,7 +402,7 @@ class HebbyRNN(torch.nn.Module):
         # Pass through the Hebbian linear layers with ReLU and Dropout
         for layer in self.linear_layers:
             combined = layer(combined)
-            combined = F.sigmoid(combined)
+            combined = F.gelu(combined)
             # combined = self.dropout(combined)
 
         # Add the residual (original combined tensor) to the output of the layers
