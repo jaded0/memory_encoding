@@ -4,7 +4,7 @@
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
 #SBATCH --gpus=1
-#SBATCH --mem-per-cpu=16000M   # 8G memory per CPU core
+#SBATCH --mem-per-cpu=32000M   # 8G memory per CPU core
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-type=END
 #SBATCH --mail-type=FAIL
@@ -55,9 +55,9 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-3
+LEARNING_RATE=1e-4
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=10000
+PLAST_CLIP=1e5
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
