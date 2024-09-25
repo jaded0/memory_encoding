@@ -53,10 +53,10 @@ class HebbianLinear(nn.Linear):
             self.candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
-            distribution = torch.exp(torch.empty_like(self.weight).normal_(0, 2)).clamp_(1e0,1e5)
-            # distribution = torch.ones_like(self.weight)
-            # mask = torch.rand_like(self.weight) < 0.1
-            # distribution[mask] = plast_clip
+            # distribution = torch.exp(torch.empty_like(self.weight).normal_(0, 2)).clamp_(1e0,1e5)
+            distribution = torch.ones_like(self.weight)
+            mask = torch.rand_like(self.weight) < 0.1
+            distribution[mask] = plast_clip
 
             uniform = torch.empty_like(self.weight).uniform_(0.1, 3.141)
             # print(uniform)
@@ -285,22 +285,25 @@ class HebbianLinear(nn.Linear):
             # self.weight[mask] *= 10/self.weight.norm(p=2)
             # self.weight[mask] -= 1e-8*self.weight.norm(p=2)
             # self.weight[mask] *= 0.9
-            # self.weight[mask] -= 0.5*self.weight[mask]/self.weight.norm(p=2)
+            # self.weight[mask] -= imprint_rate*self.weight[mask]#/self.weight.norm(p=2)
+            decay_rate = imprint_rate
+            # self.weight[mask] -= imprint_rate*self.weight[mask]
+            self.weight[mask] *= imprint_rate
             # self.weight[mask] *= 0.5
             # self.weight[mask] *= 0.9/plast_clip
             # not selective norm
             # self.weight.div_(self.plasticity.data*self.weight.norm(2))
             # Adjust k based on desired decay rate
-            k = 0.05  # For plasticity=1e3
+            # k = 0.05  # For plasticity=1e3
             # k = 0.1  # For plasticity=1e4
 
             # Compute decay factor
-            decay_factor = 0.4+k-k*torch.log(self.plasticity.data)
+            # decay_factor = 0.4+k-k*torch.log(self.plasticity.data)
             # if not (decay_factor == 0.5) and not(decay_factor>0.999):
             #     print(decay_factor)
 
             # Apply decay to weights using *= operator
-            self.weight[mask] *= decay_factor[mask]
+            # self.weight[mask] *= decay_factor[mask]
             # self.weight[mask] *= decay_factor
             # self.weight *= decay_factor
 
