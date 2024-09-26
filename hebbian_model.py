@@ -202,6 +202,9 @@ class HebbianLinear(nn.Linear):
 
             # selective norm
             # self.weight -= imprint_rate*self.weight
+            mask = self.plasticity > 1
+            decay_rate = imprint_rate
+            self.weight[mask] *= decay_rate
             
             # out_plasticity = (global_error @ self.feedback_weights).unsqueeze(2)
             out_plasticity = (global_error @ self.plasticity_feedback_weights).unsqueeze(2)
@@ -255,9 +258,9 @@ class HebbianLinear(nn.Linear):
             if not self.is_last_layer:
                 # update = update * torch.sin(0.0001*self.t*self.plasticity.data)
                 update = update * self.plasticity.data #((torch.sin(self.t*self.frequency.data)+1)/2)
-                self.plasticity.data += (plast_learning_rate * plasticity_imprint_update)#.clamp(-plast_clip,plast_clip)
-            else:
-                update *= 1e-2
+                self.plasticity[mask] += (plast_learning_rate * plasticity_imprint_update[mask])#.clamp(-plast_clip,plast_clip)
+            # else:
+            #     update *= 1e-2
             self.t += 1
 
             # print(torch.isnan(update).any())
@@ -281,14 +284,14 @@ class HebbianLinear(nn.Linear):
 
             # selective norm
             mask = self.plasticity > 1
+            decay_rate = imprint_rate
+            self.weight[mask] *= imprint_rate
             # self.weight -= imprint_rate*self.weight.data*self.plasticity.data
             # self.weight[mask] *= 10/self.weight.norm(p=2)
             # self.weight[mask] -= 1e-8*self.weight.norm(p=2)
             # self.weight[mask] *= 0.9
             # self.weight[mask] -= imprint_rate*self.weight[mask]#/self.weight.norm(p=2)
-            decay_rate = imprint_rate
             # self.weight[mask] -= imprint_rate*self.weight[mask]
-            self.weight[mask] *= imprint_rate
             # self.weight[mask] *= 0.5
             # self.weight[mask] *= 0.9/plast_clip
             # not selective norm
@@ -329,7 +332,7 @@ class HebbianLinear(nn.Linear):
             update = reward.T  * learning_rate * imprint_update + reward.T  * imprint_rate * imprint_update
 
 
-        # self.weight.data += update
+        self.weight.data += update
 
         # Update bias if applicable
         if hasattr(self, 'bias') and self.bias is not None:
