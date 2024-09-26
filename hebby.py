@@ -125,7 +125,9 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             print(f"reached threshold at {threshold}")
         rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])
 
-        if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
+        # freq = min(config["save_frequency"], int(100000)*1.001**state["training_instance"])
+        freq = config["save_frequency"]
+        if (state["training_instance"] % freq == 0 and state['training_instance'] != 0):
             # Save the model and activations periodically
             print("---\nsaving activations\n---")
             save_model_data(rnn, state["activations"], state["training_instance"], config['track'])
