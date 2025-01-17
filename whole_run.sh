@@ -1,8 +1,34 @@
 #!/bin/bash
 
+#SBATCH --time=18:00:00   # walltime.  hours:minutes:seconds
+#SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
+#SBATCH --nodes=1   # number of nodes
+#SBATCH --gpus=1
+#SBATCH --mem-per-cpu=32000M   # 8G memory per CPU core
+#SBATCH --mail-type=BEGIN
+#SBATCH --mail-type=END
+#SBATCH --mail-type=FAIL
+#SBATCH --job-name=memory_encoding
+#BATCH --output ./memory_encoding.out
+#SBATCH --mail-user jaden.lorenc@gmail.com
+
+# some helpful debugging options
+set -e
+set -u
+
+nvidia-smi
+
+# LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
+source /apps/miniconda3/latest/etc/profile.d/conda.sh
+conda activate hebby
+export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python
+export WANDB_MODE=offline
+
+export HF_DATASETS_OFFLINE=1
+
+echo its working
 # run_training.sh
 # Shell script to run the training script with custom hyperparameters.
-rm model_data/*
 
 # How to update weights.
 # Options are:
@@ -18,7 +44,7 @@ rm model_data/*
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='whatever'
+GROUP='treadmill_sweep'
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -31,12 +57,12 @@ CLIP_WEIGHTS=0
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
 LEARNING_RATE=1e-4
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1e4
+PLAST_CLIP=1e5
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=0.9
+IMPRINT_RATE=0.8
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
@@ -80,7 +106,7 @@ DATASET=long_range_memory_dataset
 BATCH_SIZE=1
 CANDECAY=0.9
 PLAST_CANDECAY=0.9
-
+echo still working
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
                        --group $GROUP \
@@ -105,3 +131,5 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --plast_candecay $PLAST_CANDECAY \
                        --batch_size $BATCH_SIZE \
                        --residual_connection $RESIDUAL_CONNECTION
+
+rm model_data/*
