@@ -11,18 +11,28 @@ dataset_keys = {
     "2_resequence": "train",
     "3_resequence": "train",
     "4_resequence": "train",
+    "palindrome_dataset": "train",
 }
 
 # Load dataset
 def load_and_preprocess_data(dataset_name, batch_size=4):
-    if dataset_name == "long_range_memory_dataset" or "resequence" in dataset_name:
+    if ("palindrome_dataset" in dataset_name) or ("long_range_memory_dataset" in dataset_name) or ("resequence" in dataset_name):
         dataset = load_from_disk(dataset_name)
+        print(f"loaded dataset {dataset_name}")
     else:
         dataset = load_dataset(dataset_name)
     # print(f"cleaned up from cache: {dataset.cleanup_cache_files()}")
     # print(f"first dataset is {dataset}")
     # print(f"dataset is {dataset[dataset_keys[dataset_name]]}")
+    # Inspect each split
+    for split in dataset:
+        print(f"Loaded palindrome_dataset {split} columns: {dataset[split].column_names}")
+        print(f"Loaded sample {split}: {dataset[split][0]}")
     dataset = dataset[dataset_keys[dataset_name]]#.select(range(10))
+
+    print(f"{dataset_name} columns:", dataset.column_names)  # Debugging line
+    print("Sample data:", dataset[0])
+
     if dataset_name == "brucewlee1/htest-palindrome":
         dataset = dataset.filter(lambda example: example["correct_options_idx"][0] == 0)
 

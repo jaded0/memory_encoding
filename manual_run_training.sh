@@ -29,14 +29,14 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-4
+LEARNING_RATE=1e-5
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1e4
+PLAST_CLIP=1e5
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=0.9
+IMPRINT_RATE=0.5
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
@@ -56,7 +56,7 @@ NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=1000000
+SAVE_FREQUENCY=10000000
 
 # Number of training iterations, like 1000000000
 N_ITERS=1000000000
@@ -76,7 +76,7 @@ TRACK=true
 # jbrazzy/baby_names
 # brucewlee1/htest-palindrome
 # long_range_memory_dataset
-DATASET=long_range_memory_dataset
+DATASET=palindrome_dataset
 BATCH_SIZE=1
 CANDECAY=0.9
 PLAST_CANDECAY=0.9

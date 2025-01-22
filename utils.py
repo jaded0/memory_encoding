@@ -12,6 +12,7 @@ dataset_keys = {
     "2_resequence": "text",
     "3_resequence": "text",
     "4_resequence": "text",
+    "palindrome_dataset": "text",
 }
 
 def get_charset(dataset_name):
