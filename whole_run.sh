@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --time=18:00:00   # walltime.  hours:minutes:seconds
+#SBATCH --time=48:00:00   # walltime.  hours:minutes:seconds
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
 #SBATCH --gpus=1
@@ -16,7 +16,7 @@
 set -e
 set -u
 
-nvidia-smi
+# nvidia-smi
 
 # LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
 source /apps/miniconda3/latest/etc/profile.d/conda.sh
@@ -24,6 +24,7 @@ conda activate hebby
 export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python
 export WANDB_MODE=offline
 
+export HF_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 
 echo its working
@@ -42,9 +43,9 @@ echo its working
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
 # plastic_candidate
 # static_plastic_candidate
-UPDATE_RULE='static_plastic_candidate'
+UPDATE_RULE='backprop'
 
-GROUP='treadmill_sweep'
+GROUP='palindrome_sweep'
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -62,7 +63,7 @@ RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=0.8
+IMPRINT_RATE=0.5
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
@@ -89,11 +90,11 @@ N_ITERS=1000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=500
+PRINT_FREQ=501
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=500
+PLOT_FREQ=501
 
 # true or false
 TRACK=true
@@ -102,11 +103,12 @@ TRACK=true
 # jbrazzy/baby_names
 # brucewlee1/htest-palindrome
 # long_range_memory_dataset
-DATASET=long_range_memory_dataset
+DATASET=brucewlee1/htest-palindrome
 BATCH_SIZE=1
 CANDECAY=0.9
 PLAST_CANDECAY=0.9
 echo still working
+# python synth_datasets.py
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
                        --group $GROUP \
