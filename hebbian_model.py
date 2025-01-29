@@ -60,11 +60,12 @@ class HebbianLinear(nn.Linear):
 
             mask_tier_two = torch.rand_like(self.weight) < 0.01
             forget_dist = torch.ones_like(self.weight)
-            forget_dist[mask] = 0.5
-            forget_dist[mask_tier_two] = 0.5
+            forget_dist[mask] = 0.7
+            forget_dist[mask_tier_two] = 0.7
             self.forgetting_factor = nn.Parameter(forget_dist, requires_grad=requires_grad)
 
             uniform = torch.empty_like(self.weight).uniform_(0.1, 3.141)
+            uniform[~mask] = 0 # only wave on our high-plast values here.
             # print(uniform)
             # Initialize plasticity parameters with the generated values
             if self.is_last_layer == False:
@@ -326,7 +327,8 @@ class HebbianLinear(nn.Linear):
                 update = update * learning_rate #* 0.1
                 self.weight.data += update
             else:
-                update = update * (learning_rate * self.plasticity.data) #- 1e-10 * self.plasticity.data*self.weight.norm(2) * mask#* torch.sin(self.t*self.frequency.data)
+                update = update * (learning_rate * self.plasticity.data) * ((torch.cos(self.t*self.frequency.data) + 1) * 0.5)
+                self.t += 1
                 self.weight.data += update
                 # print(self.weight.norm(p=2))
                 # self.weight.data *= 1/(0.1*torch.abs(self.plasticity.data))

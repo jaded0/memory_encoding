@@ -90,7 +90,7 @@ from utils import initialize_charset
 def generate_palindrome_sample():
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset("palindrome_dataset")
     # Choose a random length for the first half of the palindrome
-    half_length = random.randint(1, 10)
+    half_length = random.randint(1, 5)
     # Build the left half by randomly selecting characters from the charset
     left_half = ''.join(random.choice(charset) for _ in range(half_length))
     # Optionally, add a middle character for odd-length palindromes
