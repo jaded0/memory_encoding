@@ -36,7 +36,7 @@ RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=0.7
+IMPRINT_RATE=0.3
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
@@ -63,11 +63,11 @@ N_ITERS=1000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=300
+PRINT_FREQ=500
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.
-PLOT_FREQ=300
+PLOT_FREQ=500
 
 # true or false
 TRACK=true

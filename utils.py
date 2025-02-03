@@ -16,7 +16,7 @@ dataset_keys = {
 }
 
 def get_charset(dataset_name):
-    if dataset_name == "long_range_memory_dataset" or "resequence" in dataset_name:
+    if (dataset_name == "long_range_memory_dataset") or (dataset_name == "palindrome_dataset") or "resequence" in dataset_name:
         return "0?!123,."
     else:
         return " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n-"

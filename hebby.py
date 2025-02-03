@@ -63,6 +63,8 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
     all_outputs = []
     all_labels = []
 
+    rnn.wipe()
+
     for i in range(onehot_line_tensor.shape[1] - 1):
         l2_reg = None  # Reset L2 regularization term for each character
 
@@ -72,7 +74,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         # Forward pass through the RNN
         # print(hot_input_char_tensor.shape, hidden.shape)
         # print(f"require_grad. hot_input_char_tensor: {hot_input_char_tensor.requires_grad}, hidden: {hidden.requires_grad}")
-        output, hidden = rnn(hot_input_char_tensor, hidden)
+        output, hidden, self_grad = rnn(hot_input_char_tensor, hidden)
         # print(f"does output require grad? {output.requires_grad}. hidden? {hidden.requires_grad}")
         # output.requires_grad=True
 
@@ -119,10 +121,12 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             rnn.zero_grad()
         
         # Apply Hebbian updates to the network
-        threshold = 0
-        lr = 1e-2 if state["training_instance"] < threshold else config["learning_rate"]
-        if state["training_instance"] == threshold:
-            print(f"reached threshold at {threshold}")
+        # threshold = 0
+        # lr = 1e-2 if state["training_instance"] < threshold else config["learning_rate"]
+        # if state["training_instance"] == threshold:
+        #     print(f"reached threshold at {threshold}")
+        lr = config["learning_rate"]
+        reward_update += (self_grad * 1e-5)
         rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])
 
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):

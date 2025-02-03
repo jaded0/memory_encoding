@@ -55,17 +55,17 @@ class HebbianLinear(nn.Linear):
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
             # distribution = torch.exp(torch.empty_like(self.weight).normal_(0, 2)).clamp_(1e0,1e5)
             distribution = torch.ones_like(self.weight)
-            mask = torch.rand_like(self.weight) < 0.1 
-            distribution[mask] = plast_clip
+            self.mask = torch.rand_like(self.weight) < 0.2
+            distribution[self.mask] = plast_clip
 
             mask_tier_two = torch.rand_like(self.weight) < 0.01
             forget_dist = torch.ones_like(self.weight)
-            forget_dist[mask] = 0.7
-            forget_dist[mask_tier_two] = 0.7
+            forget_dist[self.mask] = 0.3
+            forget_dist[mask_tier_two] = 0.3
             self.forgetting_factor = nn.Parameter(forget_dist, requires_grad=requires_grad)
 
             uniform = torch.empty_like(self.weight).uniform_(0.1, 3.141)
-            uniform[~mask] = 0 # only wave on our high-plast values here.
+            uniform[~self.mask] = 0 # only wave on our high-plast values here.
             # print(uniform)
             # Initialize plasticity parameters with the generated values
             if self.is_last_layer == False:
@@ -82,6 +82,8 @@ class HebbianLinear(nn.Linear):
             # nn.init.kaiming_uniform_(self.plasticity, a=math.sqrt(5))
             self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
 
+    def wipe(self):
+        self.weight[self.mask] = 0
 
     def forward(self, input):
         # print(f"in forward. input requires grad? {input.requires_grad}")
@@ -327,7 +329,7 @@ class HebbianLinear(nn.Linear):
                 update = update * learning_rate #* 0.1
                 self.weight.data += update
             else:
-                update = update * (learning_rate * self.plasticity.data) * ((torch.cos(self.t*self.frequency.data) + 1) * 0.5)
+                update = update * (learning_rate * self.plasticity.data) * (((torch.cos(self.t*self.frequency.data) + 1) * 0.5) > 0.5)
                 self.t += 1
                 self.weight.data += update
                 # print(self.weight.norm(p=2))
@@ -389,6 +391,7 @@ class HebbyRNN(torch.nn.Module):
         # Final layers for hidden and output, also using HebbianLinear
         self.i2h = HebbianLinear(inner_size, hidden_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, candecay=candecay, plast_candecay=plast_candecay, plast_clip=plast_clip)
         self.i2o = HebbianLinear(inner_size, output_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=False, is_last_layer=True, candecay=candecay, plast_candecay=plast_candecay, plast_clip=plast_clip)
+        self.self_grad = HebbianLinear(inner_size, output_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=False, is_last_layer=True, candecay=candecay, plast_candecay=plast_candecay, plast_clip=plast_clip)
         self.softmax = torch.nn.LogSoftmax(dim=1)
     #     # Initialize weights
     #     self.init_weights()
@@ -445,15 +448,16 @@ class HebbyRNN(torch.nn.Module):
 
         # Split into hidden and output
         hidden = self.i2h(combined)
-        hidden = torch.zeros_like(hidden)
+        hidden = torch.zeros_like(hidden) # disable hidden connection
         output = self.i2o(combined)
+        self_grad = self.self_grad(combined)
         # hidden = (1.0/hidden.shape[1])*torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences, as well as control for magnitude of recurrent connection
         hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
 
         output.requires_grad = True
         # output = self.dropout(output)  # Apply dropout to the output before softmax
         # output = self.softmax(output)
-        return output, hidden
+        return output, hidden, self_grad
 
     def initHidden(self, batch_size):
         device = next(self.parameters()).device
@@ -467,6 +471,12 @@ class HebbyRNN(torch.nn.Module):
             layer.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
         # self.i2h.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
         self.i2o.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
+        self.self_grad.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
+
+    def wipe(self):
+        for layer in self.linear_layers:
+            layer.wipe()
+        
 
 
 class SimpleRNN(nn.Module):
