@@ -76,8 +76,10 @@ TRACK=true
 # jbrazzy/baby_names
 # brucewlee1/htest-palindrome
 # long_range_memory_dataset
-DATASET=palindrome_dataset
-BATCH_SIZE=1
+# palindrome_dataset
+# 4_resequence
+DATASET=4_resequence
+BATCH_SIZE=4
 CANDECAY=0.9
 PLAST_CANDECAY=0.9
 

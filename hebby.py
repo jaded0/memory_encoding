@@ -92,9 +92,9 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         loss = config['criterion'](output, final_char)
         # loss = mse_loss(final_char, output)
         # print(f"old loss: {old_loss}, new loss: {loss}")
-        if math.isnan(loss):
-            print("Warning: Loss is NaN")
-            sys.exit(1)
+        # if math.isnan(loss):
+        #     print("Warning: Loss is NaN")
+        #     sys.exit(1)
         # Compute the L2 regularization term
         # for param in rnn.parameters():
         #     if l2_reg is None:
@@ -104,7 +104,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         # og_losses.append(loss.item())  # Store the original loss for this step
         # reg_losses.append(config['l2_lambda']*l2_reg.item())
         # loss = loss + config['l2_lambda'] * l2_reg  # Add the L2 regularization term to the loss
-        losses.append(loss.item())  # Store the loss for this step
+        losses.append(loss[0].item())  # Store the loss for this step
 
         # Convert loss to a reward signal for Hebbian updates
         if config["delta_rewards"]:
@@ -115,8 +115,8 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             last_n_reward_avg = sum(state['last_n_rewards']) / len(state['last_n_rewards'])
             reward_update = reward - last_n_reward_avg
         else:
-            gglobal_error = torch.autograd.grad(loss, output, retain_graph=False)
-            global_error = gglobal_error[0]
+            global_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
+            # global_error = gglobal_error[0]
             reward_update = -global_error
             rnn.zero_grad()
         
@@ -126,7 +126,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         # if state["training_instance"] == threshold:
         #     print(f"reached threshold at {threshold}")
         lr = config["learning_rate"]
-        reward_update += (self_grad * 1e-5)
+        # reward_update += (self_grad * 1e-3)
         rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])
 
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
@@ -191,7 +191,7 @@ def main():
         "len_reward_history": args.len_reward_history,
         "save_frequency": args.save_frequency,
         # "criterion": torch.nn.MSELoss(),
-        "criterion": torch.nn.CrossEntropyLoss(),
+        "criterion": torch.nn.CrossEntropyLoss(reduction='none'),
         "l2_lambda": 0.000,  # Example static hyperparameter
         "residual_connection": args.residual_connection,
         "n_hidden": args.hidden_size,
@@ -245,7 +245,7 @@ def main():
         rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"])
         optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
     else:
-        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, residual_connection=args.residual_connection, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"], plast_candecay=config["plast_candecay"], plast_clip=config["plast_clip"])
+        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, residual_connection=args.residual_connection, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"], plast_candecay=config["plast_candecay"], plast_clip=config["plast_clip"], batch_size=config["batch_size"])
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
