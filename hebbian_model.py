@@ -319,7 +319,7 @@ class HebbianLinear(nn.Linear):
             # decay_rate = imprint_rate
             # self.weight[mask] -= imprint_rate*self.weight[mask]
             # self.weight[mask] *= imprint_rate
-            self.candidate_weights *= self.forgetting_factor
+            
             # self.weight[mask] *= 0.5
             # self.weight[mask] *= 0.9/plast_clip
             # not selective norm
@@ -356,7 +356,9 @@ class HebbianLinear(nn.Linear):
                 # self.weight.data += update
                 self.candidate_weights.data += update
             else:
-                update = update * (learning_rate * self.plasticity.data) * (((torch.cos(self.t*self.frequency.data) + 1) * 0.5) > 0.5)
+                plastic_mask = (((torch.cos(self.t * self.frequency.data ) + 1) * 0.5) > 0.5)
+                self.candidate_weights *= (1 - plastic_mask * (1-self.forgetting_factor))
+                update = update * (learning_rate * self.plasticity.data) * plastic_mask
                 self.t += 1
                 # self.weight.data += update
                 self.candidate_weights.data += update
