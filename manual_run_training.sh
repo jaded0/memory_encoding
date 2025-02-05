@@ -20,6 +20,8 @@ UPDATE_RULE='static_plastic_candidate'
 
 GROUP='whatever'
 
+NOTES="nothing to say"
+
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
 # true or false
@@ -31,7 +33,7 @@ CLIP_WEIGHTS=0
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
 LEARNING_RATE=1e-3
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1e4
+PLAST_CLIP=1e3
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -106,4 +108,5 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --candecay $CANDECAY \
                        --plast_candecay $PLAST_CANDECAY \
                        --batch_size $BATCH_SIZE \
-                       --residual_connection $RESIDUAL_CONNECTION
+                       --residual_connection $RESIDUAL_CONNECTION \
+                       --notes "$NOTES"

@@ -175,6 +175,7 @@ def main():
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
     parser.add_argument('--delta_rewards', type=str2bool, nargs='?', const=True, default=True, help='Whether to calculate rewards by change in reward instead.')
     parser.add_argument('--dataset', type=str, default='roneneldan/tinystories', help='The dataset used for training.')
+    parser.add_argument('--notes', type=str, default='nothing to say', help='talk about this run')
     parser.add_argument('--candecay', type=float, default=0.9, help='Decay of the candidate weights, each step.')
     parser.add_argument('--plast_candecay', type=float, default=0.5, help='Decay rate for plastic candidate weights')
     parser.add_argument('--group', type=str, default="nothing_in_particular", help='Description of what sort of experiment is being run, here.')
@@ -207,7 +208,7 @@ def main():
     print(args.track)
     if args.track:
         # wandb initialization
-        wandb.init(project="hebby", group=args.group, config={
+        wandb.init(project="hebby", group=args.group, notes=args.notes, config={
             "learning_rate": args.learning_rate,
             "plast_learning_rate": args.plast_learning_rate,
             "plast_clip": args.plast_clip,
