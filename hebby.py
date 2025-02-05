@@ -33,6 +33,15 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
 
     for i in range(onehot_line_tensor.size()[1] - 1): 
         hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
+        pe_matrix = config["pe_matrix"]
+        if pe_matrix is not None:
+            # position i might exceed MAX_SEQ_LEN, so clamp or wrap as needed
+            pe_vec = pe_matrix[min(i, pe_matrix.size(0)-1)]  # shape [pos_dim]
+            # expand to [batch_size, pos_dim]
+            pe_vec = pe_vec.unsqueeze(0).expand(batch_size, -1)
+            # concat onto the onehot
+            hot_input_char_tensor = torch.cat([hot_input_char_tensor, pe_vec], dim=1)
+
         output, hidden = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[:, i+1, :]
         loss_total += criterion(output, final_char)
@@ -70,6 +79,16 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
 
         hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
         hot_input_char_tensor.requires_grad = False
+
+        pe_matrix = config["pe_matrix"]
+        if pe_matrix is not None:
+            # position i might exceed MAX_SEQ_LEN, so clamp or wrap as needed
+            pe_vec = pe_matrix[min(i, pe_matrix.size(0)-1)]  # shape [pos_dim]
+            # expand to [batch_size, pos_dim]
+            pe_vec = pe_vec.unsqueeze(0).expand(batch_size, -1)
+            # concat onto the onehot
+            hot_input_char_tensor = torch.cat([hot_input_char_tensor, pe_vec], dim=1)
+
         # with torch.no_grad():  # Disable gradient calculations
         # Forward pass through the RNN
         # print(hot_input_char_tensor.shape, hidden.shape)
@@ -126,7 +145,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         # if state["training_instance"] == threshold:
         #     print(f"reached threshold at {threshold}")
         lr = config["learning_rate"]
-        # reward_update += (self_grad * 1e-3)
+        reward_update += (self_grad * 1e-4)
         rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])
 
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
@@ -180,6 +199,8 @@ def main():
     parser.add_argument('--plast_candecay', type=float, default=0.5, help='Decay rate for plastic candidate weights')
     parser.add_argument('--group', type=str, default="nothing_in_particular", help='Description of what sort of experiment is being run, here.')
     parser.add_argument('--batch_size', type=int, default=4, help='how much to stuff in at once')
+    parser.add_argument('--positional_encoding_dim', type=int, default=0,
+                        help='Dimension for optional positional encoding (0 means off).')
 
     # Add other parameters as needed
     args = parser.parse_args()
@@ -231,13 +252,36 @@ def main():
             "batch_size": args.batch_size,
         })
 
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
+
+
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset(args.dataset)
     # Ensure that idx_to_char contains all necessary mappings
     print(f"Character set size: {n_characters}")
     dataloader = load_and_preprocess_data(args.dataset, args.batch_size)
+    
+    # Decide a max sequence length to support
+    MAX_SEQ_LEN = 2000  # or any upper bound you expect
+    pos_dim = args.positional_encoding_dim
+    if pos_dim > 0:
+        # Precompute a [MAX_SEQ_LEN, pos_dim] matrix
+        pe_matrix = torch.zeros(MAX_SEQ_LEN, pos_dim)
+        for pos in range(MAX_SEQ_LEN):
+            for dim in range(pos_dim):
+                # A typical sinusoidal formula:
+                #   angle = pos / (1e4 ** (2*(dim//2)/pos_dim))
+                # We'll do something simpler for brevity:
+                pe_matrix[pos, dim] = math.sin(pos + dim*0.1)
+
+        # Move it to GPU if needed
+        pe_matrix = pe_matrix.to(device)
+        config["pe_matrix"] = pe_matrix
+    else:
+        config["pe_matrix"] = None
 
     # Model Initialization
-    input_size = n_characters
+    input_size = n_characters + pos_dim
     output_size = n_characters
     
     optimizer = None
@@ -248,8 +292,6 @@ def main():
     else:
         rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, residual_connection=args.residual_connection, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"], plast_candecay=config["plast_candecay"], plast_clip=config["plast_clip"], batch_size=config["batch_size"])
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
     if torch.cuda.is_available():
         print("cuda available!")
         rnn = rnn.to(device)

@@ -20,7 +20,7 @@ UPDATE_RULE='static_plastic_candidate'
 
 GROUP='whatever'
 
-NOTES="nothing to say"
+NOTES="include self grad and positional encoding, too."
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -82,6 +82,7 @@ TRACK=true
 # 4_resequence
 DATASET=palindrome_dataset
 BATCH_SIZE=32
+POS_ENCODING=30
 CANDECAY=0.9
 PLAST_CANDECAY=0.9
 
@@ -109,4 +110,5 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --plast_candecay $PLAST_CANDECAY \
                        --batch_size $BATCH_SIZE \
                        --residual_connection $RESIDUAL_CONNECTION \
-                       --notes "$NOTES"
+                       --notes "$NOTES" \
+                       --positional_encoding_dim $POS_ENCODING

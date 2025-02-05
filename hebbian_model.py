@@ -56,16 +56,20 @@ class HebbianLinear(nn.Linear):
             # Generate random values with a log-uniform distribution between 1e-2 and 1e2
             # distribution = torch.exp(torch.empty_like(self.weight).normal_(0, 2)).clamp_(1e0,1e5)
             distribution = torch.ones_like(self.weight)
-            self.mask = nn.Parameter((torch.rand_like(self.weight) < 0.2).bool(), requires_grad=False)
+            rand_vals = torch.rand_like(self.weight)
+            self.mask = nn.Parameter((rand_vals < 0.2).bool(), requires_grad=False)
             distribution[self.mask] = plast_clip
 
-            mask_tier_two = torch.rand_like(self.weight) < 0.01
+            mask_tier_two = rand_vals < 0.01
             forget_dist = torch.ones_like(self.weight)
             forget_dist[self.mask] = 0.3
             forget_dist[mask_tier_two] = 0.3
             self.forgetting_factor = nn.Parameter(forget_dist, requires_grad=False)
 
-            uniform = torch.empty_like(self.weight).uniform_(0.1, 3.141)
+            uniform = torch.empty_like(self.weight).uniform_(0.1, 2.0) * math.pi
+            # uniform = 1/(10000**(torch.empty_like(self.weight).uniform_(1,512).round()/512))
+            self.phase_shift = nn.Parameter(torch.zeros_like(self.weight), requires_grad=False)
+            self.phase_shift[(rand_vals < 0.1).bool()] = math.pi/2
             uniform[~self.mask] = 0 # only wave on our high-plast values here.
             # print(uniform)
             # Initialize plasticity parameters with the generated values
@@ -356,8 +360,8 @@ class HebbianLinear(nn.Linear):
                 # self.weight.data += update
                 self.candidate_weights.data += update
             else:
-                plastic_mask = (((torch.cos(self.t * self.frequency.data ) + 1) * 0.5) > 0.5)
-                self.candidate_weights *= (1 - plastic_mask * (1-self.forgetting_factor))
+                plastic_mask = (((torch.cos(self.t * self.frequency.data + self.phase_shift) + 1) * 0.5) > 0.5)
+                self.candidate_weights *= torch.max(~self.mask, (1 - plastic_mask * (1-self.forgetting_factor)))
                 update = update * (learning_rate * self.plasticity.data) * plastic_mask
                 self.t += 1
                 # self.weight.data += update

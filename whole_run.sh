@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --time=8:00:00   # walltime.  hours:minutes:seconds
+#SBATCH --time=18:00:00   # walltime.  hours:minutes:seconds
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
 #SBATCH --gpus=1
@@ -47,6 +47,8 @@ UPDATE_RULE='static_plastic_candidate'
 
 GROUP='whatever'
 
+NOTES="include self grad and positional encoding, too."
+
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
 # true or false
@@ -83,7 +85,7 @@ NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=1000000
+SAVE_FREQUENCY=1000000000
 
 # Number of training iterations, like 1000000000
 N_ITERS=1000000000
@@ -106,10 +108,10 @@ TRACK=true
 # palindrome_dataset
 # 4_resequence
 DATASET=palindrome_dataset
-BATCH_SIZE=64
+BATCH_SIZE=32
+POS_ENCODING=30
 CANDECAY=0.9
 PLAST_CANDECAY=0.9
-echo still working
 # python synth_datasets.py
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
@@ -134,6 +136,8 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --candecay $CANDECAY \
                        --plast_candecay $PLAST_CANDECAY \
                        --batch_size $BATCH_SIZE \
-                       --residual_connection $RESIDUAL_CONNECTION
+                       --residual_connection $RESIDUAL_CONNECTION \
+                       --notes "$NOTES" \
+                       --positional_encoding_dim $POS_ENCODING
 
 rm model_data/*

@@ -1,35 +1,40 @@
-import time
+import numpy as np
+import matplotlib.pyplot as plt
 
-# Function to calculate EMA
-def calculate_ema(current_value, previous_ema, alpha=0.9):
-    return alpha * current_value + (1 - alpha) * previous_ema
+d_model = 5         # Embedding dimension
+num_positions = 10   # Number of sequence positions to visualize
 
-# Generate an exponential list of 20 numbers
-numbers = [2**i for i in range(20)]
-# numbers = [2**(10 - i) for i in range(10)] + [3**1] * 30
-# numbers = [5 for _ in range(20)]
+# Prepare an array to hold the positional encodings:
+# Shape: (num_positions, d_model)
+pos_enc = np.zeros((num_positions, d_model))
 
-# Initialize EMA with the first number
-ema = numbers[0]
+# Compute the sine/cosine encoding for each position and dimension
+for pos in range(num_positions):
+    for i in range(d_model // 2):
+        # Even dimension: sine
+        pos_enc[pos, 2*i] = np.sin(
+            pos / (10000 ** ((2*i) / d_model))
+        )
+        # Odd dimension: cosine
+        pos_enc[pos, 2*i + 1] = np.cos(
+            pos / (10000 ** ((2*i) / d_model))
+        )
 
-# Loop through the list and perform calculations
-for i, number in enumerate(numbers):
-    # Print the number
-    print(f"Number: {number}")
-    
-    # Calculate EMA
-    if i > 0:  # skip EMA update for the first number
-        ema = calculate_ema(number, ema)
-    
-    print(f"EMA: {ema}")
-    
-    # Calculate number divided by EMA
-    div_by_ema = number / ema
-    print(f"Number / EMA: {div_by_ema}")
-    
-    # Calculate number minus EMA
-    minus_ema = number - ema*0.9
-    print(f"Number - EMA: {minus_ema}")
-    
-    # Pause for 1 second
-    time.sleep(1)
+# Plot a scatter for each dimension, coloring by dimension index
+colors = plt.cm.tab20(np.linspace(0, 1, d_model))  # 20 distinct colors
+plt.figure(figsize=(8, 5))
+for dim in range(d_model):
+    plt.scatter(
+        x=np.arange(num_positions),
+        y=pos_enc[:, dim],
+        color=colors[dim],
+        label=f'dim {dim}',
+        s=50
+    )
+
+plt.xlabel('Position')
+plt.ylabel('Positional Encoding Value')
+plt.title(f'Positional Encodings (d_model={d_model}, positions={num_positions})')
+plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.tight_layout()
+plt.show()
