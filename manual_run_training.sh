@@ -20,7 +20,7 @@ UPDATE_RULE='static_plastic_candidate'
 
 GROUP='whatever'
 
-NOTES="include self grad and positional encoding, too."
+NOTES="regularize to onehot magnitude"
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.

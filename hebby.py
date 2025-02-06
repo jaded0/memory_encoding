@@ -84,6 +84,8 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         if pe_matrix is not None:
             # position i might exceed MAX_SEQ_LEN, so clamp or wrap as needed
             pe_vec = pe_matrix[min(i, pe_matrix.size(0)-1)]  # shape [pos_dim]
+            # regularize to onehot magnitude
+            # pe_vec *= 1/onehot_line_tensor.shape[1]
             # expand to [batch_size, pos_dim]
             pe_vec = pe_vec.unsqueeze(0).expand(batch_size, -1)
             # concat onto the onehot
@@ -145,7 +147,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         # if state["training_instance"] == threshold:
         #     print(f"reached threshold at {threshold}")
         lr = config["learning_rate"]
-        reward_update += (self_grad * 1e-4)
+        # reward_update += (self_grad * 1e-4)
         rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])
 
         if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
@@ -272,7 +274,7 @@ def main():
                 # A typical sinusoidal formula:
                 #   angle = pos / (1e4 ** (2*(dim//2)/pos_dim))
                 # We'll do something simpler for brevity:
-                pe_matrix[pos, dim] = math.sin(pos + dim*0.1)
+                pe_matrix[pos, dim] = math.sin(pos + dim*0.1) * (1/n_characters)
 
         # Move it to GPU if needed
         pe_matrix = pe_matrix.to(device)
