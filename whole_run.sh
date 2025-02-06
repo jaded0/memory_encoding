@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --time=18:00:00   # walltime.  hours:minutes:seconds
+#SBATCH --time=48:00:00   # walltime.  hours:minutes:seconds
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
 #SBATCH --gpus=1
@@ -45,9 +45,9 @@ echo its working
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='whatever'
+GROUP='onehot_mag'
 
-NOTES="include self grad and positional encoding, too."
+NOTES="regularize to onehot magnitude"
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.

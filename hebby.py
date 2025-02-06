@@ -274,7 +274,7 @@ def main():
                 # A typical sinusoidal formula:
                 #   angle = pos / (1e4 ** (2*(dim//2)/pos_dim))
                 # We'll do something simpler for brevity:
-                pe_matrix[pos, dim] = math.sin(pos + dim*0.1) * (1/n_characters)
+                pe_matrix[pos, dim] = math.sin(pos + dim*0.1) * (1/pos_dim)
 
         # Move it to GPU if needed
         pe_matrix = pe_matrix.to(device)
