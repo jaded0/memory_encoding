@@ -93,7 +93,13 @@ class HebbianLinear(nn.Linear):
         aggregated = self.candidate_weights.mean(dim=0, keepdim=True)
         # Then set every candidate weight in the batch to this aggregated value:
         self.candidate_weights.data.copy_(aggregated.repeat(self.batch_size, 1, 1))
+        
+        # Ensure the mask is broadcastable or repeated along the batch dimension
+        batch_mask = self.mask.unsqueeze(0).repeat(self.batch_size, 1, 1)  # Shape: [B, out_features, in_features]
+
+        # Apply the mask
         self.weight[self.mask] = 0
+        self.candidate_weights[batch_mask] = 0
 
     def forward(self, input):
         batch_size = input.size(0)
