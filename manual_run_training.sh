@@ -75,7 +75,7 @@ PRINT_FREQ=500
 PLOT_FREQ=500
 
 # true or false
-TRACK=true
+TRACK=false
 
 # roneneldan/tinystories
 # jbrazzy/baby_names
