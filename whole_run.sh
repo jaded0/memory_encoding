@@ -67,6 +67,9 @@ RESIDUAL_CONNECTION=false
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
 IMPRINT_RATE=0.3
 
+# Controls the gradient growth, preventing explosion.
+FORGET_RATE=0.3
+
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
 STOCHASTICITY=1e-40
@@ -117,6 +120,7 @@ PLAST_CANDECAY=0.9
 python hebby.py --learning_rate $LEARNING_RATE \
                        --group $GROUP \
                        --imprint_rate $IMPRINT_RATE \
+                       --forget_rate $FORGET_RATE \
                        --plast_learning_rate $PLAST_LEARNING_RATE \
                        --plast_clip $PLAST_CLIP \
                        --stochasticity $STOCHASTICITY \

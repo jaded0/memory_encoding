@@ -181,6 +181,7 @@ def main():
     parser.add_argument('--plast_learning_rate', type=float, default=0.005, help='Learning rate for the plasticity')
     parser.add_argument('--plast_clip', type=float, default=0.005, help='How high the plasticity can go.')
     parser.add_argument('--imprint_rate', type=float, default=0.00, help='Imprint rate for Hebbian updates')
+    parser.add_argument('--forget_rate', type=float, default=0.00, help='Forget rate, forgetting factor, prevents explosion.')
     parser.add_argument('--stochasticity', type=float, default=0.0001, help='Stochasticity in Hebbian updates')
     parser.add_argument('--len_reward_history', type=int, default=1000, help='Number of rewards to track')
     parser.add_argument('--save_frequency', type=int, default=100000, help='How often to save and display model weights.')
@@ -211,6 +212,7 @@ def main():
         "plast_learning_rate": args.plast_learning_rate,
         "plast_clip": args.plast_clip,
         "imprint_rate": args.imprint_rate,
+        "forget_rate": args.forget_rate,
         "stochasticity": args.stochasticity,
         "len_reward_history": args.len_reward_history,
         "save_frequency": args.save_frequency,
@@ -244,6 +246,7 @@ def main():
             "epochs": 1,
             "stochasticity": args.stochasticity,
             "imprint_rate": args.imprint_rate,
+            "forget_rate": args.forget_rate,
             "len_reward_history": args.len_reward_history,
             "normalize": args.normalize,
             "clip_weights": args.clip_weights,
@@ -274,7 +277,7 @@ def main():
                 # A typical sinusoidal formula:
                 #   angle = pos / (1e4 ** (2*(dim//2)/pos_dim))
                 # We'll do something simpler for brevity:
-                pe_matrix[pos, dim] = math.sin(pos + dim*0.1) * (1/pos_dim)
+                pe_matrix[pos, dim] = math.sin(pos + dim*0.1) * (2/pos_dim)
 
         # Move it to GPU if needed
         pe_matrix = pe_matrix.to(device)
@@ -292,7 +295,7 @@ def main():
         rnn = SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"])
         optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
     else:
-        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, residual_connection=args.residual_connection, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"], plast_candecay=config["plast_candecay"], plast_clip=config["plast_clip"], batch_size=config["batch_size"])
+        rnn = HebbyRNN(input_size, config["n_hidden"], output_size, config["n_layers"], charset, normalize=args.normalize, residual_connection=args.residual_connection, clip_weights=args.clip_weights, update_rule=args.update_rule, candecay=config["candecay"], plast_candecay=config["plast_candecay"], plast_clip=config["plast_clip"], batch_size=config["batch_size"], forget_rate=config["forget_rate"])
 
     if torch.cuda.is_available():
         print("cuda available!")
