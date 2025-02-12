@@ -88,7 +88,7 @@ from utils import initialize_charset
 # palindromes
 
 def generate_palindrome_sample():
-    start = "0"
+    start = ""
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset("palindrome_dataset")
     # Choose a random length for the first half of the palindrome
     # half_length = random.randint(1, 1)

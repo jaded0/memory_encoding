@@ -45,9 +45,9 @@ echo its working
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='onehot_mag'
+GROUP='lr_palindrome_sweep'
 
-NOTES="regularize to onehot magnitude"
+NOTES="high lr, wipe restored, no start char, more pos enc: 8"
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -112,7 +112,7 @@ TRACK=true
 # 4_resequence
 DATASET=palindrome_dataset
 BATCH_SIZE=32
-POS_ENCODING=30
+POS_ENCODING=128
 CANDECAY=0.9
 PLAST_CANDECAY=0.9
 # python synth_datasets.py
