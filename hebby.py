@@ -52,13 +52,13 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
             all_outputs.append(output[0])
             all_labels.append(final_char[0])
 
-    loss_total.backward()
+    loss_total.mean().backward()
     # optimizer.step()
     for p in rnn.parameters():
         if p.grad is not None:
             p.data.add_(p.grad.data, alpha=-config['learning_rate'])
 
-    loss_sum = loss_total.item()/onehot_line_tensor.shape[1]
+    loss_sum = loss_total.mean().item()/onehot_line_tensor.shape[1]
     # loss_sum = sum(losses) / onehot_line_tensor.size()[0]
     return output, loss_sum, 0, 0, all_outputs, all_labels
 
@@ -269,6 +269,8 @@ def main():
     # Decide a max sequence length to support
     MAX_SEQ_LEN = 2000  # or any upper bound you expect
     pos_dim = args.positional_encoding_dim
+    # print(f'pos_dim: {1/pos_dim}')
+    # print(f'alt: {(30/pos_dim)}')
     if pos_dim > 0:
         # Precompute a [MAX_SEQ_LEN, pos_dim] matrix
         pe_matrix = torch.zeros(MAX_SEQ_LEN, pos_dim)
@@ -277,7 +279,7 @@ def main():
                 # A typical sinusoidal formula:
                 #   angle = pos / (1e4 ** (2*(dim//2)/pos_dim))
                 # We'll do something simpler for brevity:
-                pe_matrix[pos, dim] = math.sin(pos + dim*0.1) * (2/pos_dim)
+                pe_matrix[pos, dim] = math.sin(pos + dim*0.1) * (8/pos_dim)
 
         # Move it to GPU if needed
         pe_matrix = pe_matrix.to(device)

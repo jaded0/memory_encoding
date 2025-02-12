@@ -20,7 +20,7 @@ UPDATE_RULE='static_plastic_candidate'
 
 GROUP='whatever'
 
-NOTES="regularize to onehot magnitude"
+NOTES="try lower lr now"
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -31,7 +31,7 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-3
+LEARNING_RATE=5e-3
 PLAST_LEARNING_RATE=1e-10
 PLAST_CLIP=1e3
 RESIDUAL_CONNECTION=false
@@ -75,7 +75,7 @@ PRINT_FREQ=500
 PLOT_FREQ=500
 
 # true or false
-TRACK=false
+TRACK=true
 
 # roneneldan/tinystories
 # jbrazzy/baby_names
@@ -85,7 +85,7 @@ TRACK=false
 # 4_resequence
 DATASET=palindrome_dataset
 BATCH_SIZE=32
-POS_ENCODING=30
+POS_ENCODING=128
 CANDECAY=0.9
 PLAST_CANDECAY=0.9
 
