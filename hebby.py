@@ -359,17 +359,20 @@ def main():
                 valid_outputs = [char for char in valid_outputs if char is not None]
 
                 if args.track:
-                    wandb.log({
-                        "loss": loss, 
-                        "avg_loss": current_loss / (args.plot_freq * 5), 
-                        "correct": current_correct / (args.plot_freq * 5), 
-                        "predicted_char": predicted_char, 
-                        "target_char": target_char, 
-                        "sequence": sequence,
-                        "was_correct": current_correct / (args.plot_freq * 5),
-                        # "all_outputs": valid_outputs,
-                        # "all_labels": valid_labels
-                    })
+                    log_data = {
+                        "loss": loss.item() if hasattr(loss, "item") else loss,
+                        "avg_loss": float(current_loss) / (args.plot_freq * 5),
+                        "correct": float(current_correct) / (args.plot_freq * 5),
+                        "predicted_char": str(predicted_char),
+                        "target_char": str(target_char),
+                        "sequence": str(sequence),
+                        "was_correct": float(current_correct) / (args.plot_freq * 5),
+                    }
+                    wandb.log(log_data, commit=True)
+                    # Optionally flush wandb's internal buffers (mostly useful in offline mode):
+                    if hasattr(wandb.run, "_flush"):
+                        wandb.run._flush()
+
 
                 # Print the progression of the entire sequence
                 progression = ''.join(valid_outputs)  # Convert list of characters to a string
@@ -378,6 +381,9 @@ def main():
                 all_losses.append(current_loss / (args.plot_freq * 5))
                 current_loss = 0
                 current_correct = 0
+                all_outputs.clear()
+                all_labels.clear()
+
 
     except KeyboardInterrupt:
         print("\nok, finishing up..")
