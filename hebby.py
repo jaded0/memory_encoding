@@ -11,6 +11,7 @@ import argparse
 import sys
 import numpy as np
 import itertools
+import os
 
 def print_graph(g, level=0):
     if g is None: return
@@ -205,7 +206,10 @@ def main():
     parser.add_argument('--positional_encoding_dim', type=int, default=0,
                         help='Dimension for optional positional encoding (0 means off).')
 
-    # Add other parameters as needed
+    # grab slurm jobid if it exists.
+    job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
+    print("SLURM Job ID:", job_id)
+
     args = parser.parse_args()
     config = {
         "learning_rate": args.learning_rate,
@@ -255,6 +259,7 @@ def main():
             "plast_candecay": args.plast_candecay,
             "plot_frequency": args.plot_freq,
             "batch_size": args.batch_size,
+            "slurm_id": job_id,
         })
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
