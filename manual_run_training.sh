@@ -4,6 +4,9 @@
 # Shell script to run the training script with custom hyperparameters.
 rm model_data/*
 
+
+export WANDB_MODE=offline
+
 # How to update weights.
 # Options are:
 # damage - Damage rule: Increases weights based on product of output and input, then decreases based on squared difference (oa*ia - (oa-ia)^2).

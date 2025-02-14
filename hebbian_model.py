@@ -136,7 +136,11 @@ class HebbianLinear(nn.Linear):
 
     def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity):
         input = self.in_traces.data
-        output = self.out_traces.data    
+        output = self.out_traces.data
+        # reward = reward.detach()
+        # input = self.in_traces.detach()
+        # output = self.out_traces.detach()
+        
         # Reshape input and output for broadcasting
         input_expanded = input.unsqueeze(1)  # Shape: [batch_size, 1, in_features]
         output_expanded = output.unsqueeze(2)  # Shape: [batch_size, out_features, 1]

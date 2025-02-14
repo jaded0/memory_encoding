@@ -12,6 +12,7 @@ import sys
 import numpy as np
 import itertools
 import os
+import psutil
 
 def print_graph(g, level=0):
     if g is None: return
@@ -363,31 +364,45 @@ def main():
                 # Filter out None values
                 valid_outputs = [char for char in valid_outputs if char is not None]
 
+                # if args.track:
+                #     log_data = {
+                #         "loss": loss.item() if hasattr(loss, "item") else loss,
+                #         "avg_loss": float(current_loss) / (args.plot_freq * 5),
+                #         "correct": float(current_correct) / (args.plot_freq * 5),
+                #         "predicted_char": str(predicted_char),
+                #         "target_char": str(target_char),
+                #         "sequence": str(sequence),
+                #         "was_correct": float(current_correct) / (args.plot_freq * 5),
+                #     }
+                #     wandb.log(log_data, commit=True)
+                #     # Optionally flush wandb's internal buffers (mostly useful in offline mode):
+                #     if hasattr(wandb.run, "_flush"):
+                #         wandb.run._flush()
                 if args.track:
-                    log_data = {
-                        "loss": loss.item() if hasattr(loss, "item") else loss,
-                        "avg_loss": float(current_loss) / (args.plot_freq * 5),
-                        "correct": float(current_correct) / (args.plot_freq * 5),
-                        "predicted_char": str(predicted_char),
-                        "target_char": str(target_char),
-                        "sequence": str(sequence),
-                        "was_correct": float(current_correct) / (args.plot_freq * 5),
-                    }
-                    wandb.log(log_data, commit=True)
-                    # Optionally flush wandb's internal buffers (mostly useful in offline mode):
-                    if hasattr(wandb.run, "_flush"):
-                        wandb.run._flush()
-
+                    wandb.log({
+                        "loss": loss, 
+                        "avg_loss": current_loss / (args.plot_freq * 5), 
+                        "correct": current_correct / (args.plot_freq * 5), 
+                        "predicted_char": predicted_char, 
+                        "target_char": target_char, 
+                        "sequence": sequence,
+                        "was_correct": current_correct / (args.plot_freq * 5),
+                        # "all_outputs": valid_outputs,
+                        # "all_labels": valid_labels
+                    })
 
                 # Print the progression of the entire sequence
                 progression = ''.join(valid_outputs)  # Convert list of characters to a string
                 progression2 = ''.join(valid_outputs_2)
                 print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} avg: {(current_loss/(args.plot_freq*5)):.5f} Sequence: \n\033[91m{sequence}\033[0m\n \033[93m{progression}\033[0m {correct}\n \033[35m{progression2}\033[0m')
+                # print(f"Memory usage: {psutil.Process().memory_info().rss / 1024**2:.2f} MB")
                 all_losses.append(current_loss / (args.plot_freq * 5))
                 current_loss = 0
                 current_correct = 0
-                all_outputs.clear()
-                all_labels.clear()
+                # all_outputs.clear()
+                # all_labels.clear()
+                # gc.collect()
+                # torch.cuda.empty_cache()
 
 
     except KeyboardInterrupt:

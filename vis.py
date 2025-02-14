@@ -17,7 +17,7 @@ def register_hooks(model):
 
     def get_activation(name):
         def hook(model, input, output):
-            activations[name] = output.detach().cpu()
+            activations[name] = output.detach()#.cpu()
         return hook
 
     for name, layer in model.named_modules():
