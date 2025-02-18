@@ -1,6 +1,6 @@
 import torch
 from hebbian_model import HebbianLinear, HebbyRNN, SimpleRNN
-from vis import register_hooks, save_model_data, visualize_model_data, visualize_all_layers_and_save, create_animation_from_visualizations
+# from vis import register_hooks, save_model_data, visualize_model_data, visualize_all_layers_and_save, create_animation_from_visualizations
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
@@ -152,10 +152,10 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         # reward_update += (self_grad * 1e-4)
         rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])
 
-        if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
-            # Save the model and activations periodically
-            print("---\nsaving activations\n---")
-            save_model_data(rnn, state["activations"], state["training_instance"], config['track'])
+        # if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
+        #     # Save the model and activations periodically
+        #     print("---\nsaving activations\n---")
+        #     save_model_data(rnn, state["activations"], state["training_instance"], config['track'])
 
         state['training_instance'] += 1
 
@@ -261,6 +261,8 @@ def main():
             "plot_frequency": args.plot_freq,
             "batch_size": args.batch_size,
             "slurm_id": job_id,
+            "positional_encoding_dim": args.positional_encoding_dim,
+            "save_frequency": args.save_frequency,
         })
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -314,7 +316,7 @@ def main():
         "training_instance": 0,
         "last_n_rewards": [0],
         "last_n_reward_avg": 0,
-        "activations": register_hooks(rnn)
+        # "activations": register_hooks(rnn)
     }
 
     # Training Loop
@@ -410,7 +412,7 @@ def main():
 
     if args.track:
         wandb.finish()
-    create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
+    # create_animation_from_visualizations(rnn, 'model_data', 'model_evolution.mp4', format='mp4')
 
 
 if __name__ == '__main__':

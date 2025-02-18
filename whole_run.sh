@@ -4,7 +4,7 @@
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
 #SBATCH --gpus=1
-#SBATCH --mem-per-cpu=32000M   # 8G memory per CPU core
+#SBATCH --mem-per-cpu=64000M   # 8G memory per CPU core
 #SBATCH --mail-type=BEGIN
 #SBATCH --mail-type=END
 #SBATCH --mail-type=FAIL
@@ -13,8 +13,11 @@
 #SBATCH --mail-user jaden.lorenc@gmail.com
 
 # some helpful debugging options
-set -e
-set -u
+# set -e
+# set -u
+
+# Limit virtual memory to 30 GB (30*1024*1024 KB)
+# ulimit -v $((15 * 1024 * 1024))
 
 # nvidia-smi
 
@@ -45,9 +48,9 @@ echo its working
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='lr_palindrome_sweep'
+GROUP='whatever'
 
-NOTES="high lr, wipe restored, no start char, more pos enc: 8"
+NOTES="just scale up. no vis whatsoever"
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -88,7 +91,7 @@ NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=1000000000
+SAVE_FREQUENCY=100000000000
 
 # Number of training iterations, like 1000000000
 N_ITERS=1000000000
@@ -117,7 +120,7 @@ CANDECAY=0.9
 PLAST_CANDECAY=0.9
 # python synth_datasets.py
 # Running the training script with the specified hyperparameters
-python hebby.py --learning_rate $LEARNING_RATE \
+python -u hebby.py --learning_rate $LEARNING_RATE \
                        --group $GROUP \
                        --imprint_rate $IMPRINT_RATE \
                        --forget_rate $FORGET_RATE \
