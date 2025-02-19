@@ -149,7 +149,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         # if state["training_instance"] == threshold:
         #     print(f"reached threshold at {threshold}")
         lr = config["learning_rate"]
-        # reward_update += (self_grad * 1e-4)
+        reward_update += (self_grad * config["self_grad"])
         rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])
 
         # if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
@@ -206,6 +206,7 @@ def main():
     parser.add_argument('--batch_size', type=int, default=4, help='how much to stuff in at once')
     parser.add_argument('--positional_encoding_dim', type=int, default=0,
                         help='Dimension for optional positional encoding (0 means off).')
+    parser.add_argument('--self_grad', type=float, default=0.0, help='Scale of self_grad. grad based replacement for recurrence.')
 
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
@@ -234,6 +235,7 @@ def main():
         "candecay": args.candecay,
         "plast_candecay": args.plast_candecay,
         "batch_size": args.batch_size,
+        "self_grad": args.self_grad,
     }
     print(args.track)
     if args.track:
@@ -263,6 +265,7 @@ def main():
             "slurm_id": job_id,
             "positional_encoding_dim": args.positional_encoding_dim,
             "save_frequency": args.save_frequency,
+            "self_grad": args.self_grad,
         })
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")

@@ -48,9 +48,13 @@ echo its working
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='whatever'
+GROUP='lr_forget_palindrome_sweep'
 
 NOTES="just scale up. no vis whatsoever"
+
+# A gradient-based replacement to the recurrent connection. 
+# Is this metalearning?
+SELF_GRAD=1e-4
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -71,7 +75,7 @@ RESIDUAL_CONNECTION=false
 IMPRINT_RATE=0.3
 
 # Controls the gradient growth, preventing explosion.
-FORGET_RATE=0.3
+FORGET_RATE=0.7
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
@@ -145,6 +149,7 @@ python -u hebby.py --learning_rate $LEARNING_RATE \
                        --batch_size $BATCH_SIZE \
                        --residual_connection $RESIDUAL_CONNECTION \
                        --notes "$NOTES" \
-                       --positional_encoding_dim $POS_ENCODING
+                       --positional_encoding_dim $POS_ENCODING \
+                       --self_grad $SELF_GRAD
 
 rm model_data/*
