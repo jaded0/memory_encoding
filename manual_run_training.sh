@@ -5,7 +5,7 @@
 rm model_data/*
 
 
-export WANDB_MODE=offline
+export WANDB_MODE=online
 
 # How to update weights.
 # Options are:
@@ -21,13 +21,13 @@ export WANDB_MODE=offline
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='self_grad_again'
+GROUP='whatever'
 
-NOTES="try self_grad again"
+NOTES="strong initial lr"
 
 # A gradient-based replacement to the recurrent connection. 
 # Is this metalearning?
-SELF_GRAD=1e-4
+SELF_GRAD=0 #1e-6
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -38,9 +38,9 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=3e-3
+LEARNING_RATE=1e-4
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1e3
+PLAST_CLIP=1e4
 RESIDUAL_CONNECTION=false
 
 # Imprint rate for Hebbian updates
@@ -48,7 +48,7 @@ RESIDUAL_CONNECTION=false
 IMPRINT_RATE=0.3
 
 # Controls the gradient growth, preventing explosion.
-FORGET_RATE=0.7
+FORGET_RATE=0.3
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.
@@ -82,7 +82,7 @@ PRINT_FREQ=500
 PLOT_FREQ=500
 
 # true or false
-TRACK=false
+TRACK=true
 
 # roneneldan/tinystories
 # jbrazzy/baby_names

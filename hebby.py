@@ -144,13 +144,16 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             rnn.zero_grad()
         
         # Apply Hebbian updates to the network
-        # threshold = 0
-        # lr = 1e-2 if state["training_instance"] < threshold else config["learning_rate"]
-        # if state["training_instance"] == threshold:
-        #     print(f"reached threshold at {threshold}")
-        lr = config["learning_rate"]
-        reward_update += (self_grad * config["self_grad"])
-        rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], config["plast_clip"], config["imprint_rate"], config["stochasticity"])
+        threshold = 1000000
+        # lr = 1e-3 if state["training_instance"] < threshold else config["learning_rate"]
+        lr = 1e-3 if loss[0].item() < 1.7 else config["learning_rate"]
+        # plast_clip = 1e3 if state["training_instance"] < threshold else config["plast_clip"]
+        if state["training_instance"] == threshold:
+            print(f"reached threshold at {threshold}")
+        # lr = config["learning_rate"]
+        plast_clip = config["plast_clip"]
+        reward_update += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
+        rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], plast_clip, config["imprint_rate"], config["stochasticity"])
 
         # if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
         #     # Save the model and activations periodically
