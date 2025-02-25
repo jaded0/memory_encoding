@@ -43,6 +43,9 @@ PLAST_LEARNING_RATE=1e-10
 PLAST_CLIP=1e4
 RESIDUAL_CONNECTION=false
 
+# gradient clip
+GRAD_CLIP=1e-3
+
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
 IMPRINT_RATE=0.3
@@ -121,6 +124,7 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --plast_candecay $PLAST_CANDECAY \
                        --batch_size $BATCH_SIZE \
                        --residual_connection $RESIDUAL_CONNECTION \
+                       --grad_clip $GRAD_CLIP \
                        --notes "$NOTES" \
                        --positional_encoding_dim $POS_ENCODING \
                        --self_grad $SELF_GRAD

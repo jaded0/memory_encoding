@@ -144,16 +144,16 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             rnn.zero_grad()
         
         # Apply Hebbian updates to the network
-        threshold = 1000000
-        # lr = 1e-3 if state["training_instance"] < threshold else config["learning_rate"]
-        lr = 1e-3 if loss[0].item() < 1.7 else config["learning_rate"]
-        # plast_clip = 1e3 if state["training_instance"] < threshold else config["plast_clip"]
-        if state["training_instance"] == threshold:
-            print(f"reached threshold at {threshold}")
-        # lr = config["learning_rate"]
+        # threshold = 1000000
+        # # lr = 1e-3 if state["training_instance"] < threshold else config["learning_rate"]
+        # lr = 1e-3 if loss[0].item() < 1.7 else config["learning_rate"]
+        # # plast_clip = 1e3 if state["training_instance"] < threshold else config["plast_clip"]
+        # if state["training_instance"] == threshold:
+        #     print(f"reached threshold at {threshold}")
+        lr = config["learning_rate"]
         plast_clip = config["plast_clip"]
         reward_update += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
-        rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], plast_clip, config["imprint_rate"], config["stochasticity"])
+        rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], plast_clip, config["imprint_rate"], config["stochasticity"], config["grad_clip"])
 
         # if (state["training_instance"] % config["save_frequency"] == 0 and state['training_instance'] != 0):
         #     # Save the model and activations periodically
@@ -191,6 +191,7 @@ def main():
     parser.add_argument('--len_reward_history', type=int, default=1000, help='Number of rewards to track')
     parser.add_argument('--save_frequency', type=int, default=100000, help='How often to save and display model weights.')
     parser.add_argument('--residual_connection', type=str2bool, nargs='?', const=True, default=True, help='whether to have a skip connection')
+    parser.add_argument('--grad_clip', type=float, default=1e-1, help='Clip gradients to this value.') 
     parser.add_argument('--hidden_size', type=int, default=128, help='Size of hidden layers in RNN')
     parser.add_argument('--num_layers', type=int, default=3, help='Number of layers in RNN')
     parser.add_argument('--n_iters', type=int, default=10000, help='Number of training iterations')
@@ -229,6 +230,7 @@ def main():
         "criterion": torch.nn.CrossEntropyLoss(reduction='none'),
         "l2_lambda": 0.000,  # Example static hyperparameter
         "residual_connection": args.residual_connection,
+        "grad_clip": args.grad_clip,
         "n_hidden": args.hidden_size,
         "n_layers": args.num_layers,
         "track": args.track,
@@ -250,6 +252,7 @@ def main():
             "architecture": "crazy hebbian thing",
             "update_rule": args.update_rule,
             "residual_connection": args.residual_connection,
+            "grad_clip": args.grad_clip,
             "n_hidden": args.hidden_size,
             "n_layers": args.num_layers,
             "dataset": args.dataset,

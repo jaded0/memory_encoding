@@ -134,7 +134,7 @@ class HebbianLinear(nn.Linear):
         self.in_traces.data = input
         self.out_traces.data = output
 
-    def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity):
+    def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity, grad_clip):
         input = self.in_traces.data
         output = self.out_traces.data
         # reward = reward.detach()
@@ -375,6 +375,7 @@ class HebbianLinear(nn.Linear):
                 update = update * (learning_rate * self.plasticity.data) * plastic_mask
                 self.t += 1
                 # self.weight.data += update
+                update[self.mask.unsqueeze(0).expand_as(update)].clamp_(-grad_clip, grad_clip)
                 self.candidate_weights.data += update
                 # print(self.weight.norm(p=2))
                 # self.weight.data *= 1/(0.1*torch.abs(self.plasticity.data))
@@ -509,15 +510,15 @@ class HebbyRNN(torch.nn.Module):
         device = next(self.parameters()).device
         return torch.zeros(batch_size, self.hidden_size, device=device, requires_grad=False)
 
-    def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity):
+    def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity, grad_clip):
         # Apply imprints for all HebbianLinear layers
         # self.linear1.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
         # self.linear2.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
         for layer in self.linear_layers:
-            layer.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
+            layer.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity, grad_clip)
         # self.i2h.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
-        self.i2o.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
-        self.self_grad.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity)
+        self.i2o.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity, grad_clip)
+        self.self_grad.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, stochasticity, grad_clip)
 
     def wipe(self):
         for layer in self.linear_layers:

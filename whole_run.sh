@@ -48,13 +48,13 @@ echo its working
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='lr_forget_palindrome_sweep'
+GROUP='grad_clip_sweep'
 
-NOTES="just scale up. no vis whatsoever"
+NOTES="maybe gradient clipping will help with the exploding weights problem"
 
 # A gradient-based replacement to the recurrent connection. 
 # Is this metalearning?
-SELF_GRAD=1e-4
+SELF_GRAD=0
 
 # Whether to normalize the weights at each update.
 # Doing so seems to prevent the runaway exploding weights effect.
@@ -69,6 +69,9 @@ LEARNING_RATE=1e-3
 PLAST_LEARNING_RATE=1e-10
 PLAST_CLIP=1e3
 RESIDUAL_CONNECTION=false
+
+# gradient clip
+GRAD_CLIP=1e-6
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -148,6 +151,7 @@ python -u hebby.py --learning_rate $LEARNING_RATE \
                        --plast_candecay $PLAST_CANDECAY \
                        --batch_size $BATCH_SIZE \
                        --residual_connection $RESIDUAL_CONNECTION \
+                       --grad_clip $GRAD_CLIP \
                        --notes "$NOTES" \
                        --positional_encoding_dim $POS_ENCODING \
                        --self_grad $SELF_GRAD
