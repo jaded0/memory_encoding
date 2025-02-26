@@ -44,6 +44,9 @@ def load_and_preprocess_data(dataset_name, batch_size=4):
     dataset = dataset.map(text_to_indices_and_one_hot, batched=True, fn_kwargs={"dataset_name": dataset_name})
     print('preprocessed') 
 
+    # Shuffle the dataset
+    dataset = dataset.shuffle()#seed=42)
+
     # # Inspect a few examples from the dataset
     # for i in range(3):
     #     print(dataset[i]['onehot_tensor'])
