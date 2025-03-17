@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --time=48:00:00   # walltime.  hours:minutes:seconds
+#SBATCH --time=72:00:00   # walltime.  hours:minutes:seconds
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
 #SBATCH --nodes=1   # number of nodes
 #SBATCH --gpus=1
@@ -48,9 +48,9 @@ echo its working
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='grad_clip_sweep'
+GROUP='forget_grad_sweep_still_cycle'
 
-NOTES="maybe gradient clipping will help with the exploding weights problem"
+NOTES="A certain config of the forget rate and the gradient clip and cyclical plasticity and plastic-weight proportion worked, lets sweep around that."
 
 # A gradient-based replacement to the recurrent connection. 
 # Is this metalearning?
@@ -65,13 +65,13 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-3
+LEARNING_RATE=1e-4
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1e3
+PLAST_CLIP=1e5
 RESIDUAL_CONNECTION=false
 
 # gradient clip
-GRAD_CLIP=1e-6
+GRAD_CLIP=10
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
@@ -98,14 +98,14 @@ NUM_LAYERS=3
 
 # Frequency of saving and displaying model weights
 # Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=100000000000
+SAVE_FREQUENCY=10000000
 
 # Number of training iterations, like 1000000000
 N_ITERS=1000000000
 
 # Frequency of printing training progress
 # Lower values provide more frequent updates.
-PRINT_FREQ=500
+PRINT_FREQ=5000
 
 # Frequency of plotting training loss
 # Lower values plot more frequently.

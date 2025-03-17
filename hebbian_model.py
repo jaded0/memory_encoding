@@ -57,7 +57,7 @@ class HebbianLinear(nn.Linear):
             # distribution = torch.exp(torch.empty_like(self.weight).normal_(0, 2)).clamp_(1e0,1e5)
             distribution = torch.ones_like(self.weight)
             rand_vals = torch.rand_like(self.weight)
-            self.mask = nn.Parameter((rand_vals < 0.1).bool(), requires_grad=False)
+            self.mask = nn.Parameter((rand_vals < 0.2).bool(), requires_grad=False)
             distribution[self.mask] = plast_clip
 
             mask_tier_two = rand_vals < 0.01
@@ -370,11 +370,11 @@ class HebbianLinear(nn.Linear):
                 # self.weight.data += update
                 self.candidate_weights.data += update
             else:
-                # plastic_mask = (((torch.cos(self.t * self.frequency.data + self.phase_shift) + 1) * 0.5) > 0.5)
-                plastic_mask = self.mask
+                plastic_mask = (((torch.cos(self.t * self.frequency.data + self.phase_shift) + 1) * 0.5) > 0.5)
+                # plastic_mask = self.mask
                 self.candidate_weights *= torch.max(~self.mask, (1 - plastic_mask * (self.forgetting_factor)))
                 update = update * (learning_rate * self.plasticity.data) * plastic_mask
-                # self.t += 1
+                self.t += 1
                 # self.weight.data += update
                 update[self.mask.unsqueeze(0).expand_as(update)].clamp_(-grad_clip, grad_clip)
                 self.candidate_weights.data += update

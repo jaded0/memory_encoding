@@ -13,6 +13,9 @@ import numpy as np
 import itertools
 import os
 import psutil
+from wandb_osh.hooks import TriggerWandbSyncHook  # <-- New!
+
+trigger_sync = TriggerWandbSyncHook()  # <--- New!
 
 def print_graph(g, level=0):
     if g is None: return
@@ -414,6 +417,8 @@ def main():
                 # all_labels.clear()
                 # gc.collect()
                 # torch.cuda.empty_cache()
+            if iter % (args.print_freq * 5) == 0:
+                trigger_sync()
 
 
     except KeyboardInterrupt:

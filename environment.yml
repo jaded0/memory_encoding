@@ -17,3 +17,4 @@ dependencies:
   - pip
   - pip:
     - datasets  # Hugging Face datasets library
+    - wandb-osh
