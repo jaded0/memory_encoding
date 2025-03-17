@@ -50,7 +50,7 @@ UPDATE_RULE='static_plastic_candidate'
 
 GROUP='forget_grad_sweep_still_cycle'
 
-NOTES="A certain config of the forget rate and the gradient clip and cyclical plasticity and plastic-weight proportion worked, lets sweep around that."
+NOTES="ok, lets see if just updating the environment stops the memory leak"
 
 # A gradient-based replacement to the recurrent connection. 
 # Is this metalearning?
@@ -71,7 +71,7 @@ PLAST_CLIP=1e5
 RESIDUAL_CONNECTION=false
 
 # gradient clip
-GRAD_CLIP=10
+GRAD_CLIP=0
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
