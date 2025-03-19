@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/bin/bash --login
+# The above line is a directive to run the script in the login shell.
 
 #SBATCH --time=72:00:00   # walltime.  hours:minutes:seconds
 #SBATCH --ntasks=1   # number of processor cores (i.e. tasks)
@@ -22,7 +23,7 @@
 # nvidia-smi
 
 # LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
-source /apps/miniconda3/latest/etc/profile.d/conda.sh
+# source /apps/miniconda3/latest/etc/profile.d/conda.sh
 conda activate hebby
 export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python
 export WANDB_MODE=offline
@@ -78,7 +79,7 @@ GRAD_CLIP=0
 IMPRINT_RATE=0.3
 
 # Controls the gradient growth, preventing explosion.
-FORGET_RATE=0.7
+FORGET_RATE=0.5
 
 # Stochasticity in Hebbian updates
 # Controls the amount of random noise added in updates. Higher values increase randomness.

@@ -5,16 +5,18 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python  # You can specify the Python version you need
+  - python=3.11  # Match your Python version
   - pytorch
   - pytorch-cuda=12.1
-  - imageio
   - torchvision
   - torchaudio
-  - cudatoolkit  # Match this with your CUDA version, or remove if CUDA is not needed
+  - imageio
   - matplotlib
   - wandb
+  - numpy
+  - scipy
+  - psutil
   - pip
   - pip:
-    - datasets  # Hugging Face datasets library
-    - wandb-osh
+      - datasets
+      - wandb-osh
