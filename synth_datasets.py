@@ -91,8 +91,8 @@ def generate_palindrome_sample():
     start = ""
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset("palindrome_dataset")
     # Choose a random length for the first half of the palindrome
-    # half_length = random.randint(1, 1)
-    half_length = 2
+    half_length = random.randint(1, 3)
+    # half_length = 2
     # Build the left half by randomly selecting characters from the charset
     left_half = ''.join(random.choice(charset) for _ in range(half_length))
     # Optionally, add a middle character for odd-length palindromes

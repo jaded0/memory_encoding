@@ -6,7 +6,7 @@ import sys
 from utils import initialize_charset
 import numpy as np
 import torch.nn.utils.parametrize as parametrize
-from memory_profiler import profile
+# from memory_profiler import profile
 
 
 class PlasticityNorm(nn.Module):

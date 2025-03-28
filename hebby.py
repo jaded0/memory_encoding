@@ -13,7 +13,7 @@ import itertools
 import os
 import psutil
 from wandb_osh.hooks import TriggerWandbSyncHook  # <-- New!
-from memory_profiler import profile
+# from memory_profiler import profile
 
 trigger_sync = TriggerWandbSyncHook()  # <--- New!
 

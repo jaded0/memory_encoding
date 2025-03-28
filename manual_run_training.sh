@@ -23,7 +23,7 @@ UPDATE_RULE='static_plastic_candidate'
 
 GROUP='whatever'
 
-NOTES="strong initial lr"
+NOTES="new pal length"
 
 # A gradient-based replacement to the recurrent connection. 
 # Is this metalearning?
@@ -52,15 +52,6 @@ IMPRINT_RATE=0.3
 
 # Controls the gradient growth, preventing explosion.
 FORGET_RATE=0.3
-
-# Stochasticity in Hebbian updates
-# Controls the amount of random noise added in updates. Higher values increase randomness.
-STOCHASTICITY=1e-40
-
-# Number of rewards to track for averaging
-# Higher values smooth out the reward signal over more steps.
-LEN_REWARD_HISTORY=10
-DELTA_REWARDS=false
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
@@ -96,8 +87,6 @@ TRACK=true
 DATASET=palindrome_dataset
 BATCH_SIZE=32
 POS_ENCODING=128
-CANDECAY=0.9
-PLAST_CANDECAY=0.9
 
 # Running the training script with the specified hyperparameters
 python hebby.py --learning_rate $LEARNING_RATE \
@@ -106,8 +95,6 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --forget_rate $FORGET_RATE \
                        --plast_learning_rate $PLAST_LEARNING_RATE \
                        --plast_clip $PLAST_CLIP \
-                       --stochasticity $STOCHASTICITY \
-                       --len_reward_history $LEN_REWARD_HISTORY \
                        --save_frequency $SAVE_FREQUENCY \
                        --hidden_size $HIDDEN_SIZE \
                        --num_layers $NUM_LAYERS \
@@ -119,9 +106,6 @@ python hebby.py --learning_rate $LEARNING_RATE \
                        --clip_weights $CLIP_WEIGHTS \
                        --track $TRACK \
                        --dataset $DATASET \
-                       --delta_rewards $DELTA_REWARDS \
-                       --candecay $CANDECAY \
-                       --plast_candecay $PLAST_CANDECAY \
                        --batch_size $BATCH_SIZE \
                        --residual_connection $RESIDUAL_CONNECTION \
                        --grad_clip $GRAD_CLIP \
