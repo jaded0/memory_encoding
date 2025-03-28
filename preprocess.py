@@ -52,11 +52,15 @@ def load_and_preprocess_data(dataset_name, batch_size=4):
     #     print(dataset[i]['onehot_tensor'])
 
     # Create a DataLoader
+    dataset_cached = list(dataset)
     dataloader = torch.utils.data.DataLoader(
-        dataset, 
+        dataset_cached, 
         batch_size=batch_size, 
         shuffle=True, 
-        collate_fn=collate_fn
+        collate_fn=collate_fn,
+        num_workers=10,
+        pin_memory=True
     )
+
 
     return dataloader
