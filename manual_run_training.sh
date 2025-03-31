@@ -76,15 +76,16 @@ PRINT_FREQ=500
 PLOT_FREQ=500
 
 # true or false
-TRACK=true
+TRACK=false
 
 # roneneldan/tinystories
 # jbrazzy/baby_names
 # brucewlee1/htest-palindrome
 # long_range_memory_dataset
 # palindrome_dataset
+# palindrome_dataset_vary_length
 # 4_resequence
-DATASET=palindrome_dataset
+DATASET=palindrome_dataset_vary_length
 BATCH_SIZE=32
 POS_ENCODING=128
 

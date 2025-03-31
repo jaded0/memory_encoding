@@ -12,6 +12,7 @@ dataset_keys = {
     "3_resequence": "train",
     "4_resequence": "train",
     "palindrome_dataset": "train",
+    "palindrome_dataset_vary_length": "train",  # Added new dataset
 }
 
 # Load dataset
@@ -26,7 +27,7 @@ def load_and_preprocess_data(dataset_name, batch_size=4):
     # print(f"dataset is {dataset[dataset_keys[dataset_name]]}")
     # Inspect each split
     for split in dataset:
-        print(f"Loaded palindrome_dataset {split} columns: {dataset[split].column_names}")
+        print(f"Loaded {dataset_name} {split} columns: {dataset[split].column_names}")
         print(f"Loaded sample {split}: {dataset[split][0]}")
     dataset = dataset[dataset_keys[dataset_name]]#.select(range(10))
 

@@ -166,6 +166,8 @@ model_evolution*
 long_range_memory_dataset/
 *_resequence/
 palindrome_dataset/
+palindrome_dataset_vary_length
 jobs/
 slurm*
 response.json
+.aider*

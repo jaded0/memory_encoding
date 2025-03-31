@@ -87,12 +87,15 @@ from utils import initialize_charset
 
 # palindromes
 
-def generate_palindrome_sample():
+def generate_palindrome_sample(fixed=False):
     start = ""
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset("palindrome_dataset")
     # Choose a random length for the first half of the palindrome
-    half_length = random.randint(1, 3)
-    # half_length = 2
+    if fixed:
+        half_length = 2
+    else:
+        half_length = random.randint(1, 3)
+        
     # Build the left half by randomly selecting characters from the charset
     left_half = ''.join(random.choice(charset) for _ in range(half_length))
     # Optionally, add a middle character for odd-length palindromes
@@ -101,8 +104,8 @@ def generate_palindrome_sample():
     # Mirror the left half to form a palindrome
     return start + left_half + middle + left_half[::-1]
 
-def generate_palindrome_dataset(num_samples, split):
-    samples = [generate_palindrome_sample() for _ in range(num_samples)]
+def generate_palindrome_dataset(num_samples, split, fixed=False):
+    samples = [generate_palindrome_sample(fixed=fixed) for _ in range(num_samples)]
     print(f"First 5 samples for {split}: {samples[:5]}")
     return Dataset.from_dict({"text": samples}, split=split)
 
@@ -119,4 +122,20 @@ palindrome_dataset_dict = DatasetDict({
 for split in palindrome_dataset_dict:
     print(f"palindrome_dataset {split} columns: {palindrome_dataset_dict[split].column_names}")
     print(f"Sample {split}: {palindrome_dataset_dict[split][0]}")
-palindrome_dataset_dict.save_to_disk("palindrome_dataset")
+# palindrome_dataset_dict.save_to_disk("palindrome_dataset")
+
+# Generate and save palindrome datasets with varying lengths
+train_palindrome_vary_length = generate_palindrome_dataset(num_samples=1000000, split="train", fixed=True)
+validation_palindrome_vary_length = generate_palindrome_dataset(num_samples=5000, split="validation", fixed=True)
+test_palindrome_vary_length = generate_palindrome_dataset(num_samples=20000, split="test", fixed=True)
+
+palindrome_dataset_vary_length_dict = DatasetDict({
+    "train": train_palindrome_vary_length,
+    "validation": validation_palindrome_vary_length,
+    "test": test_palindrome_vary_length
+})
+
+for split in palindrome_dataset_vary_length_dict:
+    print(f"palindrome_dataset_vary_length {split} columns: {palindrome_dataset_vary_length_dict[split].column_names}")
+    print(f"Sample {split}: {palindrome_dataset_vary_length_dict[split][0]}")
+palindrome_dataset_vary_length_dict.save_to_disk("palindrome_dataset_vary_length")

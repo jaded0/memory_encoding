@@ -41,9 +41,9 @@ echo its working
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='forget_grad_sweep_still_cycle'
+GROUP='vary_pals'
 
-NOTES="take advantage of longer run"
+NOTES="vary the size of the palindromes, maybe it helps with stability"
 
 # A gradient-based replacement to the recurrent connection. 
 # Is this metalearning?
@@ -60,18 +60,18 @@ CLIP_WEIGHTS=0
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
 LEARNING_RATE=1e-4
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1e5
+PLAST_CLIP=1e4
 RESIDUAL_CONNECTION=false
 
 # gradient clip
-GRAD_CLIP=1e1
+GRAD_CLIP=0
 
 # Imprint rate for Hebbian updates
 # Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
 IMPRINT_RATE=0.3
 
 # Controls the gradient growth, preventing explosion.
-FORGET_RATE=0.8
+FORGET_RATE=0.3
 
 # Size of hidden layers in RNN
 # Larger sizes create a more complex model but require more computational resources.
@@ -103,8 +103,9 @@ TRACK=true
 # brucewlee1/htest-palindrome
 # long_range_memory_dataset
 # palindrome_dataset
+# palindrome_dataset_vary_length
 # 4_resequence
-DATASET=palindrome_dataset
+DATASET=palindrome_dataset_vary_length
 BATCH_SIZE=32
 POS_ENCODING=128
 # python synth_datasets.py
