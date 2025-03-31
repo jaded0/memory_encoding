@@ -27,17 +27,33 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
 
     all_outputs = []
     all_labels = []
+    n_characters = onehot_line_tensor.shape[2] # Get n_characters from the tensor shape
 
-    for i in range(onehot_line_tensor.size()[1] - 1): 
-        hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
+    for i in range(onehot_line_tensor.size()[1] - 1):
+        # Get current character's one-hot vector
+        current_char_tensor = onehot_line_tensor[:, i, :]
+
+        # Get previous character's one-hot vector (or zeros if i=0)
+        if i == 0:
+            previous_char_tensor = torch.zeros_like(current_char_tensor)
+        else:
+            previous_char_tensor = onehot_line_tensor[:, i-1, :]
+
+        # Concatenate current and previous character tensors
+        combined_char_tensor = torch.cat([current_char_tensor, previous_char_tensor], dim=1)
+
+        # Handle positional encoding
         pe_matrix = config["pe_matrix"]
         if pe_matrix is not None:
             # position i might exceed MAX_SEQ_LEN, so clamp or wrap as needed
             pe_vec = pe_matrix[min(i, pe_matrix.size(0)-1)]  # shape [pos_dim]
             # expand to [batch_size, pos_dim]
             pe_vec = pe_vec.unsqueeze(0).expand(batch_size, -1)
-            # concat onto the onehot
-            hot_input_char_tensor = torch.cat([hot_input_char_tensor, pe_vec], dim=1)
+            # concat positional encoding onto the combined character tensor
+            hot_input_char_tensor = torch.cat([combined_char_tensor, pe_vec], dim=1)
+        else:
+            # If no positional encoding, the input is just the combined characters
+            hot_input_char_tensor = combined_char_tensor
 
         output, hidden = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[:, i+1, :]
@@ -65,13 +81,26 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
     all_labels = []
 
     rnn.wipe()
+    n_characters = onehot_line_tensor.shape[2] # Get n_characters from the tensor shape
 
     for i in range(onehot_line_tensor.shape[1] - 1):
         l2_reg = None  # Reset L2 regularization term for each character
 
-        hot_input_char_tensor = onehot_line_tensor[:, i, :] # overcomplicated only bc batching
-        hot_input_char_tensor.requires_grad = False
+        # Get current character's one-hot vector
+        current_char_tensor = onehot_line_tensor[:, i, :]
+        current_char_tensor.requires_grad = False
 
+        # Get previous character's one-hot vector (or zeros if i=0)
+        if i == 0:
+            previous_char_tensor = torch.zeros_like(current_char_tensor)
+        else:
+            previous_char_tensor = onehot_line_tensor[:, i-1, :]
+        previous_char_tensor.requires_grad = False
+
+        # Concatenate current and previous character tensors
+        combined_char_tensor = torch.cat([current_char_tensor, previous_char_tensor], dim=1)
+
+        # Handle positional encoding
         pe_matrix = config["pe_matrix"]
         if pe_matrix is not None:
             # position i might exceed MAX_SEQ_LEN, so clamp or wrap as needed
@@ -80,8 +109,11 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
             # pe_vec *= 1/onehot_line_tensor.shape[1]
             # expand to [batch_size, pos_dim]
             pe_vec = pe_vec.unsqueeze(0).expand(batch_size, -1)
-            # concat onto the onehot
-            hot_input_char_tensor = torch.cat([hot_input_char_tensor, pe_vec], dim=1)
+            # concat positional encoding onto the combined character tensor
+            hot_input_char_tensor = torch.cat([combined_char_tensor, pe_vec], dim=1)
+        else:
+            # If no positional encoding, the input is just the combined characters
+            hot_input_char_tensor = combined_char_tensor
 
         output, hidden, self_grad = rnn(hot_input_char_tensor, hidden)
 
