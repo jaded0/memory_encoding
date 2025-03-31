@@ -260,9 +260,10 @@ def main():
         config["pe_matrix"] = None
 
     # Model Initialization
-    input_size = n_characters + pos_dim
+    # Input size is doubled character set size + positional encoding dimension
+    input_size = (n_characters * 2) + pos_dim
     output_size = n_characters
-    
+
     optimizer = None
 
     if args.update_rule == "backprop":
