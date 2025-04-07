@@ -326,7 +326,31 @@ def main():
             # Loss tracking
             current_loss += loss
             current_correct += corr
-            if iter % (args.plot_freq * 5) == 0:  # Logging less frequently
+            if log_outputs:  # Logging less frequently
+                # --- Calculate Step-by-Step Accuracy from collected lists ---
+                num_steps = len(all_outputs)
+                num_correct_steps = 0
+                if num_steps > 0:
+                    with torch.no_grad(): # Ensure no gradients are computed here
+                        for i in range(num_steps):
+                            step_output = all_outputs[i] # Output for step i (batch item 0)
+                            step_label_onehot = all_labels[i] # Label for step i (batch item 0)
+
+                            predicted_idx = torch.argmax(step_output).item()
+                            target_idx = torch.argmax(step_label_onehot).item()
+
+                            if predicted_idx == target_idx:
+                                num_correct_steps += 1
+                            # --- Optional: Add top-2 logic here if desired ---
+                            else:
+                               top2_indices = torch.topk(step_output, 2).indices
+                               if target_idx in top2_indices:
+                                   num_correct_steps += 0.5 # Or whatever partial credit you want
+
+                    step_accuracy = (num_correct_steps / num_steps) if num_steps > 0 else 0.0
+                else:
+                    step_accuracy = 0.0 # Handle cases where the sequence length might be <= 1
+
                 topv, topi = output.topk(1, dim=1)
                 predicted_char = idx_to_char[topi[0, 0].item()]
                 target_char = sequence[0][-1]
@@ -347,6 +371,7 @@ def main():
                         "loss": loss, 
                         "avg_loss": current_loss / (args.plot_freq * 5), 
                         "correct": current_correct / (args.plot_freq * 5), 
+                        "step_accuracy": step_accuracy, # Log the calculated accuracy
                         "predicted_char": predicted_char, 
                         "target_char": target_char, 
                         "sequence": sequence,
@@ -358,7 +383,7 @@ def main():
                 # Print the progression of the entire sequence
                 progression = ''.join(valid_outputs)  # Convert list of characters to a string
                 progression2 = ''.join(valid_outputs_2)
-                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} avg: {(current_loss/(args.plot_freq*5)):.5f} Sequence: \n\033[91m{sequence}\033[0m\n \033[93m{progression}\033[0m {correct}\n \033[35m{progression2}\033[0m')
+                print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) {loss:.4f} avg: {(current_loss/(args.plot_freq*5)):.5f} StepAcc: {step_accuracy:.4f} Sequence: \n\033[91m{sequence}\033[0m\n \033[93m{progression}\033[0m {correct}\n \033[35m{progression2}\033[0m')
                 # print(f"Memory usage: {psutil.Process().memory_info().rss / 1024**2:.2f} MB")
                 all_losses.append(current_loss / (args.plot_freq * 5))
                 current_loss = 0
