@@ -41,9 +41,9 @@ echo its working
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='vary_pals'
+GROUP='two-back'
 
-NOTES="vary the size of the palindromes, maybe it helps with stability"
+NOTES="there was some sorta issue w padding?"
 
 # A gradient-based replacement to the recurrent connection. 
 # Is this metalearning?
@@ -58,9 +58,9 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-4
+LEARNING_RATE=1e-3
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1e4
+PLAST_CLIP=1e3
 RESIDUAL_CONNECTION=false
 
 # gradient clip
