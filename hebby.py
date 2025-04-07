@@ -367,7 +367,9 @@ def main():
                 # all_labels.clear()
                 # gc.collect()
                 # torch.cuda.empty_cache()
-            if iter % (args.print_freq * 5) == 0 and args.track:
+            # check if WAND_MODE="offline" in the environment
+            is_offline = os.getenv("WANDB_MODE") == "offline"
+            if iter % (args.print_freq * 5) == 0 and args.track and is_offline:
                 trigger_sync()
 
     except KeyboardInterrupt:

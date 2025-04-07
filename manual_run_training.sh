@@ -19,11 +19,11 @@ export WANDB_MODE=online
 # dfa - Direct Feedback Alignment: Updates weights based on a direct projection of the output error to each layer using fixed, random feedback connections. Enables more local and parallel weight updates compared to backpropagation.
 # plastic_candidate
 # static_plastic_candidate
-UPDATE_RULE='static_plastic_candidate'
+UPDATE_RULE='backprop'
 
 GROUP='whatever'
 
-NOTES="new pal length"
+NOTES="benchmark w backprop again."
 
 # A gradient-based replacement to the recurrent connection. 
 # Is this metalearning?
@@ -76,7 +76,7 @@ PRINT_FREQ=500
 PLOT_FREQ=500
 
 # true or false
-TRACK=false
+TRACK=true
 
 # roneneldan/tinystories
 # jbrazzy/baby_names
