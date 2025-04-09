@@ -92,7 +92,7 @@ def generate_palindrome_sample(fixed=True):
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset("palindrome_dataset")
     # Choose a random length for the first half of the palindrome
     if fixed:
-        half_length = 2
+        half_length = 4
     else:
         half_length = random.randint(1, 3)
         

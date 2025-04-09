@@ -41,9 +41,9 @@ echo its working
 # static_plastic_candidate
 UPDATE_RULE='static_plastic_candidate'
 
-GROUP='two-back'
+GROUP='two_back_static'
 
-NOTES="there was some sorta issue w padding?"
+NOTES="bigger but static palindromes"
 
 # A gradient-based replacement to the recurrent connection. 
 # Is this metalearning?
@@ -58,9 +58,9 @@ CLIP_WEIGHTS=0
 
 # Learning rate for the optimizer
 # Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-3
+LEARNING_RATE=1e-4
 PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1e3
+PLAST_CLIP=1e4
 RESIDUAL_CONNECTION=false
 
 # gradient clip
@@ -105,7 +105,7 @@ TRACK=true
 # palindrome_dataset
 # palindrome_dataset_vary_length
 # 4_resequence
-DATASET=palindrome_dataset_vary_length
+DATASET=palindrome_dataset
 BATCH_SIZE=32
 POS_ENCODING=128
 # python synth_datasets.py
