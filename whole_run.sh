@@ -1,139 +1,122 @@
 #!/bin/bash --login
-# The above line is a directive to run the script in the login shell.
+# ==============================================================================
+# whole_run.sh - SLURM submission script for running hebby.py
+# ==============================================================================
 
-#SBATCH --time=72:00:00   # walltime.  hours:minutes:seconds
-#SBATCH --ntasks=10   # number of processor cores (i.e. tasks)
-#SBATCH --nodes=1   # number of nodes
-#SBATCH --gpus=1
-#SBATCH --mem-per-cpu=8000M   # 8G memory per CPU core
-#SBATCH --mail-type=BEGIN
-#SBATCH --mail-type=END
-#SBATCH --mail-type=FAIL
-#SBATCH --job-name=memory_encoding
-#BATCH --output ./memory_encoding.out
-#SBATCH --mail-user jaden.lorenc@gmail.com
+# --- SLURM Directives ---
+#SBATCH --time=72:00:00        # Max walltime (HH:MM:SS)
+#SBATCH --ntasks=10            # Number of CPU cores requested
+#SBATCH --nodes=1              # Number of nodes requested
+#SBATCH --gpus=1               # Number of GPUs requested
+#SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
+#SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
+#SBATCH --job-name=hebby_train # Job name in queue
+#SBATCH --output=hebby_train_%j.out # Standard output file (%j = job ID)
+#SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
-# some helpful debugging options
-# set -e
-# set -u
-
-# Limit virtual memory to 30 GB (30*1024*1024 KB)
-# ulimit -v $((15 * 1024 * 1024))
-
-# nvidia-smi
-
-# LOAD MODULES, INSERT CODE, AND RUN YOUR PROGRAMS HERE
-# source /apps/miniconda3/latest/etc/profile.d/conda.sh
+# ======================== Environment Setup ===================================
+echo "--- Setting up Environment ---"
+# Load Conda environment
+# source /path/to/your/miniconda3/etc/profile.d/conda.sh # Adjust path if needed
 conda activate hebby
-export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python
-export WANDB_MODE=offline
+echo "Activated Conda environment: $CONDA_DEFAULT_ENV"
 
+# Configure W&B and HuggingFace for offline use (if needed)
+export WANDB_MODE=offline
+export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python # Ensure W&B uses the conda python
 export HF_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
+echo "WANDB_MODE set to: $WANDB_MODE"
+echo "HF Offline mode enabled."
 
-echo its working
-# run_training.sh
-# Shell script to run the training script with custom hyperparameters.
+# Optional: Check GPU status
+# nvidia-smi
 
-# How to update weights.
-# Options are:
-# backprop - Standard backpropagation: Computes gradients using chain rule and updates weights based on gradient descent. Relies on global error propagated from the output layer.
-# static_plastic_candidate
-UPDATE_RULE='static_plastic_candidate'
+echo "--- Environment Setup Complete ---"
 
-GROUP='two_back_static'
+# ======================== Experiment Identification ===========================
+# --- W&B Logging ---
+GROUP='last_one_vs_last_two'
+NOTES="testing last_one vs last_two input modes with backprop vs static_plastic_candidate"
 
-NOTES="bigger but static palindromes"
+# ======================== Core Training Parameters ============================
+# --- Training Strategy ---
+UPDATE_RULE='static_plastic_candidate' # backprop | static_plastic_candidate | etc.
+INPUT_MODE='last_two'         # Input features: last_one | last_two
 
-# A gradient-based replacement to the recurrent connection. 
-# Is this metalearning?
-SELF_GRAD=0
+# --- Learning Rates & Clipping ---
+LEARNING_RATE=1e-4            # Base learning rate
+PLAST_LEARNING_RATE=1e-10     # Plasticity LR (for specific rules)
+PLAST_CLIP=1e4                # Plasticity max value (for specific rules)
+GRAD_CLIP=0                   # Max gradient norm (0 = off)
 
-# Whether to normalize the weights at each update.
-# Doing so seems to prevent the runaway exploding weights effect.
-# true or false
-NORMALIZE=false
+# --- Hebbian / Plasticity Specifics (Often ignored by backprop) ---
+IMPRINT_RATE=0.3              # Hebbian imprint strength
+FORGET_RATE=0.3               # Weight decay/forgetting factor
+SELF_GRAD=0                   # Experimental recurrent replacement
 
-CLIP_WEIGHTS=0
+# --- Regularization & Stability ---
+NORMALIZE=false               # Normalize weights post-update (true/false)
+CLIP_WEIGHTS=0                # Max absolute weight value (0 = off)
 
-# Learning rate for the optimizer
-# Lower values mean slower but more stable training, higher values mean faster but potentially unstable training.
-LEARNING_RATE=1e-4
-PLAST_LEARNING_RATE=1e-10
-PLAST_CLIP=1e4
-RESIDUAL_CONNECTION=false
+# ======================== Model Architecture ==================================
+HIDDEN_SIZE=256               # RNN hidden state units
+NUM_LAYERS=3                  # Number of RNN layers
+RESIDUAL_CONNECTION=false     # Use skip connections (true/false)
+POS_ENCODING=128              # Positional encoding dimension (0 = off)
 
-# gradient clip
-GRAD_CLIP=0
+# ======================== Data & Training Loop ================================
+# --- Dataset ---
+DATASET='palindrome_dataset'  # palindrome_dataset | roneneldan/tinystories | etc.
+BATCH_SIZE=32                 # Sequences per batch
 
-# Imprint rate for Hebbian updates
-# Affects the strength of imprinting in Hebbian learning. Set to 0 for no imprinting.
-IMPRINT_RATE=0.3
+# --- Loop Control & Logging ---
+N_ITERS=10000000000000        # Total training steps (iterations) - effectively infinite
+PRINT_FREQ=2500                # Console print basic avg loss/acc frequency
+PLOT_FREQ=25000                # WandB log freq + Detailed console print freq
+SAVE_FREQUENCY=10000000       # Save model frequency (iters, if implemented)
 
-# Controls the gradient growth, preventing explosion.
-FORGET_RATE=0.3
+# ======================== Execution ===========================================
+echo "--- Starting Training ---"
+echo "  Group: $GROUP | Rule: $UPDATE_RULE | Input: $INPUT_MODE | LR: $LEARNING_RATE"
+echo "  Dataset: $DATASET | Batch: $BATCH_SIZE | Hidden: $HIDDEN_SIZE | PosEnc: $POS_ENCODING"
 
-# Size of hidden layers in RNN
-# Larger sizes create a more complex model but require more computational resources.
-HIDDEN_SIZE=256
+# Run the python script with unbuffered output (-u)
+python -u hebby.py \
+    --update_rule $UPDATE_RULE \
+    --input_mode $INPUT_MODE \
+    --learning_rate $LEARNING_RATE \
+    --plast_learning_rate $PLAST_LEARNING_RATE \
+    --plast_clip $PLAST_CLIP \
+    --grad_clip $GRAD_CLIP \
+    --imprint_rate $IMPRINT_RATE \
+    --forget_rate $FORGET_RATE \
+    --self_grad $SELF_GRAD \
+    --normalize $NORMALIZE \
+    --clip_weights $CLIP_WEIGHTS \
+    --hidden_size $HIDDEN_SIZE \
+    --num_layers $NUM_LAYERS \
+    --residual_connection $RESIDUAL_CONNECTION \
+    --positional_encoding_dim $POS_ENCODING \
+    --dataset $DATASET \
+    --batch_size $BATCH_SIZE \
+    --n_iters $N_ITERS \
+    --print_freq $PRINT_FREQ \
+    --plot_freq $PLOT_FREQ \
+    --save_frequency $SAVE_FREQUENCY \
+    --track true \
+    --group "$GROUP" \
+    --notes "$NOTES"
 
-# Number of layers in RNN
-NUM_LAYERS=3
+echo "--- Training Finished ---"
 
-# Frequency of saving and displaying model weights
-# Lower values save more frequently but may slow down training.
-SAVE_FREQUENCY=10000000
+# ======================== Post-Run (Optional) =================================
+# Generate memory profile plot if mprof was used during the python run
+# mprof plot --output=memory_profile_${SLURM_JOB_ID}.png
 
-# Number of training iterations, like 1000000000
-N_ITERS=10000000000000
+# Clean up model data directory
+echo "Cleaning up model data..."
+rm -f model_data/* # Use -f to force remove without prompts
+echo "Cleanup complete."
 
-# Frequency of printing training progress
-# Lower values provide more frequent updates.
-PRINT_FREQ=5000
-
-# Frequency of plotting training loss
-# Lower values plot more frequently.
-PLOT_FREQ=500
-
-# true or false
-TRACK=true
-
-# roneneldan/tinystories
-# jbrazzy/baby_names
-# brucewlee1/htest-palindrome
-# long_range_memory_dataset
-# palindrome_dataset
-# palindrome_dataset_vary_length
-# 4_resequence
-DATASET=palindrome_dataset
-BATCH_SIZE=32
-POS_ENCODING=128
-# python synth_datasets.py
-# Running the training script with the specified hyperparameters
-python -u hebby.py --learning_rate $LEARNING_RATE \
-                       --group $GROUP \
-                       --imprint_rate $IMPRINT_RATE \
-                       --forget_rate $FORGET_RATE \
-                       --plast_learning_rate $PLAST_LEARNING_RATE \
-                       --plast_clip $PLAST_CLIP \
-                       --save_frequency $SAVE_FREQUENCY \
-                       --hidden_size $HIDDEN_SIZE \
-                       --num_layers $NUM_LAYERS \
-                       --n_iters $N_ITERS \
-                       --print_freq $PRINT_FREQ \
-                       --plot_freq $PLOT_FREQ  \
-                       --update_rule $UPDATE_RULE \
-                       --normalize $NORMALIZE \
-                       --clip_weights $CLIP_WEIGHTS \
-                       --track $TRACK \
-                       --dataset $DATASET \
-                       --batch_size $BATCH_SIZE \
-                       --residual_connection $RESIDUAL_CONNECTION \
-                       --grad_clip $GRAD_CLIP \
-                       --notes "$NOTES" \
-                       --positional_encoding_dim $POS_ENCODING \
-                       --self_grad $SELF_GRAD
-
-# mprof plot --output=memory_profile.png
-
-rm model_data/*
+# ==============================================================================

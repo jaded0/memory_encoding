@@ -16,7 +16,7 @@ dataset_keys = {
 }
 
 # Load dataset
-def load_and_preprocess_data(dataset_name, batch_size=4):
+def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True):
     if ("palindrome_dataset" in dataset_name) or ("long_range_memory_dataset" in dataset_name) or ("resequence" in dataset_name):
         dataset = load_from_disk(dataset_name)
         print(f"loaded dataset {dataset_name}")
@@ -59,6 +59,7 @@ def load_and_preprocess_data(dataset_name, batch_size=4):
         batch_size=batch_size, 
         shuffle=True, 
         collate_fn=collate_fn,
+        drop_last=drop_last,
         num_workers=10,
         pin_memory=True
     )
