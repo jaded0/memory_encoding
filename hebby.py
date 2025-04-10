@@ -531,7 +531,7 @@ def main():
             # ==============================================================
             # Trigger sync less often than WandB logging frequency (plot_freq)
             is_offline = os.getenv("WANDB_MODE") == "offline"
-            if args.plot_freq > 0 and iter % (args.plot_freq * 10) == 0 and args.track and is_offline:
+            if args.plot_freq > 0 and iter % (args.plot_freq) == 0 and args.track and is_offline:
                 print("Triggering W&B sync...")
                 trigger_sync()
 

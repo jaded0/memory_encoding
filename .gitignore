@@ -169,5 +169,6 @@ palindrome_dataset/
 palindrome_dataset_vary_length
 jobs/
 slurm*
+*.out
 response.json
 .aider*

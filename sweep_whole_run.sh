@@ -5,12 +5,12 @@
 # ==============================================================================
 
 # --- SLURM Directives (MUST BE NEAR THE TOP) ---
-#SBATCH --time=2:00:00        # Max walltime per task
+#SBATCH --time=72:00:00        # Max walltime per task
 #SBATCH --nodes=1              # Request 1 node per task
-#SBATCH --ntasks=1             # Request 1 task per job array instance
+#SBATCH --ntasks=10             # Request 1 task per job array instance
 #SBATCH --cpus-per-task=1      # Explicitly request 1 CPU core for that task
 #SBATCH --gpus=1               # Request 1 GPU per task
-#SBATCH --mem=8G               # Request 8 Gigabytes total memory FOR THE TASK
+#SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
 #SBATCH --job-name=hebby_sweep # Base job name
 #SBATCH --array=0-23%10        # CALCULATE AND UPDATE THIS RANGE (see below) - Example: Run max 10 of 24 jobs
@@ -24,7 +24,7 @@ echo "--- Preparing Sweep Parameters ---"
 declare -a update_rules=('backprop' 'static_plastic_candidate')
 declare -a input_modes=('last_one' 'last_two')
 declare -a learning_rates=('1e-3' '1e-4' '1e-5')
-declare -a plast_clips=('1e3' '1e4')
+declare -a plast_clips=('1e3' '1e4' '1e5')
 
 # --- Calculate Total Number of Jobs ---
 num_update_rules=${#update_rules[@]}

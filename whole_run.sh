@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # --- SLURM Directives ---
-#SBATCH --time=72:00:00        # Max walltime (HH:MM:SS)
+#SBATCH --time=2:00:00        # Max walltime (HH:MM:SS)
 #SBATCH --ntasks=10            # Number of CPU cores requested
 #SBATCH --nodes=1              # Number of nodes requested
 #SBATCH --gpus=1               # Number of GPUs requested
@@ -72,8 +72,8 @@ BATCH_SIZE=32                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=10000000000000        # Total training steps (iterations) - effectively infinite
-PRINT_FREQ=2500                # Console print basic avg loss/acc frequency
-PLOT_FREQ=25000                # WandB log freq + Detailed console print freq
+PRINT_FREQ=500                # Console print basic avg loss/acc frequency
+PLOT_FREQ=5000                # WandB log freq + Detailed console print freq
 SAVE_FREQUENCY=10000000       # Save model frequency (iters, if implemented)
 
 # ======================== Execution ===========================================
