@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # --- W&B Tracking ---
-export WANDB_MODE=online # online | offline | disabled
+export WANDB_MODE=disabled # online | offline | disabled
 
 # --- Experiment Identification (W&B) ---
 GROUP='whatever'
@@ -12,8 +12,8 @@ NOTES="a better dataset, hopefully, fixed middle char and eos char."
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
-UPDATE_RULE='static_plastic_candidate'       # backprop | static_plastic_candidate | dfa | etc.
-INPUT_MODE='last_two'        # last_one | last_two
+UPDATE_RULE='backprop'       # backprop | static_plastic_candidate | dfa | etc.
+INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-3           # Base learning rate
@@ -38,7 +38,7 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length
+DATASET='2_resequence' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length
 BATCH_SIZE=32                 # Sequences per batch
 
 # --- Loop Control & Logging ---
