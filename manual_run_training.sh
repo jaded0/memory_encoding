@@ -7,8 +7,8 @@
 export WANDB_MODE=online # online | offline | disabled
 
 # --- Experiment Identification (W&B) ---
-GROUP='PalindromeBenchmark_LastTwo'
-NOTES="Testing backprop with last_two input."
+GROUP='whatever'
+NOTES="a better dataset, hopefully, fixed middle char and eos char."
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
@@ -19,7 +19,7 @@ INPUT_MODE='last_two'        # last_one | last_two
 LEARNING_RATE=1e-3           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
 PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
-GRAD_CLIP=0               # Max gradient norm
+GRAD_CLIP=0                  # Max gradient norm
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
 IMPRINT_RATE=0.3             # Hebbian imprint strength
@@ -38,13 +38,13 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='palindrome_dataset' # palindrome_dataset | roneneldan/tinystories | etc.
-BATCH_SIZE=8                 # Sequences per batch
+DATASET='palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length
+BATCH_SIZE=32                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=1000000000           # Total training steps (iterations)
 PRINT_FREQ=2500                # Console print basic avg loss/acc frequency
-PLOT_FREQ=25000                # WandB log freq + Detailed console print freq
+PLOT_FREQ=2500                # WandB log freq + Detailed console print freq
 SAVE_FREQUENCY=10000000      # Save model frequency (iters, if implemented)
 
 # ======================== Execution ===========================================

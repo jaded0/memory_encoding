@@ -86,23 +86,60 @@ from utils import initialize_charset
 
 
 # palindromes
-
 def generate_palindrome_sample(fixed=True):
-    start = ""
-    charset, char_to_idx, idx_to_char, n_characters = initialize_charset("palindrome_dataset")
-    # Choose a random length for the first half of the palindrome
+    """
+    Generates a palindrome sample.
+
+    Args:
+        fixed (bool): If True, generates a fixed-length palindrome (half_length=4)
+                      using the original method.
+                      If False, generates a variable-length palindrome with:
+                        - half_length between 1 and 3.
+                        - middle character fixed to '.'.
+                        - allowed characters for halves exclude '.' and ' '.
+                        - a final EOS character ' '.
+
+    Returns:
+        str: The generated palindrome sample.
+    """
+    # Assume initialize_charset returns: charset_string, char_to_idx, idx_to_char, n_characters
+    # We only need the charset_string here.
+    charset, _, _, _ = initialize_charset("palindrome_dataset")
+    start = "" # Seems unused in the original, kept for consistency
+    half_length = 4
+
     if fixed:
-        half_length = 4
+        # --- Original Fixed-Length Logic ---
+        # Build the left half using the full original charset
+        left_half = ''.join(random.choice(charset) for _ in range(half_length))
+        # Original middle character logic (random)
+        middle = random.choice(charset)
+        # Return the fixed palindrome without EOS
+        return start + left_half + middle + left_half[::-1]
+
     else:
-        half_length = random.randint(1, 3)
-        
-    # Build the left half by randomly selecting characters from the charset
-    left_half = ''.join(random.choice(charset) for _ in range(half_length))
-    # Optionally, add a middle character for odd-length palindromes
-    # middle = random.choice(charset) if random.choice([True, False]) else ''
-    middle = random.choice(charset)
-    # Mirror the left half to form a palindrome
-    return start + left_half + middle + left_half[::-1]
+        # --- New Variable-Length Logic ---
+        middle_char = '.'
+        eos_char = ' '
+
+        # Define characters allowed for the palindrome halves (exclude middle and EOS)
+        # Convert charset string to a list for easy filtering
+        allowed_chars_for_half = [ch for ch in charset if ch != middle_char and ch != eos_char]
+
+        if not allowed_chars_for_half:
+            raise ValueError(f"Charset '{charset}' becomes empty after removing middle ('{middle_char}') and EOS ('{eos_char}') characters.")
+
+        # Choose a random length for the first half
+        r_half_length = random.randint(1, half_length)
+
+        # Build the left half using only the allowed characters
+        left_half = ''.join(random.choice(allowed_chars_for_half) for _ in range(r_half_length))
+
+        # Middle character is fixed
+        middle = middle_char
+
+        # Return the variable-length palindrome with the fixed middle and EOS char
+        return start + left_half + middle + left_half[::-1] + (eos_char * ((half_length - r_half_length) * 2))
 
 def generate_palindrome_dataset(num_samples, split, fixed=True):
     samples = [generate_palindrome_sample(fixed=fixed) for _ in range(num_samples)]
