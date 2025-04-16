@@ -4,21 +4,21 @@
 # ==============================================================================
 
 # --- W&B Tracking ---
-export WANDB_MODE=disabled # online | offline | disabled
+export WANDB_MODE=online # online | offline | disabled
 
 # --- Experiment Identification (W&B) ---
-GROUP='whatever'
-NOTES="a better dataset, hopefully, fixed middle char and eos char."
+GROUP='finding_bug'
+NOTES="back to og config"
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
-UPDATE_RULE='backprop'       # backprop | static_plastic_candidate | dfa | etc.
-INPUT_MODE='last_one'        # last_one | last_two
+UPDATE_RULE='static_plastic_candidate'       # backprop | static_plastic_candidate | dfa | etc.
+INPUT_MODE='last_two'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-3           # Base learning rate
+LEARNING_RATE=1e-4           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
+PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient norm
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
@@ -38,7 +38,7 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='2_resequence' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length
+DATASET='palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence
 BATCH_SIZE=32                 # Sequences per batch
 
 # --- Loop Control & Logging ---

@@ -21,7 +21,7 @@
 # ======================== Parameter Definitions & Calculation ================
 echo "--- Preparing Sweep Parameters ---"
 # --- Define Hyperparameter Options ---
-declare -a update_rules=('backprop' 'static_plastic_candidate')
+declare -a update_rules=('static_plastic_candidate')
 declare -a input_modes=('last_one' 'last_two')
 declare -a learning_rates=('1e-3' '1e-4' '1e-5')
 declare -a plast_clips=('1e3' '1e4' '1e5')
@@ -74,7 +74,7 @@ LEARNING_RATE=${learning_rates[$idx_lr]}
 PLAST_CLIP=${plast_clips[$idx_pc]}
 
 # ======================== Experiment Identification (Dynamic) =================
-GROUP='Sweep_UR-IM-LR-PC'
+GROUP='good_sweep_w_vary'
 RUN_NOTES="Rule=${UPDATE_RULE}_Mode=${INPUT_MODE}_LR=${LEARNING_RATE}_PC=${PLAST_CLIP}_TaskID=${SLURM_ARRAY_TASK_ID}"
 
 # ======================== Fixed Parameters (Not Swept) ========================
@@ -89,7 +89,7 @@ HIDDEN_SIZE=256
 NUM_LAYERS=3
 RESIDUAL_CONNECTION=false
 POS_ENCODING=128
-DATASET='palindrome_dataset'
+DATASET='palindrome_dataset_vary_length'
 BATCH_SIZE=32
 N_ITERS=10000000000000
 PRINT_FREQ=2500
