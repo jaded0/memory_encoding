@@ -24,7 +24,10 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
     rnn.zero_grad()
+    rnn.zero_grad() # Ensure gradients are zeroed before the forward pass
+
     loss_total = 0
+    num_steps = 0 # Keep track of the number of steps for averaging
 
     all_outputs = []
     all_labels = []
@@ -65,26 +68,28 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
 
         output, hidden = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[:, i+1, :]
-        loss_total += criterion(output, final_char)
+        # criterion with reduction='mean' gives the average loss for this step's batch
+        step_loss = criterion(output, final_char)
+        loss_total += step_loss
+        num_steps += 1
 
         if log_outputs:
             all_outputs.append(output[0]) # Note: Only logs the first item in the batch
             all_labels.append(final_char[0]) # Note: Only logs the first item in the batch
 
-    loss_total = loss_total.mean() # Average loss across batch and sequence length
-    loss_total.backward()
-    # optimizer.step() # Using manual update below
-    for p in rnn.parameters():
-        if p.grad is not None:
-            # Apply gradient clipping before adding
-            torch.nn.utils.clip_grad_norm_(p, config['grad_clip']) # Clip individual param gradients
-            p.data.add_(p.grad.data, alpha=-config['learning_rate'])
+    if num_steps > 0:
+        loss_avg_per_step = loss_total / num_steps # Calculate the average loss over all steps
+        loss_avg_per_step.backward() # Compute gradients based on the average loss
 
-    loss_avg = loss_total.item() # Already averaged
-    # The original code returned loss per character, let's keep consistency if needed, though averaged loss is more standard
-    # loss_sum = loss_total.mean().item() / onehot_line_tensor.shape[1] # This seems redundant if loss is already averaged
+        # Apply gradient clipping to all parameters *before* the optimizer step
+        torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
 
-    return output, loss_avg, 0, 0, all_outputs, all_labels # Return averaged loss
+        optimizer.step() # Update parameters using the optimizer
+        loss_avg_item = loss_avg_per_step.item()
+    else:
+        loss_avg_item = 0.0 # Handle case with no steps
+
+    return output, loss_avg_item, 0, 0, all_outputs, all_labels # Return averaged loss item
 
 def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs=False):
     batch_size = onehot_line_tensor.shape[0]
