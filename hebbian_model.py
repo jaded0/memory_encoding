@@ -154,7 +154,9 @@ class HebbianLinear(nn.Linear):
                 update = update * (learning_rate * self.plasticity.data) * plastic_mask
                 self.t += 1
                 # self.weight.data += update
-                update[self.mask.unsqueeze(0).expand_as(update)].clamp_(-grad_clip, grad_clip)
+                # Only apply clamp if grad_clip is positive
+                if grad_clip > 0:
+                    update[self.mask.unsqueeze(0).expand_as(update)].clamp_(-grad_clip, grad_clip)
                 self.candidate_weights.data += update
                 # print(self.weight.norm(p=2))
         else:

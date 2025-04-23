@@ -81,8 +81,9 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
         loss_avg_per_step = loss_total / num_steps # Calculate the average loss over all steps
         loss_avg_per_step.backward() # Compute gradients based on the average loss
 
-        # Apply gradient clipping to all parameters *before* the optimizer step
-        torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
+        # Apply gradient clipping only if grad_clip is positive
+        if config['grad_clip'] > 0:
+            torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
 
         optimizer.step() # Update parameters using the optimizer
         loss_avg_item = loss_avg_per_step.item()
