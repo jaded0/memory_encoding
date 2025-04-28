@@ -84,6 +84,8 @@ class HebbianLinear(nn.Linear):
         # Apply the mask
         self.weight[self.mask] = 0
         self.candidate_weights[batch_mask] = 0
+        # Reset the time counter at the start of the sequence
+        self.t.fill_(0.0)
 
     def forward(self, input):
         batch_size = input.size(0)
