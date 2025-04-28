@@ -5,7 +5,7 @@
 # ==============================================================================
 
 # --- SLURM Directives (MUST BE NEAR THE TOP) ---
-#SBATCH --time=72:00:00        # Max walltime per task
+#SBATCH --time=4:00:00        # Max walltime per task
 #SBATCH --nodes=1              # Request 1 node per task
 #SBATCH --ntasks=10             # Request 1 task per job array instance
 #SBATCH --cpus-per-task=1      # Explicitly request 1 CPU core for that task
@@ -13,7 +13,7 @@
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
 #SBATCH --job-name=hebby_sweep # Base job name
-#SBATCH --array=0-23%10        # CALCULATE AND UPDATE THIS RANGE (see below) - Example: Run max 10 of 24 jobs
+#SBATCH --array=0-83%10        # CALCULATE AND UPDATE THIS RANGE (see below) - Example: Run max 10 of 24 jobs
 #SBATCH --output=slurm_logs/hebby_sweep_%A_%a.out # Ensure slurm_logs directory exists! %A=jobID, %a=taskID
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
@@ -22,9 +22,9 @@
 echo "--- Preparing Sweep Parameters ---"
 # --- Define Hyperparameter Options ---
 declare -a update_rules=('static_plastic_candidate')
-declare -a input_modes=('last_one' 'last_two')
+declare -a input_modes=('last_two')
 declare -a learning_rates=('1e-3' '1e-4' '1e-5')
-declare -a plast_clips=('1e3' '1e4' '1e5')
+declare -a plast_clips=('1e2' '1e3' '1e4' '1e5')
 declare -a forget_rates=('0.3' '0.1' '0.01' '0.5' '0.7' '0.9' '0.99') # Added forget_rate
 
 # --- Calculate Total Number of Jobs ---
@@ -79,7 +79,7 @@ PLAST_CLIP=${plast_clips[$idx_pc]}
 FORGET_RATE=${forget_rates[$idx_fr]} # Added forget_rate selection
 
 # ======================== Experiment Identification (Dynamic) =================
-GROUP='good_sweep_w_vary'
+GROUP='mega_sweep'
 RUN_NOTES="Rule=${UPDATE_RULE}_Mode=${INPUT_MODE}_LR=${LEARNING_RATE}_PC=${PLAST_CLIP}_FR=${FORGET_RATE}_TaskID=${SLURM_ARRAY_TASK_ID}" # Added FR to notes
 
 # ======================== Fixed Parameters (Not Swept) ========================
@@ -95,10 +95,10 @@ NUM_LAYERS=3
 RESIDUAL_CONNECTION=false
 POS_ENCODING=128
 DATASET='palindrome_dataset_vary_length'
-BATCH_SIZE=32
+BATCH_SIZE=4
 N_ITERS=10000000000000
 PRINT_FREQ=2500
-PLOT_FREQ=25000
+PLOT_FREQ=2500
 SAVE_FREQUENCY=10000000
 
 # ======================== Execution ===========================================

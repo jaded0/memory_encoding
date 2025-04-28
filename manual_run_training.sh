@@ -18,7 +18,7 @@ INPUT_MODE='last_two'        # last_one | last_two
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-4           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
+PLAST_CLIP=1e5               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient norm
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
@@ -39,7 +39,7 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
 DATASET='palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence
-BATCH_SIZE=32                 # Sequences per batch
+BATCH_SIZE=4                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=1000000000           # Total training steps (iterations)
