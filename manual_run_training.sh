@@ -7,13 +7,13 @@
 export WANDB_MODE=online # online | offline | disabled
 
 # --- Experiment Identification (W&B) ---
-GROUP='finding_bug'
+GROUP='wat'
 NOTES="back to og config"
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
 UPDATE_RULE='static_plastic_candidate'       # backprop | static_plastic_candidate | dfa | etc.
-INPUT_MODE='last_two'        # last_one | last_two
+INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-4           # Base learning rate
@@ -38,7 +38,7 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence
+DATASET='long_range_memory_dataset' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence
 BATCH_SIZE=4                 # Sequences per batch
 
 # --- Loop Control & Logging ---

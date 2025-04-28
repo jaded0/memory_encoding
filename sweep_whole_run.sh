@@ -5,7 +5,7 @@
 # ==============================================================================
 
 # --- SLURM Directives (MUST BE NEAR THE TOP) ---
-#SBATCH --time=4:00:00        # Max walltime per task
+#SBATCH --time=1:00:00        # Max walltime per task
 #SBATCH --nodes=1              # Request 1 node per task
 #SBATCH --ntasks=10             # Request 1 task per job array instance
 #SBATCH --cpus-per-task=1      # Explicitly request 1 CPU core for that task
@@ -13,7 +13,7 @@
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
 #SBATCH --job-name=hebby_sweep # Base job name
-#SBATCH --array=0-83%10        # CALCULATE AND UPDATE THIS RANGE (see below) - Example: Run max 10 of 24 jobs
+#SBATCH --array=0-503%10        # CALCULATE AND UPDATE THIS RANGE (see below) - Example: Run max 10 of 24 jobs
 #SBATCH --output=slurm_logs/hebby_sweep_%A_%a.out # Ensure slurm_logs directory exists! %A=jobID, %a=taskID
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
@@ -83,7 +83,7 @@ FORGET_RATE=${forget_rates[$idx_fr]}
 GRAD_CLIP=${grad_clips[$idx_gc]} # Added grad_clip selection
 
 # ======================== Experiment Identification (Dynamic) =================
-GROUP='mega_sweep'
+GROUP='mega_clip_sweep'
 RUN_NOTES="Rule=${UPDATE_RULE}_Mode=${INPUT_MODE}_LR=${LEARNING_RATE}_PC=${PLAST_CLIP}_FR=${FORGET_RATE}_GC=${GRAD_CLIP}_TaskID=${SLURM_ARRAY_TASK_ID}" # Added GC to notes
 
 # ======================== Fixed Parameters (Not Swept) ========================
