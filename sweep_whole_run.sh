@@ -25,15 +25,17 @@ declare -a update_rules=('static_plastic_candidate')
 declare -a input_modes=('last_two')
 declare -a learning_rates=('1e-3' '1e-4' '1e-5')
 declare -a plast_clips=('1e2' '1e3' '1e4' '1e5')
-declare -a forget_rates=('0.3' '0.1' '0.01' '0.5' '0.7' '0.9' '0.99') # Added forget_rate
+declare -a forget_rates=('0.3' '0.1' '0.01' '0.5' '0.7' '0.9' '0.99')
+declare -a grad_clips=('0' '0.01' '0.1' '1' '10' '0.5') # Added grad_clip
 
 # --- Calculate Total Number of Jobs ---
 num_update_rules=${#update_rules[@]}
 num_input_modes=${#input_modes[@]}
 num_learning_rates=${#learning_rates[@]}
 num_plast_clips=${#plast_clips[@]}
-num_forget_rates=${#forget_rates[@]} # Added forget_rate count
-total_jobs=$((num_update_rules * num_input_modes * num_learning_rates * num_plast_clips * num_forget_rates)) # Added forget_rate to calculation
+num_forget_rates=${#forget_rates[@]}
+num_grad_clips=${#grad_clips[@]} # Added grad_clip count
+total_jobs=$((num_update_rules * num_input_modes * num_learning_rates * num_plast_clips * num_forget_rates * num_grad_clips)) # Added grad_clip to calculation
 last_job_index=$((total_jobs - 1)) # SLURM array indices are 0-based
 
 # *** IMPORTANT: Update the --array directive above with the calculated last_job_index ***
@@ -64,27 +66,29 @@ echo "--- Environment Setup Complete ---"
 
 # ======================== Parameter Calculation for this Task =================
 # Map the SLURM_ARRAY_TASK_ID to specific hyperparameter indices
-# Order: plast_clip -> learning_rate -> input_mode -> forget_rate -> update_rule
+# Order: plast_clip -> learning_rate -> input_mode -> forget_rate -> grad_clip -> update_rule
 idx_pc=$((SLURM_ARRAY_TASK_ID % num_plast_clips))
 idx_lr=$(((SLURM_ARRAY_TASK_ID / num_plast_clips) % num_learning_rates))
 idx_im=$(((SLURM_ARRAY_TASK_ID / (num_plast_clips * num_learning_rates)) % num_input_modes))
-idx_fr=$(((SLURM_ARRAY_TASK_ID / (num_plast_clips * num_learning_rates * num_input_modes)) % num_forget_rates)) # Added forget_rate index
-idx_ur=$(((SLURM_ARRAY_TASK_ID / (num_plast_clips * num_learning_rates * num_input_modes * num_forget_rates)) % num_update_rules)) # Adjusted update_rule index
+idx_fr=$(((SLURM_ARRAY_TASK_ID / (num_plast_clips * num_learning_rates * num_input_modes)) % num_forget_rates))
+idx_gc=$(((SLURM_ARRAY_TASK_ID / (num_plast_clips * num_learning_rates * num_input_modes * num_forget_rates)) % num_grad_clips)) # Added grad_clip index
+idx_ur=$(((SLURM_ARRAY_TASK_ID / (num_plast_clips * num_learning_rates * num_input_modes * num_forget_rates * num_grad_clips)) % num_update_rules)) # Adjusted update_rule index
 
 # Get the actual parameter values
 UPDATE_RULE=${update_rules[$idx_ur]}
 INPUT_MODE=${input_modes[$idx_im]}
 LEARNING_RATE=${learning_rates[$idx_lr]}
 PLAST_CLIP=${plast_clips[$idx_pc]}
-FORGET_RATE=${forget_rates[$idx_fr]} # Added forget_rate selection
+FORGET_RATE=${forget_rates[$idx_fr]}
+GRAD_CLIP=${grad_clips[$idx_gc]} # Added grad_clip selection
 
 # ======================== Experiment Identification (Dynamic) =================
 GROUP='mega_sweep'
-RUN_NOTES="Rule=${UPDATE_RULE}_Mode=${INPUT_MODE}_LR=${LEARNING_RATE}_PC=${PLAST_CLIP}_FR=${FORGET_RATE}_TaskID=${SLURM_ARRAY_TASK_ID}" # Added FR to notes
+RUN_NOTES="Rule=${UPDATE_RULE}_Mode=${INPUT_MODE}_LR=${LEARNING_RATE}_PC=${PLAST_CLIP}_FR=${FORGET_RATE}_GC=${GRAD_CLIP}_TaskID=${SLURM_ARRAY_TASK_ID}" # Added GC to notes
 
 # ======================== Fixed Parameters (Not Swept) ========================
 PLAST_LEARNING_RATE=1e-10
-GRAD_CLIP=0
+# GRAD_CLIP=0 # Removed fixed grad_clip
 IMPRINT_RATE=0.3
 # FORGET_RATE=0.3 # Removed fixed forget_rate
 SELF_GRAD=0
@@ -108,7 +112,8 @@ echo "    Update Rule: $UPDATE_RULE"
 echo "    Input Mode: $INPUT_MODE"
 echo "    Learning Rate: $LEARNING_RATE"
 echo "    Plast Clip: $PLAST_CLIP"
-echo "    Forget Rate: $FORGET_RATE" # Added forget rate logging
+echo "    Forget Rate: $FORGET_RATE"
+echo "    Grad Clip: $GRAD_CLIP" # Added grad clip logging
 echo "  W&B Group: $GROUP"
 echo "  W&B Notes/Run Name: $RUN_NOTES"
 echo "  Output File: slurm_logs/hebby_sweep_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.out"
