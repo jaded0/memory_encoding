@@ -16,14 +16,14 @@ UPDATE_RULE='static_plastic_candidate'       # backprop | static_plastic_candida
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-4           # Base learning rate
+LEARNING_RATE=1e-5           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e5               # Plasticity max value (for specific rules)
+PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient norm
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
 IMPRINT_RATE=0.3             # Hebbian imprint strength
-FORGET_RATE=0.3              # Weight decay/forgetting factor
+FORGET_RATE=0.01              # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
 
 # --- Regularization & Stability ---
@@ -38,7 +38,7 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='long_range_memory_dataset' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence
+DATASET='palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
 BATCH_SIZE=4                 # Sequences per batch
 
 # --- Loop Control & Logging ---
