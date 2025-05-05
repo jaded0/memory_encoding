@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # --- SLURM Directives ---
-#SBATCH --time=2:00:00        # Max walltime (HH:MM:SS)
+#SBATCH --time=72:00:00        # Max walltime (HH:MM:SS)
 #SBATCH --ntasks=10            # Number of CPU cores requested
 #SBATCH --nodes=1              # Number of nodes requested
 #SBATCH --gpus=1               # Number of GPUs requested
@@ -36,45 +36,46 @@ echo "--- Environment Setup Complete ---"
 
 # ======================== Experiment Identification ===========================
 # --- W&B Logging ---
-GROUP='last_one_vs_last_two'
-NOTES="testing last_one vs last_two input modes with backprop vs static_plastic_candidate"
+# --- Experiment Identification (W&B) ---
+GROUP='check_phenomenon'
+NOTES="very very small, otherwise identical to chocolate-bee."
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
-UPDATE_RULE='static_plastic_candidate' # backprop | static_plastic_candidate | etc.
-INPUT_MODE='last_two'         # Input features: last_one | last_two
+UPDATE_RULE='static_plastic_candidate'       # backprop | static_plastic_candidate | dfa | etc.
+INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-4            # Base learning rate
-PLAST_LEARNING_RATE=1e-10     # Plasticity LR (for specific rules)
-PLAST_CLIP=1e4                # Plasticity max value (for specific rules)
-GRAD_CLIP=0                   # Max gradient norm (0 = off)
+LEARNING_RATE=1e-5           # Base learning rate
+PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
+PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
+GRAD_CLIP=0                  # Max gradient norm
 
-# --- Hebbian / Plasticity Specifics (Often ignored by backprop) ---
-IMPRINT_RATE=0.3              # Hebbian imprint strength
-FORGET_RATE=0.3               # Weight decay/forgetting factor
-SELF_GRAD=0                   # Experimental recurrent replacement
+# --- Hebbian / Plasticity Specifics (ignored by backprop) ---
+IMPRINT_RATE=0.3             # Hebbian imprint strength
+FORGET_RATE=0.01              # Weight decay/forgetting factor
+SELF_GRAD=0                  # Experimental recurrent replacement
 
 # --- Regularization & Stability ---
-NORMALIZE=false               # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=0                # Max absolute weight value (0 = off)
+NORMALIZE=false              # Normalize weights post-update (true/false)
+CLIP_WEIGHTS=0               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
-HIDDEN_SIZE=256               # RNN hidden state units
-NUM_LAYERS=3                  # Number of RNN layers
-RESIDUAL_CONNECTION=false     # Use skip connections (true/false)
-POS_ENCODING=128              # Positional encoding dimension (0 = off)
+HIDDEN_SIZE=128              # RNN hidden state units
+NUM_LAYERS=3                 # Number of RNN layers
+RESIDUAL_CONNECTION=false    # Use skip connections (true/false)
+POS_ENCODING=64             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='palindrome_dataset'  # palindrome_dataset | roneneldan/tinystories | etc.
-BATCH_SIZE=32                 # Sequences per batch
+DATASET='palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
+BATCH_SIZE=4                 # Sequences per batch
 
 # --- Loop Control & Logging ---
-N_ITERS=10000000000000        # Total training steps (iterations) - effectively infinite
-PRINT_FREQ=500                # Console print basic avg loss/acc frequency
-PLOT_FREQ=5000                # WandB log freq + Detailed console print freq
-SAVE_FREQUENCY=10000000       # Save model frequency (iters, if implemented)
+N_ITERS=1000000000           # Total training steps (iterations)
+PRINT_FREQ=2500                # Console print basic avg loss/acc frequency
+PLOT_FREQ=2500                # WandB log freq + Detailed console print freq
+SAVE_FREQUENCY=10000000      # Save model frequency (iters, if implemented)
 
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"

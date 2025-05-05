@@ -539,7 +539,10 @@ def main():
             is_offline = os.getenv("WANDB_MODE") == "offline"
             if args.plot_freq > 0 and iter % (args.plot_freq) == 0 and args.track and is_offline:
                 print("Triggering W&B sync...")
-                trigger_sync()
+                try:
+                    trigger_sync()
+                except Exception as e:
+                    print(f"Error during W&B sync: {e}")
 
     except KeyboardInterrupt:
         print("\nTraining interrupted by user. Finishing up...")
