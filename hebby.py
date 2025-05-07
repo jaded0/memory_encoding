@@ -4,7 +4,7 @@ from hebbian_model import HebbianLinear, HebbyRNN, SimpleRNN
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
-from utils import randomTrainingExample, timeSince, str2bool, initialize_charset
+from utils import randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint
 import time
 import math
 import argparse
@@ -200,7 +200,8 @@ def main():
     parser.add_argument('--plast_clip', type=float, default=0.005, help='How high the plasticity can go.')
     parser.add_argument('--imprint_rate', type=float, default=0.00, help='Imprint rate for Hebbian updates')
     parser.add_argument('--forget_rate', type=float, default=0.00, help='Forget rate, forgetting factor, prevents explosion.')
-    parser.add_argument('--save_frequency', type=int, default=100000, help='How often to save and display model weights.')
+    parser.add_argument('--checkpoint_save_freq', type=int, default=10000,
+                        help='How often to save a checkpoint (in iterations).')
     parser.add_argument('--residual_connection', type=str2bool, nargs='?', const=True, default=True, help='whether to have a skip connection')
     parser.add_argument('--grad_clip', type=float, default=1e-1, help='Clip gradients to this value.')
     parser.add_argument('--hidden_size', type=int, default=128, help='Size of hidden layers in RNN')
@@ -219,10 +220,12 @@ def main():
     parser.add_argument('--positional_encoding_dim', type=int, default=0,
                         help='Dimension for optional positional encoding (0 means off).')
     parser.add_argument('--self_grad', type=float, default=0.0, help='Scale of self_grad. grad based replacement for recurrence.')
-    # --- Start Modification: Add input_mode argument ---
     parser.add_argument('--input_mode', type=str, default='last_two', choices=['last_one', 'last_two'],
                         help='Input mode: use last one or last two characters.')
-    # --- End Modification ---
+    parser.add_argument('--checkpoint_dir', type=str, default='./checkpoints',
+                        help='Directory to save checkpoints.')
+    parser.add_argument('--resume_checkpoint', type=str, default=None,
+                        help='Path to checkpoint to resume training from (e.g., checkpoints/latest_checkpoint.pth).')
 
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
@@ -235,7 +238,7 @@ def main():
         "plast_clip": args.plast_clip,
         "imprint_rate": args.imprint_rate,
         "forget_rate": args.forget_rate,
-        "save_frequency": args.save_frequency,
+        "checkpoint_save_freq": args.checkpoint_save_freq,
         # Use 'mean' for backprop, will be overridden to 'none' in train() for Hebby
         "criterion": torch.nn.CrossEntropyLoss(reduction='mean'),
         "residual_connection": args.residual_connection,
@@ -247,41 +250,52 @@ def main():
         "update_rule": args.update_rule,
         "batch_size": args.batch_size,
         "self_grad": args.self_grad,
-        # --- Start Modification: Add input_mode to config ---
         "input_mode": args.input_mode,
-        # --- End Modification ---
     }
     print(f"Input mode selected: {args.input_mode}") # Inform user
-    if args.track:
-        # wandb initialization
-        wandb_config = {
-            "learning_rate": args.learning_rate,
-            "plast_learning_rate": args.plast_learning_rate,
-            "plast_clip": args.plast_clip,
-            "architecture": "crazy hebbian thing" if args.update_rule != "backprop" else "SimpleRNN", # Adjusted architecture name
-            "update_rule": args.update_rule,
-            "residual_connection": args.residual_connection,
-            "grad_clip": args.grad_clip,
-            "n_hidden": args.hidden_size,
-            "n_layers": args.num_layers,
-            "dataset": args.dataset,
-            "epochs": 1, # This seems fixed, maybe adjust?
-            "imprint_rate": args.imprint_rate,
-            "forget_rate": args.forget_rate,
-            "normalize": args.normalize,
-            "clip_weights": args.clip_weights,
-            "plot_frequency": args.plot_freq,
-            "batch_size": args.batch_size,
-            "slurm_id": job_id,
-            "positional_encoding_dim": args.positional_encoding_dim,
-            "save_frequency": args.save_frequency,
-            "self_grad": args.self_grad,
-            # --- Start Modification: Add input_mode to wandb config ---
-            "input_mode": args.input_mode,
-            # --- End Modification ---
-        }
-        wandb.init(project="hebby", group=args.group, notes=args.notes, config=wandb_config)
 
+    # Define the path to the latest checkpoint
+    latest_checkpoint_path = os.path.join(args.checkpoint_dir, "latest_checkpoint.pth")
+
+# --- WandB Run ID Management for Resumption ---
+    wandb_run_id = None
+    if args.track: # Only manage run ID if tracking is enabled
+        wandb_run_id_file_path = os.path.join(args.checkpoint_dir, "wandb_run_id.txt")
+
+        if args.resume_checkpoint or os.path.isfile(latest_checkpoint_path): # If we are potentially resuming
+            if os.path.exists(wandb_run_id_file_path):
+                with open(wandb_run_id_file_path, "r") as f:
+                    wandb_run_id = f.read().strip()
+                print(f"Found existing WandB run ID: {wandb_run_id}")
+            else:
+                # This case is tricky: we are resuming a model checkpoint,
+                # but no WandB ID was saved. This could happen if:
+                # 1. Tracking was off during the run that created the checkpoint.
+                # 2. The wandb_run_id.txt file was accidentally deleted.
+                # We'll generate a new ID and save it, effectively starting a "new" WandB run
+                # that continues the model's progress.
+                print(f"Warning: Resuming checkpoint but no WandB run ID file found in {args.checkpoint_dir}.")
+                print("A new WandB run will be started for this resumed session.")
+                # Fall through to generate new ID if wandb_run_id is still None
+        
+        if not wandb_run_id: # If it's the first run or ID was not found for a resume scenario
+            wandb_run_id = wandb.util.generate_id()
+            try:
+                with open(wandb_run_id_file_path, "w") as f:
+                    f.write(wandb_run_id)
+                print(f"Generated and saved new WandB run ID: {wandb_run_id}")
+            except IOError as e:
+                print(f"Warning: Could not write WandB run ID to {wandb_run_id_file_path}: {e}")
+                print("Resuming WandB run might not work correctly across restarts.")
+
+
+
+
+
+
+
+    if not os.path.exists(args.checkpoint_dir):
+        os.makedirs(args.checkpoint_dir, exist_ok=True) # exist_ok=True for robustness
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -313,7 +327,6 @@ def main():
         config["pe_matrix"] = None
 
     # Model Initialization
-    # --- Start Modification: Calculate input_size based on input_mode ---
     if args.input_mode == 'last_two':
         char_input_dim = n_characters * 2
     elif args.input_mode == 'last_one':
@@ -323,12 +336,13 @@ def main():
         raise ValueError(f"Invalid input_mode: {args.input_mode}")
 
     input_size = char_input_dim + pos_dim # Base input size from characters + positional encoding
-    # --- End Modification ---
 
     output_size = n_characters
     print(f"Model Input Size: {input_size}, Hidden Size: {config['n_hidden']}, Output Size: {output_size}") # Log calculated size
 
     optimizer = None
+
+    start_iter = 1
 
     if args.update_rule == "backprop":
         # Note: SimpleRNN's internal structure assumes input -> hidden, not input -> combined
@@ -351,15 +365,137 @@ def main():
                        plast_clip=config["plast_clip"], batch_size=config["batch_size"],
                        forget_rate=config["forget_rate"])
 
-    if torch.cuda.is_available():
-        print("cuda available!")
-        rnn = rnn.to(device)
-
     state = {
         "training_instance": 0,
         "last_n_rewards": [0],
         "last_n_reward_avg": 0,
     }
+
+    # --- Resume from Checkpoint ---
+
+    # Attempt to resume if --resume_checkpoint is given OR if latest_checkpoint.pth exists
+    # Prioritize explicit --resume_checkpoint if provided
+    checkpoint_to_load = None
+    if args.resume_checkpoint:
+        if os.path.isfile(args.resume_checkpoint):
+            checkpoint_to_load = args.resume_checkpoint
+            print(f"Attempting to resume from explicit checkpoint: {checkpoint_to_load}")
+        else:
+            print(f"Warning: Explicit resume checkpoint {args.resume_checkpoint} not found.")
+            # Fallback to latest if explicit one is missing but latest exists
+            if os.path.isfile(latest_checkpoint_path):
+                print(f"Falling back to latest checkpoint: {latest_checkpoint_path}")
+                checkpoint_to_load = latest_checkpoint_path
+            else:
+                print("No checkpoint found to resume from. Starting from scratch.")
+
+    elif os.path.isfile(latest_checkpoint_path): # No explicit resume, but latest exists
+        checkpoint_to_load = latest_checkpoint_path
+        print(f"Found latest checkpoint. Attempting to resume from: {checkpoint_to_load}")
+    else:
+        print("No checkpoint specified and no latest_checkpoint.pth found. Starting from scratch.")
+
+
+    if checkpoint_to_load:
+        try:
+            # Pass device to load_checkpoint
+            rnn, optimizer, start_iter, loaded_main_state, loaded_config = load_checkpoint(
+                checkpoint_to_load, rnn, optimizer, device=device
+            )
+            state.update(loaded_main_state) # Update your main program state
+            print(f"resumed, starting from iter: {start_iter}")
+
+            # Optional: Config consistency check (important!)
+            # (Your existing config check logic)
+            if loaded_config.get('n_hidden') != config['n_hidden'] or \
+               loaded_config.get('n_layers') != config['n_layers'] or \
+               loaded_config.get('update_rule') != config['update_rule']: # Add more checks as needed
+                print("--------------------------------------------------------------------")
+                print("WARNING: Checkpoint loaded with potentially incompatible configuration!")
+                print(f"  Current n_hidden: {config['n_hidden']}, Loaded: {loaded_config.get('n_hidden')}")
+                print(f"  Current n_layers: {config['n_layers']}, Loaded: {loaded_config.get('n_layers')}")
+                print(f"  Current update_rule: {config['update_rule']}, Loaded: {loaded_config.get('update_rule')}")
+                print("  Please verify settings or delete checkpoint if starting a new experiment.")
+                print("--------------------------------------------------------------------")
+                # Decide whether to proceed or exit, e.g., sys.exit("Config mismatch with checkpoint.")
+
+        except FileNotFoundError: # Should be rare due to os.path.isfile checks, but good for safety
+            print(f"Warning: Checkpoint file {checkpoint_to_load} not found during load attempt. Starting from scratch.")
+            start_iter = 1 # Reset start_iter
+            state = { # Reset state
+                "training_instance": 0,
+                "last_n_rewards": [0],
+                "last_n_reward_avg": 0,
+            }
+        except Exception as e:
+            print(f"Error loading checkpoint {checkpoint_to_load}: {e}. Starting from scratch.")
+            import traceback
+            traceback.print_exc()
+            start_iter = 1 # Reset start_iter
+            state = { # Reset state
+                "training_instance": 0,
+                "last_n_rewards": [0],
+                "last_n_reward_avg": 0,
+            }
+            if torch.cuda.is_available(): # If loading failed but cuda is an option
+                print("Fallback: Moving freshly initialized model to GPU after failed checkpoint load.")
+                rnn = rnn.to(device)
+                if optimizer: # If backprop and optimizer exists
+                    # Move optimizer states to device if it was re-initialized
+                    # This is more for general robustness if optimizer was somehow re-created
+                    # For your Hebby case, optimizer is None, so this part is less critical here.
+                    for state_val in optimizer.state.values():
+                        for k, v in state_val.items():
+                            if isinstance(v, torch.Tensor):
+                                state_val[k] = v.to(device)
+            else:
+                print("Fallback: Model remains on CPU after failed checkpoint load (no CUDA).")
+
+    elif torch.cuda.is_available(): # No checkpoint_to_load specified AT ALL, and cuda is available
+        print("No checkpoint specified for loading. Moving model to GPU.")
+        rnn = rnn.to(device)
+    # else: model remains on CPU if no checkpoint and no CUDA
+
+    if args.track:
+        # wandb initialization
+        wandb_config = {
+            "learning_rate": args.learning_rate,
+            "plast_learning_rate": args.plast_learning_rate,
+            "plast_clip": args.plast_clip,
+            "architecture": "crazy hebbian thing" if args.update_rule != "backprop" else "SimpleRNN", # Adjusted architecture name
+            "update_rule": args.update_rule,
+            "residual_connection": args.residual_connection,
+            "grad_clip": args.grad_clip,
+            "n_hidden": args.hidden_size,
+            "n_layers": args.num_layers,
+            "dataset": args.dataset,
+            "epochs": 1, # This seems fixed, maybe adjust?
+            "imprint_rate": args.imprint_rate,
+            "forget_rate": args.forget_rate,
+            "normalize": args.normalize,
+            "clip_weights": args.clip_weights,
+            "plot_frequency": args.plot_freq,
+            "batch_size": args.batch_size,
+            "slurm_id": job_id,
+            "positional_encoding_dim": args.positional_encoding_dim,
+            "checkpoint_save_freq": args.checkpoint_save_freq,
+            "self_grad": args.self_grad,
+            "input_mode": args.input_mode,
+        }
+        # Key change here: use the determined wandb_run_id and resume="allow"
+        print(f"WandB run ID: {wandb_run_id}, attempting to resume from iteration {start_iter}")
+        wandb.init(project="hebby",
+                   group=args.group,
+                   notes=args.notes,
+                   config=wandb_config,
+                   id=wandb_run_id, # Use the persistent ID
+                   resume="must")
+                #    resume_from=f"{wandb_run_id}?_step={start_iter}")  # Allow resuming the run if ID exists on WandB server
+
+        print(f"Initialized WandB with Run ID: {wandb.run.id if wandb.run else 'None'}")
+        if wandb.run and wandb.run.resumed:
+            print(f"Successfully resumed WandB run: {wandb.run.id}")
+
 
     # Training Loop
     current_loss = 0
@@ -384,7 +520,7 @@ def main():
         all_outputs = [] # Initialize lists outside loop, clear after use
         all_labels = []
 
-        for iter in range(1, args.n_iters + 1):
+        for iter in range(start_iter, args.n_iters + 1):
             # Fetch next batch
             try:
                  sequence, line_tensor, onehot_line_tensor = next(data_iterator)
@@ -426,6 +562,25 @@ def main():
                  predicted_idx = torch.argmax(last_output).item()
                  is_correct = (predicted_idx == last_target_idx)
                  current_correct_plot_interval += 1 if is_correct else 0
+
+            # ==============================================================
+            # --- Checkpointing ---
+            # ==============================================================
+            if iter % args.checkpoint_save_freq == 0:
+                checkpoint_state = {
+                    'iter': iter + 1, # Save the next iteration to start from
+                    'model_state_dict': rnn.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
+                    'main_program_state': state, # Your custom state dict from main
+                    'config': config, # Save current run's config
+                    'torch_rng_state': torch.get_rng_state(),
+                    'numpy_rng_state': np.random.get_state(),
+                    # import random; 'python_rng_state': random.getstate(), # If using random module
+                }
+                # Save a versioned checkpoint
+                # save_checkpoint(checkpoint_state, args.checkpoint_dir, f"checkpoint_iter_{iter}.pth")
+                # Overwrite a 'latest' checkpoint for easy resumption
+                save_checkpoint(checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth")
 
             # ==============================================================
             # --- Frequent Detailed Console Logging Period (print_freq) ---
@@ -545,18 +700,32 @@ def main():
                     print(f"Error during W&B sync: {e}")
 
     except KeyboardInterrupt:
-        print("\nTraining interrupted by user. Finishing up...")
+        print("\nTraining interrupted by user. Attempting to save final checkpoint...")
+        # Optionally save a final checkpoint on interrupt
+        if args.checkpoint_dir: # Ensure dir is specified
+            final_checkpoint_state = {
+                'iter': iter + 1 if 'iter' in locals() else start_iter,
+                'model_state_dict': rnn.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
+                'main_program_state': state,
+                'config': config,
+                'torch_rng_state': torch.get_rng_state(),
+                'numpy_rng_state': np.random.get_state(),
+            }
+            save_checkpoint(final_checkpoint_state, args.checkpoint_dir, "interrupt_checkpoint.pth")
+            save_checkpoint(final_checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth") # also update latest
+        print("Finishing up...")
     except Exception as e:
         print(f"\nAn error occurred during training: {e}")
         import traceback
         traceback.print_exc() # Print detailed traceback
 
 
-    finally: # Ensure wandb finishes even on error/interrupt
-        if args.track and wandb.run is not None:
-            print("Finishing W&B run...")
-            wandb.finish()
-            print("W&B run finished.")
+    # finally: # Ensure wandb finishes even on error/interrupt
+    #     if args.track and wandb.run is not None:
+    #         print("Finishing W&B run...")
+    #         wandb.finish()
+    #         print("W&B run finished.")
 
 
 

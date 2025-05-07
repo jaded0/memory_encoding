@@ -172,3 +172,4 @@ slurm*
 *.out
 response.json
 .aider*
+checkpoints/

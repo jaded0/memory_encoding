@@ -32,8 +32,8 @@ class HebbianLinear(nn.Linear):
         self.clip_weights = clip_weights
         self.update_rule = update_rule
         self.is_last_layer = is_last_layer
-        self.in_traces = nn.Parameter(torch.zeros(in_features), requires_grad=requires_grad)
-        self.out_traces = nn.Parameter(torch.zeros(out_features), requires_grad=requires_grad)
+        self.in_traces = nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
+        self.out_traces = nn.Parameter(torch.zeros(batch_size, out_features), requires_grad=requires_grad)
         self.register_buffer('t', torch.tensor(1.0))
         self.learning_rate = 1
         self.batch_size = batch_size

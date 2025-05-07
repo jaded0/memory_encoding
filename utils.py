@@ -2,6 +2,8 @@ import torch
 import time
 import math
 import argparse
+import os
+import numpy as np
 
 dataset_keys = {
     "roneneldan/tinystories": "text",
@@ -100,3 +102,49 @@ def str2bool(v):
         return False
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+# Place these functions near the top of hebby.py or in utils.py
+
+def save_checkpoint(state_dict, checkpoint_dir, filename="checkpoint.pth"):
+    """Saves checkpoint to disk"""
+    filepath = os.path.join(checkpoint_dir, filename)
+    torch.save(state_dict, filepath)
+    print(f"Checkpoint saved to {filepath}")
+
+def load_checkpoint(checkpoint_path, model, optimizer=None, device='cpu'):
+    """Loads checkpoint from disk"""
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
+
+    print(f"=> Loading checkpoint '{checkpoint_path}'")
+    # Load checkpoint to CPU first to avoid GPU OOM issues with mismatched models/devices
+    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.to(device) # Move model to target device after loading
+
+    if optimizer and 'optimizer_state_dict' in checkpoint and checkpoint['optimizer_state_dict']:
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        # Move optimizer states to device
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(device)
+
+
+    start_iter = checkpoint.get('iter', 1)
+    main_state = checkpoint.get('main_program_state', {}) # Your custom state dict from main
+    loaded_config = checkpoint.get('config', {}) # The config used for this checkpoint
+
+    # RNG states
+    if 'torch_rng_state' in checkpoint:
+        torch.set_rng_state(checkpoint['torch_rng_state'].cpu()) # RNG state must be on CPU
+    if 'numpy_rng_state' in checkpoint:
+        np.random.set_state(checkpoint['numpy_rng_state'])
+    # import random # if you use it
+    # if 'python_rng_state' in checkpoint:
+    #     random.setstate(checkpoint['python_rng_state'])
+
+    print(f"=> Loaded checkpoint '{checkpoint_path}' (iteration {start_iter})")
+    return model, optimizer, start_iter, main_state, loaded_config

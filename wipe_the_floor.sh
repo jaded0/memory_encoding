@@ -3,13 +3,13 @@
 # Cancel all Slurm jobs for user jaded79
 scancel -u jaded79
 
-# Delete all slurm-* files in /home/jaded79/memory_encoding
-rm /home/jaded79/memory_encoding/slurm-*
-rm /home/jaded79/memory_encoding/slurm_logs/*
-rm /home/jaded79/memory_encoding/*.out
+# Delete all slurm-* files in .
+rm ./slurm-*
+rm ./slurm_logs/*
+rm ./*.out
 
-# Delete all offline-run-* directories in /home/jaded79/memory_encoding/wandb/
-rm -r /home/jaded79/memory_encoding/wandb/offline-run-*
+# Delete all offline-run-* directories in ./wandb/
+rm -r ./wandb/offline-run-*
 
 rm *.log
 
