@@ -488,10 +488,10 @@ def main():
         wandb.init(project="hebby",
                    group=args.group,
                    notes=args.notes,
-                   config=wandb_config,
-                   id=wandb_run_id, # Use the persistent ID
-                   resume="must")
-                #    resume_from=f"{wandb_run_id}?_step={start_iter}")  # Allow resuming the run if ID exists on WandB server
+                   config=wandb_config,)
+                #    id=wandb_run_id, # Use the persistent ID
+                #    resume="must")
+                #    resume_from=f"{wandb_run_id}?_step={state['wandb_step']}")  # Allow resuming the run if ID exists on WandB server
 
         print(f"Initialized WandB with Run ID: {wandb.run.id if wandb.run else 'None'}")
         if wandb.run and wandb.run.resumed:
@@ -673,13 +673,14 @@ def main():
                     avg_step_acc_t1_plot = (current_step_acc_t1_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
                     avg_step_acc_t2_plot = (current_step_acc_t2_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
 
+                    print(f"logging step: {state['wandb_step']}")
                     wandb.log({
                         "iter": iter, # iter is still useful for reference to training iteration
                         "avg_loss": avg_loss_plot,      # Log the averaged loss
                         "avg_accuracy": avg_acc_plot,    # Log the averaged accuracy
                         "avg_step_acc_t1": avg_step_acc_t1_plot, # Log averaged step acc T1
                         "avg_step_acc_t2": avg_step_acc_t2_plot  # Log averaged step acc T2
-                    }, step=state['wandb_step']) # Use wandb_step for the x-axis
+                    }, step=state['wandb_step'], commit=True) # Use wandb_step for the x-axis
 
                 # Reset ALL accumulators for the next plot interval
                 current_loss_plot_interval = 0.0
@@ -694,7 +695,7 @@ def main():
             # ==============================================================
             # Trigger sync less often than WandB logging frequency (plot_freq)
             is_offline = os.getenv("WANDB_MODE") == "offline"
-            if args.plot_freq > 0 and iter % (args.plot_freq) == 0 and args.track and is_offline:
+            if args.plot_freq > 0 and iter % (args.plot_freq * 10) == 0 and args.track and is_offline:
                 print("Triggering W&B sync...")
                 try:
                     trigger_sync()

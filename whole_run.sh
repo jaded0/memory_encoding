@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # --- SLURM Directives ---
-#SBATCH --time=00:20:00        # Max walltime (HH:MM:SS)
+#SBATCH --time=7-00:00:00        # Max walltime (HH:MM:SS)
 #SBATCH --ntasks=10            # Number of CPU cores requested
 #SBATCH --nodes=1              # Number of nodes requested
 #SBATCH --gpus=1               # Number of GPUs requested
@@ -47,7 +47,7 @@ echo "--- Environment Setup Complete ---"
 # This is more advanced, for now, each requeue might start a new WandB run unless you handle this.
 # For simplicity with --requeue, you might let WandB create new runs and correlate them manually by group/notes.
 
-GROUP='wat_requeue_test'
+GROUP='very_long_requeue_test'
 NOTES="Testing --requeue with automatic latest checkpoint resumption. Original SLURM_JOB_ID (if first run): $SLURM_JOB_ID"
 
 # --- Checkpointing ---
@@ -55,12 +55,12 @@ NOTES="Testing --requeue with automatic latest checkpoint resumption. Original S
 # Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
 # the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
 # Let's assume you have a base experiment name.
-EXPERIMENT_NAME="my_hebby_experiment_1"
+EXPERIMENT_NAME="my_hebby_experiment_2"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
-CHECKPOINT_SAVE_FREQ=5000
+CHECKPOINT_SAVE_FREQ=25000
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
@@ -83,20 +83,20 @@ NORMALIZE=false              # Normalize weights post-update (true/false)
 CLIP_WEIGHTS=0               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
-HIDDEN_SIZE=64              # RNN hidden state units
+HIDDEN_SIZE=256              # RNN hidden state units
 NUM_LAYERS=3                 # Number of RNN layers
 RESIDUAL_CONNECTION=false    # Use skip connections (true/false)
-POS_ENCODING=16             # Positional encoding dimension (0=off)
+POS_ENCODING=128             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='2_resequence' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
-BATCH_SIZE=2                 # Sequences per batch
+DATASET='palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
+BATCH_SIZE=4                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=1000000000           # Total training steps (iterations)
 PRINT_FREQ=2500                # Console print basic avg loss/acc frequency
-PLOT_FREQ=5000                # WandB log freq + Detailed console print freq
+PLOT_FREQ=2500                # WandB log freq + Detailed console print freq
 
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"
