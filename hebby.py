@@ -369,6 +369,7 @@ def main():
         "training_instance": 0,
         "last_n_rewards": [0],
         "last_n_reward_avg": 0,
+        "wandb_step": 0,  # Initialize wandb_step
     }
 
     # --- Resume from Checkpoint ---
@@ -654,6 +655,7 @@ def main():
             # ==============================================================
             # Check plot_freq > 0 to avoid division by zero
             if args.plot_freq > 0 and iter % args.plot_freq == 0:
+                state['wandb_step'] += 1 # Increment wandb_step before logging
                 # Calculate averages over the plot interval
                 avg_loss_plot = current_loss_plot_interval / args.plot_freq
                 avg_acc_plot = current_correct_plot_interval / args.plot_freq
@@ -672,12 +674,12 @@ def main():
                     avg_step_acc_t2_plot = (current_step_acc_t2_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
 
                     wandb.log({
-                        "iter": iter,
+                        "iter": iter, # iter is still useful for reference to training iteration
                         "avg_loss": avg_loss_plot,      # Log the averaged loss
                         "avg_accuracy": avg_acc_plot,    # Log the averaged accuracy
                         "avg_step_acc_t1": avg_step_acc_t1_plot, # Log averaged step acc T1
                         "avg_step_acc_t2": avg_step_acc_t2_plot  # Log averaged step acc T2
-                    })
+                    }, step=state['wandb_step']) # Use wandb_step for the x-axis
 
                 # Reset ALL accumulators for the next plot interval
                 current_loss_plot_interval = 0.0
