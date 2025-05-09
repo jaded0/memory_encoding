@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # --- SLURM Directives ---
-#SBATCH --time=7-00:00:00        # Max walltime (HH:MM:SS)
+#SBATCH --time=16-00:00:00        # Max walltime (HH:MM:SS)
 #SBATCH --ntasks=10            # Number of CPU cores requested
 #SBATCH --nodes=1              # Number of nodes requested
 #SBATCH --gpus=1               # Number of GPUs requested
@@ -37,6 +37,15 @@ echo "HF Offline mode enabled."
 echo "--- Environment Setup Complete ---"
 
 # ======================== Experiment Identification ===========================
+
+# --- Checkpointing ---
+# CHECKPOINT_DIR needs to be persistent and accessible by all requeued jobs.
+# Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
+# the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
+# Let's assume you have a base experiment name.
+EXPERIMENT_NAME="big_lowball_stable"
+CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
+
 # --- Experiment Identification (W&B) ---
 # It's good practice to include SLURM_JOB_ID in group/notes if you want to trace requeues in W&B
 # However, a requeued job gets a NEW SLURM_JOB_ID.
@@ -47,20 +56,12 @@ echo "--- Environment Setup Complete ---"
 # This is more advanced, for now, each requeue might start a new WandB run unless you handle this.
 # For simplicity with --requeue, you might let WandB create new runs and correlate them manually by group/notes.
 
-GROUP='very_long_requeue_test'
+GROUP=$EXPERIMENT_NAME
 NOTES="Testing --requeue with automatic latest checkpoint resumption. Original SLURM_JOB_ID (if first run): $SLURM_JOB_ID"
-
-# --- Checkpointing ---
-# CHECKPOINT_DIR needs to be persistent and accessible by all requeued jobs.
-# Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
-# the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
-# Let's assume you have a base experiment name.
-EXPERIMENT_NAME="my_hebby_experiment_2"
-CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
-CHECKPOINT_SAVE_FREQ=25000
+CHECKPOINT_SAVE_FREQ=50000
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
@@ -68,15 +69,15 @@ UPDATE_RULE='static_plastic_candidate'       # backprop | static_plastic_candida
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-4           # Base learning rate
+LEARNING_RATE=1e-3           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
-GRAD_CLIP=0                  # Max gradient norm
+PLAST_CLIP=1e2               # Plasticity max value (for specific rules)
+GRAD_CLIP=1e-2                  # Max gradient norm
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
 IMPRINT_RATE=0.3             # Hebbian imprint strength
 FORGET_RATE=0.01              # Weight decay/forgetting factor
-SELF_GRAD=0                  # Experimental recurrent replacement
+SELF_GRAD=1e-6                  # Experimental recurrent replacement
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)

@@ -484,14 +484,25 @@ def main():
             "input_mode": args.input_mode,
         }
         # Key change here: use the determined wandb_run_id and resume="allow"
-        print(f"WandB run ID: {wandb_run_id}, attempting to resume from iteration {start_iter}")
-        wandb.init(project="hebby",
-                   group=args.group,
-                   notes=args.notes,
-                   config=wandb_config,)
-                #    id=wandb_run_id, # Use the persistent ID
-                #    resume="must")
-                #    resume_from=f"{wandb_run_id}?_step={state['wandb_step']}")  # Allow resuming the run if ID exists on WandB server
+
+        if state['wandb_step'] == 0:
+            wandb.init(project="hebby",
+                     group=args.group,
+                     notes=args.notes,
+                     config=wandb_config,
+                     id=wandb_run_id,  # Use the persistent ID
+                     )
+        else:
+            print(f"WandB run ID: {wandb_run_id}, attempting to resume from iteration {start_iter}")
+            resume_from_string = f"{wandb_run_id}?_step={state['wandb_step']}" if wandb_run_id else None
+            print(f"Resuming from: {resume_from_string}")
+            wandb.init(project="hebby",
+                    group=args.group,
+                    notes=args.notes,
+                    config=wandb_config,
+                    #    id=wandb_run_id, # Use the persistent ID
+                    #    resume="must",
+                    resume_from=resume_from_string)  # Allow resuming the run if ID exists on WandB server
 
         print(f"Initialized WandB with Run ID: {wandb.run.id if wandb.run else 'None'}")
         if wandb.run and wandb.run.resumed:
@@ -695,7 +706,7 @@ def main():
             # ==============================================================
             # Trigger sync less often than WandB logging frequency (plot_freq)
             is_offline = os.getenv("WANDB_MODE") == "offline"
-            if args.plot_freq > 0 and iter % (args.plot_freq * 10) == 0 and args.track and is_offline:
+            if args.plot_freq > 0 and iter % (args.plot_freq * 50) == 0 and args.track and is_offline:
                 print("Triggering W&B sync...")
                 try:
                     trigger_sync()
