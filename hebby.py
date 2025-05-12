@@ -259,13 +259,14 @@ def main():
 
 # --- WandB Run ID Management for Resumption ---
     wandb_run_id = None
+    is_new_id = False # Flag to track if a new ID is generated
     if args.track: # Only manage run ID if tracking is enabled
         wandb_run_id_file_path = os.path.join(args.checkpoint_dir, "wandb_run_id.txt")
 
         if args.resume_checkpoint or os.path.isfile(latest_checkpoint_path): # If we are potentially resuming
             if os.path.exists(wandb_run_id_file_path):
-                with open(wandb_run_id_file_path, "r") as f:
-                    wandb_run_id = f.read().strip()
+                # with open(wandb_run_id_file_path, "r") as f:
+                #     wandb_run_id = f.read().strip()
                 print(f"Found existing WandB run ID: {wandb_run_id}")
             else:
                 # This case is tricky: we are resuming a model checkpoint,
@@ -276,10 +277,12 @@ def main():
                 # that continues the model's progress.
                 print(f"Warning: Resuming checkpoint but no WandB run ID file found in {args.checkpoint_dir}.")
                 print("A new WandB run will be started for this resumed session.")
+                is_new_id = True
                 # Fall through to generate new ID if wandb_run_id is still None
         
         if not wandb_run_id: # If it's the first run or ID was not found for a resume scenario
             wandb_run_id = wandb.util.generate_id()
+            is_new_id = True # Set flag to indicate a new ID was generated
             try:
                 with open(wandb_run_id_file_path, "w") as f:
                     f.write(wandb_run_id)
@@ -485,7 +488,7 @@ def main():
         }
         # Key change here: use the determined wandb_run_id and resume="allow"
 
-        if state['wandb_step'] == 0:
+        if state['wandb_step'] == 0 or is_new_id: # If starting fresh or new ID generated
             wandb.init(project="hebby",
                      group=args.group,
                      notes=args.notes,
@@ -494,7 +497,7 @@ def main():
                      )
         else:
             print(f"WandB run ID: {wandb_run_id}, attempting to resume from iteration {start_iter}")
-            resume_from_string = f"{wandb_run_id}?_step={state['wandb_step']}" if wandb_run_id else None
+            resume_from_string = f"{wandb_run_id}?_step={state['wandb_step'] -1}" if wandb_run_id else None
             print(f"Resuming from: {resume_from_string}")
             wandb.init(project="hebby",
                     group=args.group,
@@ -576,25 +579,6 @@ def main():
                  current_correct_plot_interval += 1 if is_correct else 0
 
             # ==============================================================
-            # --- Checkpointing ---
-            # ==============================================================
-            if iter % args.checkpoint_save_freq == 0:
-                checkpoint_state = {
-                    'iter': iter + 1, # Save the next iteration to start from
-                    'model_state_dict': rnn.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
-                    'main_program_state': state, # Your custom state dict from main
-                    'config': config, # Save current run's config
-                    'torch_rng_state': torch.get_rng_state(),
-                    'numpy_rng_state': np.random.get_state(),
-                    # import random; 'python_rng_state': random.getstate(), # If using random module
-                }
-                # Save a versioned checkpoint
-                # save_checkpoint(checkpoint_state, args.checkpoint_dir, f"checkpoint_iter_{iter}.pth")
-                # Overwrite a 'latest' checkpoint for easy resumption
-                save_checkpoint(checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth")
-
-            # ==============================================================
             # --- Frequent Detailed Console Logging Period (print_freq) ---
             # ==============================================================
             if iter % args.print_freq == 0:
@@ -666,7 +650,6 @@ def main():
             # ==============================================================
             # Check plot_freq > 0 to avoid division by zero
             if args.plot_freq > 0 and iter % args.plot_freq == 0:
-                state['wandb_step'] += 1 # Increment wandb_step before logging
                 # Calculate averages over the plot interval
                 avg_loss_plot = current_loss_plot_interval / args.plot_freq
                 avg_acc_plot = current_correct_plot_interval / args.plot_freq
@@ -693,6 +676,7 @@ def main():
                         "avg_step_acc_t2": avg_step_acc_t2_plot  # Log averaged step acc T2
                     }, step=state['wandb_step'], commit=True) # Use wandb_step for the x-axis
 
+                state['wandb_step'] += 1 # Increment wandb_step after logging
                 # Reset ALL accumulators for the next plot interval
                 current_loss_plot_interval = 0.0
                 current_correct_plot_interval = 0
@@ -706,12 +690,31 @@ def main():
             # ==============================================================
             # Trigger sync less often than WandB logging frequency (plot_freq)
             is_offline = os.getenv("WANDB_MODE") == "offline"
-            if args.plot_freq > 0 and iter % (args.plot_freq * 50) == 0 and args.track and is_offline:
+            if args.plot_freq > 0 and iter % (args.plot_freq * 10) == 0 and args.track and is_offline:
                 print("Triggering W&B sync...")
                 try:
                     trigger_sync()
                 except Exception as e:
                     print(f"Error during W&B sync: {e}")
+
+            # ==============================================================
+            # --- Checkpointing ---
+            # ==============================================================
+            if iter % args.checkpoint_save_freq == 0:
+                checkpoint_state = {
+                    'iter': iter + 1, # Save the next iteration to start from
+                    'model_state_dict': rnn.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
+                    'main_program_state': state, # Your custom state dict from main
+                    'config': config, # Save current run's config
+                    'torch_rng_state': torch.get_rng_state(),
+                    'numpy_rng_state': np.random.get_state(),
+                    # import random; 'python_rng_state': random.getstate(), # If using random module
+                }
+                # Save a versioned checkpoint
+                # save_checkpoint(checkpoint_state, args.checkpoint_dir, f"checkpoint_iter_{iter}.pth")
+                # Overwrite a 'latest' checkpoint for easy resumption
+                save_checkpoint(checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth")
 
     except KeyboardInterrupt:
         print("\nTraining interrupted by user. Attempting to save final checkpoint...")
@@ -735,11 +738,11 @@ def main():
         traceback.print_exc() # Print detailed traceback
 
 
-    # finally: # Ensure wandb finishes even on error/interrupt
-    #     if args.track and wandb.run is not None:
-    #         print("Finishing W&B run...")
-    #         wandb.finish()
-    #         print("W&B run finished.")
+    finally: # Ensure wandb finishes even on error/interrupt
+        if args.track and wandb.run is not None:
+            print("Finishing W&B run...")
+            wandb.finish()
+            print("W&B run finished.")
 
 
 

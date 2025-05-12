@@ -10,7 +10,7 @@
 #SBATCH --gpus=1               # Number of GPUs requested
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
-#SBATCH --job-name=hebby_train # Job name in queue
+#SBATCH --job-name=batch_4_4 # Job name in queue
 #SBATCH --output=hebby_train_%j.out # Standard output file (%j = job ID)
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 #SBATCH --qos=standby      # Make it preemptable
@@ -43,7 +43,8 @@ echo "--- Environment Setup Complete ---"
 # Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
 # the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
 # Let's assume you have a base experiment name.
-EXPERIMENT_NAME="big_lowball_stable"
+EXPERIMENT_NAME="$SLURM_JOB_NAME"
+# EXPERIMENT_NAME="big_recreate_phenomenon"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # --- Experiment Identification (W&B) ---
@@ -69,15 +70,15 @@ UPDATE_RULE='static_plastic_candidate'       # backprop | static_plastic_candida
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-3           # Base learning rate
+LEARNING_RATE=1e-4           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e2               # Plasticity max value (for specific rules)
-GRAD_CLIP=1e-2                  # Max gradient norm
+PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
+GRAD_CLIP=0                  # Max gradient norm
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
 IMPRINT_RATE=0.3             # Hebbian imprint strength
 FORGET_RATE=0.01              # Weight decay/forgetting factor
-SELF_GRAD=1e-6                  # Experimental recurrent replacement
+SELF_GRAD=0                  # Experimental recurrent replacement
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
@@ -92,7 +93,7 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
 DATASET='palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
-BATCH_SIZE=4                 # Sequences per batch
+BATCH_SIZE=64                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=1000000000           # Total training steps (iterations)
