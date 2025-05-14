@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # --- W&B Tracking ---
-export WANDB_MODE=offline # online | offline | disabled
+export WANDB_MODE=online # online | offline | disabled
 
 # ======================== Experiment Identification ===========================
 
@@ -13,7 +13,7 @@ export WANDB_MODE=offline # online | offline | disabled
 # Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
 # the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
 # Let's assume you have a base experiment name.
-EXPERIMENT_NAME="wat"
+EXPERIMENT_NAME="text"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # --- Experiment Identification (W&B) ---
@@ -31,7 +31,7 @@ NOTES="Testing --requeue with automatic latest checkpoint resumption. Original S
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
-CHECKPOINT_SAVE_FREQ=50000
+CHECKPOINT_SAVE_FREQ=500
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
@@ -39,9 +39,9 @@ UPDATE_RULE='static_plastic_candidate'       # backprop | static_plastic_candida
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-4           # Base learning rate
+LEARNING_RATE=1e-5           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
+PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient norm
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
@@ -61,13 +61,13 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='2_resequence' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
-BATCH_SIZE=4                 # Sequences per batch
+DATASET='roneneldan/tinystories' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
+BATCH_SIZE=16                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=1000000000           # Total training steps (iterations)
-PRINT_FREQ=2500                # Console print basic avg loss/acc frequency
-PLOT_FREQ=2500                # WandB log freq + Detailed console print freq
+PRINT_FREQ=25                # Console print basic avg loss/acc frequency
+PLOT_FREQ=25                # WandB log freq + Detailed console print freq
 
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"

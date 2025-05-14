@@ -29,7 +29,7 @@ def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True):
     for split in dataset:
         print(f"Loaded {dataset_name} {split} columns: {dataset[split].column_names}")
         print(f"Loaded sample {split}: {dataset[split][0]}")
-    dataset = dataset[dataset_keys[dataset_name]]#.select(range(10))
+    dataset = dataset[dataset_keys[dataset_name]].select(range(100000))
 
     print(f"{dataset_name} columns:", dataset.column_names)  # Debugging line
     print("Sample data:", dataset[0])
@@ -53,9 +53,10 @@ def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True):
     #     print(dataset[i]['onehot_tensor'])
 
     # Create a DataLoader
-    dataset_cached = list(dataset)
+    if not "roneneldan/tinystories" in dataset_name:
+        dataset = list(dataset)
     dataloader = torch.utils.data.DataLoader(
-        dataset_cached, 
+        dataset, 
         batch_size=batch_size, 
         shuffle=True, 
         collate_fn=collate_fn,
