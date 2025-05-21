@@ -14,6 +14,13 @@ import itertools
 import os
 import psutil
 from wandb_osh.hooks import TriggerWandbSyncHook  # <-- New!
+
+class TermColors:
+    GREEN = '\033[92m'
+    PURPLE = '\033[95m' # Magenta, often used for Purple
+    WHITE = '\033[97m'
+    RESET = '\033[0m'
+
 # from memory_profiler import profile
 
 trigger_sync = TriggerWandbSyncHook()  # <--- New!
@@ -526,15 +533,19 @@ def main():
 
     data_iterator = infinite_dataloader(dataloader)
 
+# REPLACE YOUR EXISTING 'try...except KeyboardInterrupt...' BLOCK IN main() WITH THIS:
     try:
         # Initialize accumulators for the less frequent PLOT interval (averaging)
         current_loss_plot_interval = 0.0
-        current_correct_plot_interval = 0
-        current_step_acc_t1_plot_interval = 0.0
-        current_step_acc_t2_plot_interval = 0.0
+        current_correct_plot_interval = 0 # For last character accuracy
+        current_step_acc_t1_plot_interval = 0.0 # For step-wise T1 accuracy
+        current_step_acc_t2_plot_interval = 0.0 # For step-wise Top-2 accuracy
         num_detailed_calcs_in_plot_interval = 0
-        all_outputs = [] # Initialize lists outside loop, clear after use
-        all_labels = []
+        
+        # These will be populated per iteration if log_outputs_for_train is true
+        # and then cleared after print_freq, as per your original logic.
+        all_outputs_for_print_freq = [] 
+        all_labels_for_print_freq = []
 
         for iter in range(start_iter, args.n_iters + 1):
             # Fetch next batch
@@ -544,7 +555,6 @@ def main():
                  print("DataLoader exhausted and restarted.") # Info message
                  data_iterator = infinite_dataloader(dataloader)
                  sequence, line_tensor, onehot_line_tensor = next(data_iterator)
-
 
             line_tensor = line_tensor.to(device)
             onehot_line_tensor = onehot_line_tensor.to(device)
@@ -558,140 +568,161 @@ def main():
             log_outputs_for_train = (iter % args.print_freq == 0)
 
             # --- Train Step ---
-            output, loss, og_loss, reg_loss, current_all_outputs, current_all_labels = train(
+            # The train function returns step-by-step outputs for the first batch item if log_outputs=True
+            output, loss, og_loss, reg_loss, current_iter_all_outputs, current_iter_all_labels = train(
                 line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train
             )
-            # Store detailed outputs if they were generated
+            
+            # Store detailed outputs if they were generated FOR THIS ITERATION for print_freq
             if log_outputs_for_train:
-                all_outputs = current_all_outputs
-                all_labels = current_all_labels
+                all_outputs_for_print_freq = current_iter_all_outputs
+                all_labels_for_print_freq = current_iter_all_labels
 
             # --- Accumulate Stats for the PLOT (Averaging) Interval ---
-            # Use instantaneous loss (sequence average loss from train)
-            current_loss_plot_interval += loss
+            current_loss_plot_interval += loss # Use instantaneous loss (sequence average loss from train)
 
-            # Calculate correctness based on the *last* character prediction
+            # Calculate correctness based on the *last* character prediction for plot_freq
             if output is not None and line_tensor.numel() > 0:
                  output_detached = output.detach()
-                 last_output = output_detached[0] # First item in batch, last time step output
-                 last_target_idx = line_tensor[0, -1].item() # Target index for the last char
-                 predicted_idx = torch.argmax(last_output).item()
-                 is_correct = (predicted_idx == last_target_idx)
-                 current_correct_plot_interval += 1 if is_correct else 0
+                 last_output_first_item = output_detached[0] 
+                 last_target_idx_first_item = line_tensor[0, -1].item() 
+                 predicted_idx_last_char = torch.argmax(last_output_first_item).item()
+                 is_correct_last_char = (predicted_idx_last_char == last_target_idx_first_item)
+                 current_correct_plot_interval += 1 if is_correct_last_char else 0
 
             # ==============================================================
             # --- Frequent Detailed Console Logging Period (print_freq) ---
             # ==============================================================
             if iter % args.print_freq == 0:
-                # Print iteration status and INSTANTANEOUS loss for this sequence
                 print(f'{iter} {iter / args.n_iters * 100:.2f}% ({timeSince(start)}) InstLoss: {loss:.4f}')
 
-                # Check if detailed outputs were generated and stored
-                if all_outputs and all_labels:
-                    # --- Calculate Step-by-Step Accuracy ---
-                    num_steps = len(all_outputs)
-                    num_correct_steps = 0
-                    num_top2_correct_steps = 0
-                    if num_steps > 0:
-                        with torch.no_grad():
-                             # (Calculation code for step_accuracy_top1/top2 remains the same)
-                            for i in range(num_steps):
-                                step_output = all_outputs[i]
-                                step_label_onehot = all_labels[i]
-                                target_idx = torch.argmax(step_label_onehot).item()
-                                top_val, top_idx = torch.topk(step_output, 2)
-                                predicted_idx_top1 = top_idx[0].item()
-                                if predicted_idx_top1 == target_idx:
-                                    num_correct_steps += 1
-                                    num_top2_correct_steps += 1
-                                else:
-                                    if len(top_idx) > 1:
-                                        predicted_idx_top2 = top_idx[1].item()
-                                        if predicted_idx_top2 == target_idx:
-                                            num_top2_correct_steps += 1
+                # Check if detailed outputs were generated for this iteration
+                if all_outputs_for_print_freq and all_labels_for_print_freq:
+                    source_char_display_list = []
+                    target_display_list = []
+                    pred_t1_display_list = []
+                    pred_t2_display_list = []
 
-                        step_accuracy_top1 = (num_correct_steps / num_steps) if num_steps > 0 else 0.0
-                        step_accuracy_top2 = (num_top2_correct_steps / num_steps) if num_steps > 0 else 0.0
-                    else:
-                        step_accuracy_top1 = 0.0
-                        step_accuracy_top2 = 0.0
+                    num_prediction_steps = len(all_outputs_for_print_freq)
+                    num_correct_t1_for_seq = 0
+                    num_correct_top2_for_seq = 0 # Top-2 inclusive (T1 or T2 correct)
 
-                    # --- Print Detailed Step Acc & Sequences ---
-                    current_step_acc_t1_plot_interval += step_accuracy_top1
-                    current_step_acc_t2_plot_interval += step_accuracy_top2
+                    for i in range(num_prediction_steps):
+                        # Input character that led to this prediction (from the first item in batch)
+                        source_char_idx = line_tensor[0, i].item()
+                        source_char = idx_to_char.get(source_char_idx, '?') # Ensure idx_to_char is in scope
+                        source_char_display_list.append(source_char)
+
+                        # Target character for this step
+                        step_target_onehot = all_labels_for_print_freq[i]
+                        actual_target_idx = torch.argmax(step_target_onehot).item()
+                        actual_target_char = idx_to_char.get(actual_target_idx, '?')
+
+                        # Predictions for this step
+                        step_output_logits = all_outputs_for_print_freq[i]
+                        top_val, top_idx = torch.topk(step_output_logits, 2)
+                        
+                        predicted_idx_t1 = top_idx[0].item()
+                        predicted_char_t1 = idx_to_char.get(predicted_idx_t1, '?')
+
+                        predicted_idx_t2 = -1
+                        predicted_char_t2 = " " 
+                        if len(top_idx) > 1:
+                            predicted_idx_t2 = top_idx[1].item()
+                            predicted_char_t2 = idx_to_char.get(predicted_idx_t2, '?')
+                        
+                        # 1. Target Character ("Original" in your request)
+                        if actual_target_idx == predicted_idx_t1:
+                            # If T1 prediction matches the actual target
+                            target_display_list.append(f"{TermColors.GREEN}{actual_target_char}{TermColors.RESET}")
+                        elif len(top_idx) > 1 and predicted_idx_t2 == actual_target_idx:
+                            # Else, if T1 did NOT match, but T2 exists and T2 matches the actual target
+                            target_display_list.append(f"{TermColors.PURPLE}{actual_target_char}{TermColors.RESET}")
+                        else:
+                            # Else (T1 didn't match, AND (T2 didn't exist OR T2 also didn't match))
+                            target_display_list.append(f"{TermColors.WHITE}{actual_target_char}{TermColors.RESET}")
+                        
+
+                        # 2. Pred T1 Character
+                        if predicted_idx_t1 == actual_target_idx:
+                            pred_t1_display_list.append(f"{TermColors.GREEN}{predicted_char_t1}{TermColors.RESET}")
+                            num_correct_t1_for_seq += 1
+                            num_correct_top2_for_seq += 1 # If T1 is correct, Top2 is correct
+                        else:
+                            pred_t1_display_list.append(f"{TermColors.RESET}{predicted_char_t1}{TermColors.RESET}")
+                            # Check if T2 was correct for Top2 accuracy
+                            if len(top_idx) > 1 and predicted_idx_t2 == actual_target_idx:
+                                num_correct_top2_for_seq += 1
+                        
+                        # 3. Pred T2 Character
+                        if len(top_idx) > 1: # If a T2 prediction exists
+                            if predicted_idx_t2 == actual_target_idx:
+                                pred_t2_display_list.append(f"{TermColors.GREEN}{predicted_char_t2}{TermColors.RESET}")
+                            else: # T2 exists and is incorrect
+                                pred_t2_display_list.append(f"{TermColors.WHITE}{predicted_char_t2}{TermColors.RESET}")
+                        else: # No distinct T2 prediction
+                            pred_t2_display_list.append(f"{TermColors.PURPLE} {TermColors.RESET}") # Purple space
+
+                    # Print the assembled strings for the first sequence in the batch
+                    # print(f"  Src : {''.join(source_char_display_list)}")
+                    print(f"  Trg :  {''.join(target_display_list)}")
+                    # print(f"  PrT1:  {''.join(pred_t1_display_list)}")
+                    # print(f"  PrT2:  {''.join(pred_t2_display_list)}")
+                    
+                    # Calculate and print step-wise accuracy for THIS specific displayed sequence
+                    seq_step_accuracy_t1 = (num_correct_t1_for_seq / num_prediction_steps) if num_prediction_steps > 0 else 0.0
+                    seq_step_accuracy_top2 = (num_correct_top2_for_seq / num_prediction_steps) if num_prediction_steps > 0 else 0.0
+                    print(f'  Seq Acc: T1 {seq_step_accuracy_t1:.4f}, Top2 {seq_step_accuracy_top2:.4f}')
+                    print("-" * 40) # Separator
+                    
+                    # Accumulate these sequence-specific accuracies for the plot_freq interval
+                    current_step_acc_t1_plot_interval += seq_step_accuracy_t1
+                    current_step_acc_t2_plot_interval += seq_step_accuracy_top2
                     num_detailed_calcs_in_plot_interval += 1
-                    # *** END ADDED LINES ***
 
-                    # --- Print Detailed Step Acc & Sequences ---
-                    print(f'  Detailed @ {iter}: StepAccT1: {step_accuracy_top1:.4f} StepAccT2: {step_accuracy_top2:.4f}')
-                    try:
-                         # (Code to get sequence strings remains the same)
-                         target_sequence_str = sequence[0]
-                         predicted_chars = [idx_to_char.get(torch.argmax(o).item(), '?') for o in all_outputs]
-                         predicted_chars_top2 = [idx_to_char.get(torch.topk(o, 2).indices[1].item(), '?') for o in all_outputs]
-                         progression_top1 = ''.join(predicted_chars)
-                         progression_top2 = ''.join(predicted_chars_top2)
-                         last_predicted_char = predicted_chars[-1] if predicted_chars else '?'
-                         last_target_char = target_sequence_str[-1] if target_sequence_str else '?'
-                         correct_marker = '✓' if last_predicted_char == last_target_char else f'✗ ({last_target_char})'
-
-                         print(f'  Target: \033[91m{target_sequence_str}\033[0m')
-                         print(f'  Pred T1: \033[93m{progression_top1}\033[0m {correct_marker}')
-                         print(f'  Pred T2: \033[35m{progression_top2}\033[0m')
-                    except Exception as e:
-                        print(f"  Error preparing detailed print strings: {e}")
-
-                    # Clear the detailed output lists after use
-                    all_outputs.clear()
-                    all_labels.clear()
-                # No WandB logging in this frequent block
+                    # Clear the detailed output lists after use for this print_freq iteration
+                    all_outputs_for_print_freq.clear()
+                    all_labels_for_print_freq.clear()
+                # No WandB logging directly in this very frequent print_freq block
 
             # ==============================================================
             # --- Averaged Console Print & WandB Log Period (plot_freq) ---
             # ==============================================================
-            # Check plot_freq > 0 to avoid division by zero
             if args.plot_freq > 0 and iter % args.plot_freq == 0:
-                # Calculate averages over the plot interval
                 avg_loss_plot = current_loss_plot_interval / args.plot_freq
-                avg_acc_plot = current_correct_plot_interval / args.plot_freq
+                avg_acc_last_char_plot = current_correct_plot_interval / args.plot_freq
 
-                # Print the calculated averages for this interval
-                print(f'--- Avg Interval {iter // args.plot_freq} (ending @ {iter}) ---')
-                print(f'  Avg Loss (last {args.plot_freq} iters): {avg_loss_plot:.4f}')
-                print(f'  Avg Acc (last {args.plot_freq} iters): {avg_acc_plot:.4f}')
-                print(f'-------------------------------------')
+                print(f'--- Avg Interval Data (ending @ iter {iter}) ---')
+                print(f'  Avg Loss ({args.plot_freq} iters): {avg_loss_plot:.4f}')
+                print(f'  Avg Acc (last char, {args.plot_freq} iters): {avg_acc_last_char_plot:.4f}')
 
+                avg_step_acc_t1_plot = (current_step_acc_t1_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
+                avg_step_acc_t2_plot = (current_step_acc_t2_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
+                print(f'  Avg Step Acc T1 ({num_detailed_calcs_in_plot_interval} seqs): {avg_step_acc_t1_plot:.4f}')
+                print(f'  Avg Step Acc Top2 ({num_detailed_calcs_in_plot_interval} seqs): {avg_step_acc_t2_plot:.4f}')
+                print(f'-------------------------------------------')
 
-                # --- Log Averages to WandB ---
                 if args.track:
-                    # Calculate average step accuracies for the interval
-                    avg_step_acc_t1_plot = (current_step_acc_t1_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
-                    avg_step_acc_t2_plot = (current_step_acc_t2_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
-
-                    print(f"logging step: {state['wandb_step']}")
                     wandb.log({
-                        "iter": iter, # iter is still useful for reference to training iteration
-                        "avg_loss": avg_loss_plot,      # Log the averaged loss
-                        "avg_accuracy": avg_acc_plot,    # Log the averaged accuracy
-                        "avg_step_acc_t1": avg_step_acc_t1_plot, # Log averaged step acc T1
-                        "avg_step_acc_t2": avg_step_acc_t2_plot  # Log averaged step acc T2
-                    }, step=state['wandb_step'], commit=True) # Use wandb_step for the x-axis
-
-                state['wandb_step'] += 1 # Increment wandb_step after logging
-                # Reset ALL accumulators for the next plot interval
+                        "iter": iter,
+                        "avg_loss": avg_loss_plot,
+                        "avg_accuracy": avg_acc_last_char_plot,
+                        "avg_step_acc_t1": avg_step_acc_t1_plot,
+                        "avg_step_acc_t2": avg_step_acc_t2_plot
+                    }, step=state["wandb_step"], commit=True)
+                
+                state["wandb_step"] += 1
                 current_loss_plot_interval = 0.0
                 current_correct_plot_interval = 0
                 current_step_acc_t1_plot_interval = 0.0
                 current_step_acc_t2_plot_interval = 0.0
                 num_detailed_calcs_in_plot_interval = 0
 
-
             # ==============================================================
             # --- W&B Offline Sync Trigger ---
             # ==============================================================
-            # Trigger sync less often than WandB logging frequency (plot_freq)
             is_offline = os.getenv("WANDB_MODE") == "offline"
-            if args.plot_freq > 0 and iter % (args.plot_freq * 10) == 0 and args.track and is_offline:
+            if args.plot_freq > 0 and iter % (args.plot_freq * 10) == 0 and args.track and is_offline: # Trigger less often
                 print("Triggering W&B sync...")
                 try:
                     trigger_sync()
@@ -703,19 +734,22 @@ def main():
             # ==============================================================
             if iter % args.checkpoint_save_freq == 0:
                 checkpoint_state = {
-                    'iter': iter + 1, # Save the next iteration to start from
+                    'iter': iter + 1,
                     'model_state_dict': rnn.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
-                    'main_program_state': state, # Your custom state dict from main
-                    'config': config, # Save current run's config
+                    'main_program_state': state,
+                    'config': config,
                     'torch_rng_state': torch.get_rng_state(),
                     'numpy_rng_state': np.random.get_state(),
-                    # import random; 'python_rng_state': random.getstate(), # If using random module
                 }
-                # Save a versioned checkpoint
-                # save_checkpoint(checkpoint_state, args.checkpoint_dir, f"checkpoint_iter_{iter}.pth")
-                # Overwrite a 'latest' checkpoint for easy resumption
-                save_checkpoint(checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth")
+                save_checkpoint(checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
+
+        # End of training loop
+        if args.track and wandb.run:
+            print("Final W&B sync and finish run...")
+            trigger_sync() 
+            wandb.finish()
+
 
     except KeyboardInterrupt:
         print("\nTraining interrupted by user. Attempting to save final checkpoint...")
