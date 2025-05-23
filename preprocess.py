@@ -12,7 +12,11 @@ dataset_keys = {
     "3_resequence": "train",
     "4_resequence": "train",
     "palindrome_dataset": "train",
-    "palindrome_dataset_vary_length": "train",  # Added new dataset
+    "palindrome_dataset_vary_length": "train",
+    "1_palindrome_dataset_vary_length": "train", 
+    "2_palindrome_dataset_vary_length": "train", 
+    "3_palindrome_dataset_vary_length": "train", 
+    "4_palindrome_dataset_vary_length": "train", 
 }
 
 # Load dataset

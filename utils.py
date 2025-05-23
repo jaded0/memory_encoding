@@ -15,8 +15,11 @@ dataset_keys = {
     "3_resequence": "text",
     "4_resequence": "text",
     "palindrome_dataset": "text",
-    "palindrome_dataset_vary_length": "text",  # Added new dataset
-}
+    "palindrome_dataset_vary_length": "text",
+    "1_palindrome_dataset_vary_length": "text", 
+    "2_palindrome_dataset_vary_length": "text", 
+    "3_palindrome_dataset_vary_length": "text", 
+    "4_palindrome_dataset_vary_length": "text", }
 
 def get_charset(dataset_name):
     if (dataset_name == "long_range_memory_dataset") or (dataset_name == "palindrome_dataset") or (dataset_name == "palindrome_dataset_vary_length") or "resequence" in dataset_name:
