@@ -577,7 +577,7 @@ def main():
             output, loss, og_loss, reg_loss, current_iter_all_outputs, current_iter_all_labels = train(
                 line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train
             )
-            full_time_to_log_start = time.time()
+            
             # Store detailed outputs if they were generated FOR THIS ITERATION for print_freq
             if log_outputs_for_train:
                 all_outputs_for_print_freq = current_iter_all_outputs
@@ -708,7 +708,6 @@ def main():
                 print(f'-------------------------------------------')
 
                 if args.track:
-                    start_time_to_calc_norms = time.time()
                     # Calculate and gather norms
                     model_norms = rnn.get_all_norms()
                     
@@ -727,7 +726,7 @@ def main():
                     avg_lp_u_norm = sum(low_plast_updates) / len(low_plast_updates) if low_plast_updates else 0.0
                     avg_grad_norm = sum(grad_norms) / len(grad_norms) if grad_norms else 0.0 # For backprop
                     avg_weight_norm = sum(all_weights) / len(all_weights) if all_weights else 0.0 # For backprop/combined
-                    print(f'time to calculate norms: {time.time() - start_time_to_calc_norms:.4f} seconds')
+
                     log_data = {
                         "iter": iter,
                         "avg_loss": avg_loss_plot,
@@ -753,7 +752,6 @@ def main():
                 current_step_acc_t1_plot_interval = 0.0
                 current_step_acc_t2_plot_interval = 0.0
                 num_detailed_calcs_in_plot_interval = 0
-                print(f"full time to log: {time.time() - full_time_to_log_start:.4f} seconds")
 
             # ==============================================================
             # --- W&B Offline Sync Trigger ---
@@ -780,7 +778,6 @@ def main():
                     'numpy_rng_state': np.random.get_state(),
                 }
                 save_checkpoint(checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
-
 
         # End of training loop
         if args.track and wandb.run:
