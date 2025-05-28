@@ -34,6 +34,9 @@ class HebbianLinear(nn.Linear):
         self.is_last_layer = is_last_layer
         self.in_traces = nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
         self.out_traces = nn.Parameter(torch.zeros(batch_size, out_features), requires_grad=requires_grad)
+
+        self.last_high_plast_update_norm = nn.Parameter(torch.tensor(0.0), requires_grad=False)
+        self.last_low_plast_update_norm = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.register_buffer('t', torch.tensor(1.0))
         self.learning_rate = 1
         self.batch_size = batch_size
@@ -107,7 +110,7 @@ class HebbianLinear(nn.Linear):
         self.in_traces.data = input
         self.out_traces.data = output
 
-    def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip):
+    def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state):
         input = self.in_traces.data
         output = self.out_traces.data
         # reward = reward.detach()
@@ -161,6 +164,22 @@ class HebbianLinear(nn.Linear):
                     update[self.mask.unsqueeze(0).expand_as(update)].clamp_(-grad_clip, grad_clip)
                 self.candidate_weights.data += update
                 # print(self.weight.norm(p=2))
+        
+            if state["log_norms_now"] == True:
+                # Log the norms of the weights and updates
+                with torch.no_grad():
+                    mask_expanded = self.mask.unsqueeze(0).expand_as(update)
+
+                    high_plast_update = update[mask_expanded]
+                    low_plast_update = update[~mask_expanded]
+
+                    # Calculate and store high plasticity update norm
+                    high_norm = torch.norm(high_plast_update).item() if high_plast_update.numel() > 0 else 0.0
+                    self.last_high_plast_update_norm.data.fill_(high_norm)
+
+                    # Calculate and store low plasticity update norm
+                    low_norm = torch.norm(low_plast_update).item() if low_plast_update.numel() > 0 else 0.0
+                    self.last_low_plast_update_norm.data.fill_(low_norm)
         else:
             raise ValueError(f'Invalid update rule: {self.update_rule}')
 
@@ -184,6 +203,33 @@ class HebbianLinear(nn.Linear):
             max_weight_value = self.clip_weights
             # for p in self.weight:
             self.weight.data.clamp_(-max_weight_value, max_weight_value)
+
+    def get_norms(self):
+        """Calculates and returns weight and last update norms."""
+        with torch.no_grad():
+            weights = self.candidate_weights.data
+            # Ensure mask is broadcastable for indexing
+            mask_expanded = self.mask.unsqueeze(0).expand_as(weights)
+
+            combined_weight_norm = torch.norm(weights).item()
+
+            # Check if any high plasticity weights exist before calculating norm
+            high_plast_weights = weights[mask_expanded]
+            high_plast_norm = torch.norm(high_plast_weights).item() if high_plast_weights.numel() > 0 else 0.0
+
+            # Check if any low plasticity weights exist
+            low_plast_weights = weights[~mask_expanded]
+            low_plast_norm = torch.norm(low_plast_weights).item() if low_plast_weights.numel() > 0 else 0.0
+
+            # update_norm = self.last_update_norm.item()
+
+        return {
+            'weight_norm': combined_weight_norm,
+            'high_plast_weight_norm': high_plast_norm,
+            'low_plast_weight_norm': low_plast_norm,
+            'high_plast_update_norm': self.last_high_plast_update_norm.item(),
+            'low_plast_update_norm': self.last_low_plast_update_norm.item(),
+        }
 
 class HebbyRNN(torch.nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, charset, dropout_rate=0, residual_connection=False, init_type='zero', normalize=True, clip_weights=False, update_rule='damage', plast_clip=1, batch_size=1, forget_rate=0.7):
@@ -244,14 +290,33 @@ class HebbyRNN(torch.nn.Module):
         device = next(self.parameters()).device
         return torch.zeros(batch_size, self.hidden_size, device=device, requires_grad=False)
 
-    def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip):
+    def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state):
         # Apply imprints for all HebbianLinear layers
         for layer in self.linear_layers:
-            layer.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip)
+            layer.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state)
         # self.i2h.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate)
-        self.i2o.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip)
-        self.self_grad.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip)
+        self.i2o.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state)
+        self.self_grad.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state)
     
+    def get_all_norms(self):
+        """Aggregates norms from all HebbianLinear layers."""
+        all_norms = {}
+        
+        def _collect_norms(layers_list, prefix):
+            for i, layer in enumerate(layers_list):
+                if isinstance(layer, HebbianLinear):
+                    layer_norms = layer.get_norms()
+                    for key, value in layer_norms.items():
+                        all_norms[f'{prefix}_{i}_{key}'] = value
+
+        _collect_norms(self.linear_layers, 'linear')
+        _collect_norms([self.i2h], 'i2h')
+        _collect_norms([self.i2o], 'i2o')
+        # You might want to log self_grad norms too if it's important
+        _collect_norms([self.self_grad], 'self_grad') 
+
+        return all_norms
+
     def wipe(self):
         for layer in self.linear_layers:
             layer.wipe()
@@ -296,6 +361,19 @@ class SimpleRNN(nn.Module):
         # output = self.dropout(output)
         # output = self.softmax(output)
         return output, hidden
+
+    def get_all_norms(self):
+        """Calculates weight and gradient norms for SimpleRNN."""
+        all_norms = {}
+        with torch.no_grad():
+            for name, param in self.named_parameters():
+                if param.requires_grad:
+                    all_norms[f'{name}_weight_norm'] = torch.norm(param.data).item()
+                    if param.grad is not None:
+                        all_norms[f'{name}_grad_norm'] = torch.norm(param.grad).item()
+                    else:
+                        all_norms[f'{name}_grad_norm'] = 0.0 # No grad yet/available
+        return all_norms
 
     def initHidden(self, batch_size):
         device = next(self.parameters()).device

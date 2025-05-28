@@ -167,7 +167,7 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
         lr = config["learning_rate"]
         plast_clip = config["plast_clip"]
         reward_update += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
-        rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], plast_clip, config["imprint_rate"], config["grad_clip"])
+        rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], plast_clip, config["imprint_rate"], config["grad_clip"], state)
 
         state['training_instance'] += 1
 
@@ -380,6 +380,7 @@ def main():
         "last_n_rewards": [0],
         "last_n_reward_avg": 0,
         "wandb_step": 0,  # Initialize wandb_step
+        "log_norms_now": False,
     }
 
     # --- Resume from Checkpoint ---
@@ -437,6 +438,8 @@ def main():
                 "training_instance": 0,
                 "last_n_rewards": [0],
                 "last_n_reward_avg": 0,
+                "wandb_step": 0,  # Initialize wandb_step
+                "log_norms_now": False,
             }
         except Exception as e:
             print(f"Error loading checkpoint {checkpoint_to_load}: {e}. Starting from scratch.")
@@ -447,6 +450,8 @@ def main():
                 "training_instance": 0,
                 "last_n_rewards": [0],
                 "last_n_reward_avg": 0,
+                "wandb_step": 0,  # Initialize wandb_step
+                "log_norms_now": False,
             }
             if torch.cuda.is_available(): # If loading failed but cuda is an option
                 print("Fallback: Moving freshly initialized model to GPU after failed checkpoint load.")
@@ -533,7 +538,6 @@ def main():
 
     data_iterator = infinite_dataloader(dataloader)
 
-# REPLACE YOUR EXISTING 'try...except KeyboardInterrupt...' BLOCK IN main() WITH THIS:
     try:
         # Initialize accumulators for the less frequent PLOT interval (averaging)
         current_loss_plot_interval = 0.0
@@ -568,11 +572,12 @@ def main():
             log_outputs_for_train = (iter % args.print_freq == 0)
 
             # --- Train Step ---
+            state["log_norms_now"] = (iter % args.plot_freq == 0)
             # The train function returns step-by-step outputs for the first batch item if log_outputs=True
             output, loss, og_loss, reg_loss, current_iter_all_outputs, current_iter_all_labels = train(
                 line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train
             )
-            
+            full_time_to_log_start = time.time()
             # Store detailed outputs if they were generated FOR THIS ITERATION for print_freq
             if log_outputs_for_train:
                 all_outputs_for_print_freq = current_iter_all_outputs
@@ -703,13 +708,44 @@ def main():
                 print(f'-------------------------------------------')
 
                 if args.track:
-                    wandb.log({
+                    start_time_to_calc_norms = time.time()
+                    # Calculate and gather norms
+                    model_norms = rnn.get_all_norms()
+                    
+                    # Calculate averages for each type
+                    high_plast_weights = [v for k, v in model_norms.items() if 'high_plast_weight_norm' in k]
+                    low_plast_weights = [v for k, v in model_norms.items() if 'low_plast_weight_norm' in k]
+                    high_plast_updates = [v for k, v in model_norms.items() if 'high_plast_update_norm' in k]
+                    low_plast_updates = [v for k, v in model_norms.items() if 'low_plast_update_norm' in k]
+                    # Also keep track of backprop norms if needed (check if 'grad_norm' exists)
+                    grad_norms = [v for k, v in model_norms.items() if 'grad_norm' in k]
+                    all_weights = [v for k, v in model_norms.items() if 'weight_norm' in k] # For backprop or combined hebby
+
+                    avg_hp_w_norm = sum(high_plast_weights) / len(high_plast_weights) if high_plast_weights else 0.0
+                    avg_lp_w_norm = sum(low_plast_weights) / len(low_plast_weights) if low_plast_weights else 0.0
+                    avg_hp_u_norm = sum(high_plast_updates) / len(high_plast_updates) if high_plast_updates else 0.0
+                    avg_lp_u_norm = sum(low_plast_updates) / len(low_plast_updates) if low_plast_updates else 0.0
+                    avg_grad_norm = sum(grad_norms) / len(grad_norms) if grad_norms else 0.0 # For backprop
+                    avg_weight_norm = sum(all_weights) / len(all_weights) if all_weights else 0.0 # For backprop/combined
+                    print(f'time to calculate norms: {time.time() - start_time_to_calc_norms:.4f} seconds')
+                    log_data = {
                         "iter": iter,
                         "avg_loss": avg_loss_plot,
                         "avg_accuracy": avg_acc_last_char_plot,
                         "avg_step_acc_t1": avg_step_acc_t1_plot,
-                        "avg_step_acc_t2": avg_step_acc_t2_plot
-                    }, step=state["wandb_step"], commit=True)
+                        "avg_step_acc_t2": avg_step_acc_t2_plot,
+                        "avg_weight_norm": avg_weight_norm, # Combined / Backprop
+                        "avg_grad_update_norm": avg_grad_norm or (avg_hp_u_norm + avg_lp_u_norm), # Backprop or sum of Hebby
+                        "avg_high_plast_weight_norm": avg_hp_w_norm,
+                        "avg_low_plast_weight_norm": avg_lp_w_norm,
+                        "avg_high_plast_update_norm": avg_hp_u_norm,
+                        "avg_low_plast_update_norm": avg_lp_u_norm,
+                        # **model_norms # Log all individual norms too
+                    }
+                    wandb.log(log_data, step=state["wandb_step"], commit=True)
+                    # print some norm data too
+                    print(f'  Avg Weight Norm: {avg_weight_norm:.4f}')
+                    print(f'  Avg Grad/Update Norm: {avg_grad_norm:.4f}')
                 
                 state["wandb_step"] += 1
                 current_loss_plot_interval = 0.0
@@ -717,6 +753,7 @@ def main():
                 current_step_acc_t1_plot_interval = 0.0
                 current_step_acc_t2_plot_interval = 0.0
                 num_detailed_calcs_in_plot_interval = 0
+                print(f"full time to log: {time.time() - full_time_to_log_start:.4f} seconds")
 
             # ==============================================================
             # --- W&B Offline Sync Trigger ---
@@ -743,6 +780,7 @@ def main():
                     'numpy_rng_state': np.random.get_state(),
                 }
                 save_checkpoint(checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
+
 
         # End of training loop
         if args.track and wandb.run:

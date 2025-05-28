@@ -35,7 +35,7 @@ def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True):
         print(f"Loaded sample {split}: {dataset[split][0]}")
         
     if not "roneneldan/tinystories" in dataset_name:
-        dataset = dataset[dataset_keys[dataset_name]]
+        dataset = dataset[dataset_keys[dataset_name]]#.select(range(10000))
     else:
         dataset = dataset[dataset_keys[dataset_name]].select(range(1000000))
 
