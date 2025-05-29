@@ -58,7 +58,8 @@ CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for thi
 # For simplicity with --requeue, you might let WandB create new runs and correlate them manually by group/notes.
 
 GROUP=$EXPERIMENT_NAME
-NOTES="Testing --requeue with automatic latest checkpoint resumption. Original SLURM_JOB_ID (if first run): $SLURM_JOB_ID"
+NOTES="tryna get tags working"
+TAGS=mega norms_measured
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
@@ -141,6 +142,7 @@ python -u hebby.py \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --track true \
     --group "$GROUP" \
+    --tags $TAGS \
     --notes "$NOTES"
 
 echo "--- Training Finished ---"

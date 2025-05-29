@@ -28,6 +28,8 @@ CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for thi
 
 GROUP=$EXPERIMENT_NAME
 NOTES="Testing --requeue with automatic latest checkpoint resumption. Original SLURM_JOB_ID (if first run):"
+TAGS=mega norms_measured
+
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
@@ -108,6 +110,7 @@ python hebby.py \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --track true \
     --group "$GROUP" \
+    --tags $TAGS \
     --notes "$NOTES"
 
 echo "--- Training Finished ---"

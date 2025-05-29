@@ -223,6 +223,7 @@ def main():
     parser.add_argument('--dataset', type=str, default='roneneldan/tinystories', help='The dataset used for training.')
     parser.add_argument('--notes', type=str, default='nothing to say', help='talk about this run')
     parser.add_argument('--group', type=str, default="nothing_in_particular", help='Description of what sort of experiment is being run, here.')
+    parser.add_argument('--tags', nargs='*', default=[], help="List of tags for WandB")
     parser.add_argument('--batch_size', type=int, default=4, help='how much to stuff in at once')
     parser.add_argument('--positional_encoding_dim', type=int, default=0,
                         help='Dimension for optional positional encoding (0 means off).')
@@ -503,11 +504,12 @@ def main():
 
         if state['wandb_step'] == 0 or is_new_id: # If starting fresh or new ID generated
             wandb.init(project="hebby",
-                     group=args.group,
-                     notes=args.notes,
-                     config=wandb_config,
-                     id=wandb_run_id,  # Use the persistent ID
-                     )
+                    group=args.group,
+                    notes=args.notes,
+                    tags=args.tags,
+                    config=wandb_config,
+                    id=wandb_run_id,  # Use the persistent ID
+                    )
         else:
             print(f"WandB run ID: {wandb_run_id}, attempting to resume from iteration {start_iter}")
             resume_from_string = f"{wandb_run_id}?_step={state['wandb_step'] -1}" if wandb_run_id else None
@@ -515,6 +517,7 @@ def main():
             wandb.init(project="hebby",
                     group=args.group,
                     notes=args.notes,
+                    tags=args.tags,
                     config=wandb_config,
                     #    id=wandb_run_id, # Use the persistent ID
                     #    resume="must",
