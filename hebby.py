@@ -501,7 +501,7 @@ def main():
             "input_mode": args.input_mode,
         }
         # Key change here: use the determined wandb_run_id and resume="allow"
-
+        print(f"tags given to wandb: {args.tags}")
         if state['wandb_step'] == 0 or is_new_id: # If starting fresh or new ID generated
             wandb.init(project="hebby",
                     group=args.group,

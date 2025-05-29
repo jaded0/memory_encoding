@@ -13,7 +13,7 @@ export WANDB_MODE=online # online | offline | disabled
 # Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
 # the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
 # Let's assume you have a base experiment name.
-EXPERIMENT_NAME="normlog"
+EXPERIMENT_NAME="tagsplz"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # --- Experiment Identification (W&B) ---
@@ -27,8 +27,8 @@ CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for thi
 # For simplicity with --requeue, you might let WandB create new runs and correlate them manually by group/notes.
 
 GROUP=$EXPERIMENT_NAME
-NOTES="Testing --requeue with automatic latest checkpoint resumption. Original SLURM_JOB_ID (if first run):"
-TAGS=mega norms_measured
+NOTES="trying to get tags working"
+TAGS=(mega norms_measured)
 
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
@@ -110,7 +110,7 @@ python hebby.py \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --track true \
     --group "$GROUP" \
-    --tags $TAGS \
+    --tags "${TAGS[@]}" \
     --notes "$NOTES"
 
 echo "--- Training Finished ---"

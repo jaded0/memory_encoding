@@ -59,7 +59,7 @@ CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for thi
 
 GROUP=$EXPERIMENT_NAME
 NOTES="tryna get tags working"
-TAGS=mega norms_measured
+TAGS=(mega norms_measured)
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
@@ -142,7 +142,7 @@ python -u hebby.py \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --track true \
     --group "$GROUP" \
-    --tags $TAGS \
+    --tags "${TAGS[@]}" \
     --notes "$NOTES"
 
 echo "--- Training Finished ---"
