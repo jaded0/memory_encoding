@@ -10,7 +10,7 @@
 #SBATCH --gpus=1               # Number of GPUs requested
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
-#SBATCH --job-name=batch_4_4 # Job name in queue
+#SBATCH --job-name=normlog_4_4 # Job name in queue
 #SBATCH --output=hebby_train_%j.out # Standard output file (%j = job ID)
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 #SBATCH --qos=standby      # Make it preemptable
@@ -92,7 +92,7 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
+DATASET='2_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
 BATCH_SIZE=64                 # Sequences per batch
 
 # --- Loop Control & Logging ---
@@ -111,6 +111,9 @@ echo "  Checkpoint Save Freq: $CHECKPOINT_SAVE_FREQ"
 
 # Create checkpoint directory if it doesn't exist
 mkdir -p "$CHECKPOINT_DIR"
+
+# Save a copy of this script for reproducibility
+cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
 # The Python script will now automatically look for $CHECKPOINT_DIR/latest_checkpoint.pth
 python -u hebby.py \

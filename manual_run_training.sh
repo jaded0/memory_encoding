@@ -79,6 +79,10 @@ echo "  Checkpoint Save Freq: $CHECKPOINT_SAVE_FREQ"
 # Create checkpoint directory if it doesn't exist
 mkdir -p "$CHECKPOINT_DIR"
 
+# Save a copy of this script for reproducibility
+cp "$0" "$CHECKPOINT_DIR/run_used.sh"
+
+
 python hebby.py \
     --update_rule $UPDATE_RULE \
     --input_mode $INPUT_MODE \
