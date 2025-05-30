@@ -8,6 +8,6 @@ quite_forgetful_speedy
 quite_forgetful
 batch_4_4
 normlog_5_5
-normlog_4_4bigger_batch_4_3
+normlog_4_4
 bigger_batch_4_3
 big_run_try_self_grad_stable

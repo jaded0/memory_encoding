@@ -215,7 +215,6 @@ def main():
     parser.add_argument('--num_layers', type=int, default=3, help='Number of layers in RNN')
     parser.add_argument('--n_iters', type=int, default=10000, help='Number of training iterations')
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
-    parser.add_argument('--plot_freq', type=int, default=20, help='Frequency of plotting training loss')
     parser.add_argument('--update_rule', type=str, default='damage', help='How to update weights.')
     parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=True, help='Whether to normalize the weights.')
     parser.add_argument('--clip_weights', type=float, default=1, help='Whether to clip the weights.')
@@ -238,6 +237,8 @@ def main():
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
     print("SLURM Job ID:", job_id)
+    log_freq = int(os.getenv("LOG_FREQ", "5000"))
+    print("Log frequency set to:", log_freq)
 
     args = parser.parse_args()
     config = {
@@ -483,7 +484,7 @@ def main():
             "forget_rate": args.forget_rate,
             "normalize": args.normalize,
             "clip_weights": args.clip_weights,
-            "plot_frequency": args.plot_freq,
+            "log_freq": log_freq,
             "batch_size": args.batch_size,
             "slurm_id": job_id,
             "positional_encoding_dim": args.positional_encoding_dim,
@@ -566,7 +567,7 @@ def main():
             log_outputs_for_train = (iter % args.print_freq == 0)
 
             # --- Train Step ---
-            state["log_norms_now"] = (iter % args.plot_freq == 0)
+            state["log_norms_now"] = (iter % args.print_freq == 0)
             # The train function returns step-by-step outputs for the first batch item if log_outputs=True
             output, loss, og_loss, reg_loss, current_iter_all_outputs, current_iter_all_labels = train(
                 line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train
@@ -580,7 +581,7 @@ def main():
             # --- Accumulate Stats for the PLOT (Averaging) Interval ---
             current_loss_plot_interval += loss # Use instantaneous loss (sequence average loss from train)
 
-            # Calculate correctness based on the *last* character prediction for plot_freq
+            # Calculate correctness based on the *last* character prediction for print_freq
             if output is not None and line_tensor.numel() > 0:
                  output_detached = output.detach()
                  last_output_first_item = output_detached[0] 
@@ -674,7 +675,7 @@ def main():
                     print(f'  Seq Acc: T1 {seq_step_accuracy_t1:.4f}, Top2 {seq_step_accuracy_top2:.4f}')
                     print("-" * 40) # Separator
                     
-                    # Accumulate these sequence-specific accuracies for the plot_freq interval
+                    # Accumulate these sequence-specific accuracies for the print_freq interval
                     current_step_acc_t1_plot_interval += seq_step_accuracy_t1
                     current_step_acc_t2_plot_interval += seq_step_accuracy_top2
                     num_detailed_calcs_in_plot_interval += 1
@@ -685,15 +686,15 @@ def main():
                 # No WandB logging directly in this very frequent print_freq block
 
             # ==============================================================
-            # --- Averaged Console Print & WandB Log Period (plot_freq) ---
+            # --- Averaged Console Print & WandB Log Period (print_freq) ---
             # ==============================================================
-            if args.plot_freq > 0 and iter % args.plot_freq == 0:
-                avg_loss_plot = current_loss_plot_interval / args.plot_freq
-                avg_acc_last_char_plot = current_correct_plot_interval / args.plot_freq
+            if args.print_freq > 0 and iter % args.print_freq == 0:
+                avg_loss_plot = current_loss_plot_interval / args.print_freq
+                avg_acc_last_char_plot = current_correct_plot_interval / args.print_freq
 
                 print(f'--- Avg Interval Data (ending @ iter {iter}) ---')
-                print(f'  Avg Loss ({args.plot_freq} iters): {avg_loss_plot:.4f}')
-                print(f'  Avg Acc (last char, {args.plot_freq} iters): {avg_acc_last_char_plot:.4f}')
+                print(f'  Avg Loss ({args.print_freq} iters): {avg_loss_plot:.4f}')
+                print(f'  Avg Acc (last char, {args.print_freq} iters): {avg_acc_last_char_plot:.4f}')
 
                 avg_step_acc_t1_plot = (current_step_acc_t1_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
                 avg_step_acc_t2_plot = (current_step_acc_t2_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
@@ -751,8 +752,13 @@ def main():
             # --- W&B Offline Sync Trigger ---
             # ==============================================================
             is_offline = os.getenv("WANDB_MODE") == "offline"
-            if args.plot_freq > 0 and iter % (args.plot_freq * 10) == 0 and args.track and is_offline: # Trigger less often
+            if args.print_freq > 0 and iter % (log_freq) == 0 and args.track and is_offline: # Trigger less often
                 print("Triggering W&B sync...")
+                # the following code is pointless because environment variables don't change for a running process. I'll want to do it with signal handler or file based checks. 
+                # whatever I do can't slow anything down. Logging needs to be hyper lightweight.
+                # if int(os.getenv("LOG_FREQ", "5000")) != log_freq:
+                #     print(f"Log frequency has been updated to {log_freq} in the environment variable.")
+                #     log_freq = int(os.getenv("LOG_FREQ", "5000")) # Update log_freq if changed in env
                 try:
                     trigger_sync()
                 except Exception as e:

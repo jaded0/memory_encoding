@@ -109,7 +109,6 @@ BATCH_SIZE=4                 # Sequences per batch
 # --- Loop Control & Logging ---
 N_ITERS=1000000000           # Total training steps (iterations)
 PRINT_FREQ=5000                # Console print basic avg loss/acc frequency
-PLOT_FREQ=5000                # WandB log freq + Detailed console print freq
 
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"
@@ -147,7 +146,6 @@ python -u hebby.py \
     --batch_size $BATCH_SIZE \
     --n_iters $N_ITERS \
     --print_freq $PRINT_FREQ \
-    --plot_freq $PLOT_FREQ \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --track true \

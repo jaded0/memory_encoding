@@ -25,7 +25,7 @@ def get_charset(dataset_name):
     if dataset_name == "long_range_memory_dataset" or any(tag in dataset_name for tag in ("palindrome_dataset", "resequence")):
     # if (dataset_name == "long_range_memory_dataset") or (dataset_name == "palindrome_dataset") or (dataset_name == "palindrome_dataset_vary_length") or "resequence" in dataset_name:
         set = "0?!123,. "
-        print(f"Using a custom charset for long_range_memory_dataset or palindrome_dataset, of length {len(set)}")
+        # print(f"Using a custom charset for long_range_memory_dataset or palindrome_dataset, of length {len(set)}")
         return set
     else:
         return " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n-"
