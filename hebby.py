@@ -311,10 +311,10 @@ def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-
     charset, char_to_idx, idx_to_char, n_characters = initialize_charset(args.dataset)
-    # Ensure that idx_to_char contains all necessary mappings
+    config["charset_size"] = n_characters         # ← add this line
     print(f"Character set size: {n_characters}")
+
     # Use drop_last=True if batch size doesn't divide dataset size evenly
     dataloader = load_and_preprocess_data(args.dataset, args.batch_size, drop_last=True)
 
@@ -413,24 +413,13 @@ def main():
         try:
             # Pass device to load_checkpoint
             rnn, optimizer, start_iter, loaded_main_state, loaded_config = load_checkpoint(
-                checkpoint_to_load, rnn, optimizer, device=device
+                checkpoint_to_load, rnn, config, optimizer=optimizer, device=device
             )
             state.update(loaded_main_state) # Update your main program state
             print(f"resumed, starting from iter: {start_iter}")
 
-            # Optional: Config consistency check (important!)
-            # (Your existing config check logic)
-            if loaded_config.get('n_hidden') != config['n_hidden'] or \
-               loaded_config.get('n_layers') != config['n_layers'] or \
-               loaded_config.get('update_rule') != config['update_rule']: # Add more checks as needed
-                print("--------------------------------------------------------------------")
-                print("WARNING: Checkpoint loaded with potentially incompatible configuration!")
-                print(f"  Current n_hidden: {config['n_hidden']}, Loaded: {loaded_config.get('n_hidden')}")
-                print(f"  Current n_layers: {config['n_layers']}, Loaded: {loaded_config.get('n_layers')}")
-                print(f"  Current update_rule: {config['update_rule']}, Loaded: {loaded_config.get('update_rule')}")
-                print("  Please verify settings or delete checkpoint if starting a new experiment.")
-                print("--------------------------------------------------------------------")
-                # Decide whether to proceed or exit, e.g., sys.exit("Config mismatch with checkpoint.")
+
+
 
         except FileNotFoundError: # Should be rare due to os.path.isfile checks, but good for safety
             print(f"Warning: Checkpoint file {checkpoint_to_load} not found during load attempt. Starting from scratch.")
@@ -443,6 +432,8 @@ def main():
                 "log_norms_now": False,
             }
         except Exception as e:
+            if isinstance(e, RuntimeError) and "configuration mismatch" in str(e):
+                raise  # abort run, no fallbacks
             print(f"Error loading checkpoint {checkpoint_to_load}: {e}. Starting from scratch.")
             import traceback
             traceback.print_exc()

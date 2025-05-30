@@ -10,7 +10,7 @@
 #SBATCH --gpus=1               # Number of GPUs requested
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
-#SBATCH --job-name=normlog_4_4 # Job name in queue
+#SBATCH --job-name=big_run_try_self_grad # Job name in queue
 #SBATCH --output=hebby_train_%j.out # Standard output file (%j = job ID)
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 #SBATCH --qos=standby      # Make it preemptable
@@ -47,6 +47,16 @@ EXPERIMENT_NAME="$SLURM_JOB_NAME"
 # EXPERIMENT_NAME="big_recreate_phenomenon"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
+# --- add to run list and refuse duplicate ---
+RUN_LIST="current_runs.txt"
+grep -qxF "$EXPERIMENT_NAME" "$RUN_LIST" 2>/dev/null || echo "$EXPERIMENT_NAME" >> "$RUN_LIST"
+if squeue -h -n "$EXPERIMENT_NAME" -o "%A" \
+       | grep -v "^${SLURM_JOB_ID}$" \
+       | grep -q .; then
+  echo "⏩  $EXPERIMENT_NAME already RUNNING or PENDING – aborting."; exit 0
+fi
+
+
 # --- Experiment Identification (W&B) ---
 # It's good practice to include SLURM_JOB_ID in group/notes if you want to trace requeues in W&B
 # However, a requeued job gets a NEW SLURM_JOB_ID.
@@ -59,7 +69,7 @@ CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for thi
 
 GROUP=$EXPERIMENT_NAME
 NOTES="tryna get tags working"
-TAGS=(mega norms_measured)
+TAGS=(mega forgetful norms_measured)
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
@@ -73,13 +83,13 @@ INPUT_MODE='last_one'        # last_one | last_two
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-4           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
+PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient norm
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
 IMPRINT_RATE=0.3             # Hebbian imprint strength
 FORGET_RATE=0.01              # Weight decay/forgetting factor
-SELF_GRAD=0                  # Experimental recurrent replacement
+SELF_GRAD=1e-6                  # Experimental recurrent replacement
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
@@ -94,12 +104,12 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
 DATASET='2_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
-BATCH_SIZE=64                 # Sequences per batch
+BATCH_SIZE=4                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=1000000000           # Total training steps (iterations)
-PRINT_FREQ=2500                # Console print basic avg loss/acc frequency
-PLOT_FREQ=2500                # WandB log freq + Detailed console print freq
+PRINT_FREQ=5000                # Console print basic avg loss/acc frequency
+PLOT_FREQ=5000                # WandB log freq + Detailed console print freq
 
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"

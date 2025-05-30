@@ -1,0 +1,13 @@
+try_5_5_batches
+very_long_requeue_test
+big_recreate_phenomenon
+self_grad_forget
+big_run_try_self_grad
+quite_forgetful_speedier
+quite_forgetful_speedy
+quite_forgetful
+batch_4_4
+normlog_5_5
+normlog_4_4bigger_batch_4_3
+bigger_batch_4_3
+big_run_try_self_grad_stable

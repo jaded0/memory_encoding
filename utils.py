@@ -22,8 +22,11 @@ dataset_keys = {
     "4_palindrome_dataset_vary_length": "text", }
 
 def get_charset(dataset_name):
-    if (dataset_name == "long_range_memory_dataset") or (dataset_name == "palindrome_dataset") or (dataset_name == "palindrome_dataset_vary_length") or "resequence" in dataset_name:
-        return "0?!123,. "
+    if dataset_name == "long_range_memory_dataset" or any(tag in dataset_name for tag in ("palindrome_dataset", "resequence")):
+    # if (dataset_name == "long_range_memory_dataset") or (dataset_name == "palindrome_dataset") or (dataset_name == "palindrome_dataset_vary_length") or "resequence" in dataset_name:
+        set = "0?!123,. "
+        print(f"Using a custom charset for long_range_memory_dataset or palindrome_dataset, of length {len(set)}")
+        return set
     else:
         return " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,.;:'\"?!\n-"
 
@@ -115,7 +118,7 @@ def save_checkpoint(state_dict, checkpoint_dir, filename="checkpoint.pth"):
     torch.save(state_dict, filepath)
     print(f"Checkpoint saved to {filepath}")
 
-def load_checkpoint(checkpoint_path, model, optimizer=None, device='cpu'):
+def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'):
     """Loads checkpoint from disk"""
     if not os.path.isfile(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
@@ -123,8 +126,38 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, device='cpu'):
     print(f"=> Loading checkpoint '{checkpoint_path}'")
     # Load checkpoint to CPU first to avoid GPU OOM issues with mismatched models/devices
     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    loaded_config = checkpoint.get('config', {}) # The config used for this checkpoint
 
-    model.load_state_dict(checkpoint['model_state_dict'])
+    if loaded_config.get('n_hidden') != config['n_hidden'] or \
+        loaded_config.get('n_layers') != config['n_layers'] or \
+        loaded_config.get('update_rule') != config['update_rule'] or \
+        loaded_config.get('charset_size') != config['charset_size']:
+        print("--------------------------------------------------------------------")
+        print("ERROR: Checkpoint loaded with potentially incompatible configuration!")
+        print(f"  Current n_hidden: {config['n_hidden']}, Loaded: {loaded_config.get('n_hidden')}")
+        print(f"  Current n_layers: {config['n_layers']}, Loaded: {loaded_config.get('n_layers')}")
+        print(f"  Current update_rule: {config['update_rule']}, Loaded: {loaded_config.get('update_rule')}")
+        print(f"  Current charset_size: {config['charset_size']}, Loaded: {loaded_config.get('charset_size')}")
+        print("  Please verify settings or delete checkpoint if starting a new experiment.")
+        print("--------------------------------------------------------------------")
+        # Decide whether to proceed or exit, e.g., sys.exit("Config mismatch with checkpoint.")
+        raise RuntimeError("Checkpoint configuration mismatch – aborting run.")
+    
+    # saved_vocab = checkpoint['config']['charset_size']
+    # current_vocab = len(get_charset(args.dataset))
+    # assert saved_vocab == current_vocab, (
+    #     f"Vocabulary changed {saved_vocab} → {current_vocab}; "
+    #     "old checkpoints will not load."
+    # )
+
+    # allow new logging-only parameters to remain at their default values
+    missing, unexpected = model.load_state_dict(
+        checkpoint["model_state_dict"], strict=False
+    )
+    if missing:
+        print(f"✔  missing keys initialised fresh: {missing}")
+    if unexpected:
+        print(f"⚠️  unexpected keys in checkpoint: {unexpected}")
     model.to(device) # Move model to target device after loading
 
     if optimizer and 'optimizer_state_dict' in checkpoint and checkpoint['optimizer_state_dict']:
@@ -138,7 +171,7 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, device='cpu'):
 
     start_iter = checkpoint.get('iter', 1)
     main_state = checkpoint.get('main_program_state', {}) # Your custom state dict from main
-    loaded_config = checkpoint.get('config', {}) # The config used for this checkpoint
+    # loaded_config = checkpoint.get('config', {}) # The config used for this checkpoint
 
     # RNG states
     if 'torch_rng_state' in checkpoint:
@@ -150,4 +183,6 @@ def load_checkpoint(checkpoint_path, model, optimizer=None, device='cpu'):
     #     random.setstate(checkpoint['python_rng_state'])
 
     print(f"=> Loaded checkpoint '{checkpoint_path}' (iteration {start_iter})")
+
+
     return model, optimizer, start_iter, main_state, loaded_config
