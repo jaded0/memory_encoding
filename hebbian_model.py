@@ -46,7 +46,7 @@ class HebbianLinear(nn.Linear):
         self.feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
         # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
-        if update_rule == 'plastic_candidate' or update_rule == 'static_plastic_candidate':
+        if update_rule == 'plastic_candidate' or update_rule == 'static_plastic_candidate' or update_rule == 'nocycle':
             self.candidate_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=False)
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             distribution = torch.ones_like(self.weight)
@@ -139,6 +139,7 @@ class HebbianLinear(nn.Linear):
             # relu_derivative = (output.squeeze() > 0).float()  # 1 for activated neurons, 0 otherwise
             # projected_error *= relu_derivative
 
+        # original update rule with cyclic plasticity and positional encoding
         if self.update_rule == 'static_plastic_candidate':
             out = projected_error.unsqueeze(2)
 
@@ -164,6 +165,48 @@ class HebbianLinear(nn.Linear):
                     update[self.mask.unsqueeze(0).expand_as(update)].clamp_(-grad_clip, grad_clip)
                 self.candidate_weights.data += update
                 # print(self.weight.norm(p=2))
+        
+            if state["log_norms_now"] == True:
+                # Log the norms of the weights and updates
+                with torch.no_grad():
+                    mask_expanded = self.mask.unsqueeze(0).expand_as(update)
+
+                    high_plast_update = update[mask_expanded]
+                    low_plast_update = update[~mask_expanded]
+
+                    # Calculate and store high plasticity update norm
+                    high_norm = torch.norm(high_plast_update).item() if high_plast_update.numel() > 0 else 0.0
+                    self.last_high_plast_update_norm.data.fill_(high_norm)
+
+                    # Calculate and store low plasticity update norm
+                    low_norm = torch.norm(low_plast_update).item() if low_plast_update.numel() > 0 else 0.0
+                    self.last_low_plast_update_norm.data.fill_(low_norm)
+
+        # update rule without cyclic plasticity
+        elif self.update_rule == 'nocycle':
+            out = projected_error.unsqueeze(2)
+
+            candidate_update = out * input.unsqueeze(1)#(input.unsqueeze(1) - out_weights_product)
+            
+            # Reset or decay candidate_weights
+            batch_agg_candidate_update = candidate_update#.mean(dim=0)
+            update = batch_agg_candidate_update
+
+
+            if self.is_last_layer:
+                self.candidate_weights.add_(update, alpha=learning_rate)
+
+            else:
+                self.candidate_weights.mul_(self.forgetting_factor)      # forget
+
+                update.mul_(learning_rate * self.plasticity)             # scale
+                update.mul_(self.mask)                                   # gate
+
+                if grad_clip > 0:
+                    update.masked_clamp_(self.mask, -grad_clip, grad_clip)
+
+                self.candidate_weights.add_(update)
+
         
             if state["log_norms_now"] == True:
                 # Log the norms of the weights and updates
