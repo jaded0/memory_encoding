@@ -174,3 +174,4 @@ response.json
 .aider*
 checkpoints/
 synth_datasets/
+current_runs.txt
