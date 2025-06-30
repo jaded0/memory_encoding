@@ -233,6 +233,7 @@ def main():
                         help='Directory to save checkpoints.')
     parser.add_argument('--resume_checkpoint', type=str, default=None,
                         help='Path to checkpoint to resume training from (e.g., checkpoints/latest_checkpoint.pth).')
+    parser.add_argument('--plast_proportion', type=float, default=0.2, help='Proportion of weights that are plastic in Hebbian layers.')  # <-- Add this line
 
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
@@ -260,6 +261,7 @@ def main():
         "batch_size": args.batch_size,
         "self_grad": args.self_grad,
         "input_mode": args.input_mode,
+        "plast_proportion": args.plast_proportion,  # <-- Add this line
     }
     print(f"Input mode selected: {args.input_mode}") # Inform user
 
@@ -353,7 +355,6 @@ def main():
     print(f"Model Input Size: {input_size}, Hidden Size: {config['n_hidden']}, Output Size: {output_size}") # Log calculated size
 
     optimizer = None
-
     start_iter = 1
 
     if args.update_rule == "backprop":
@@ -371,11 +372,13 @@ def main():
         # The calculated 'input_size' above is just the 'input' part fed at each step.
         # HebbyRNN internally combines it with hidden_size.
         base_input_size = input_size # The size calculated above (chars + PE)
-        rnn = HebbyRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"], charset,
-                       normalize=args.normalize, residual_connection=args.residual_connection,
-                       clip_weights=args.clip_weights, update_rule=args.update_rule,
-                       plast_clip=config["plast_clip"], batch_size=config["batch_size"],
-                       forget_rate=config["forget_rate"])
+        rnn = HebbyRNN(
+            base_input_size, config["n_hidden"], output_size, config["n_layers"], charset,
+            normalize=args.normalize, residual_connection=args.residual_connection,
+            clip_weights=args.clip_weights, update_rule=args.update_rule,
+            plast_clip=config["plast_clip"], batch_size=config["batch_size"],
+            forget_rate=config["forget_rate"], plast_proportion=config["plast_proportion"]  # <-- Pass plast_proportion
+        )
 
     state = {
         "training_instance": 0,
@@ -491,6 +494,7 @@ def main():
             "checkpoint_save_freq": args.checkpoint_save_freq,
             "self_grad": args.self_grad,
             "input_mode": args.input_mode,
+            "plast_proportion": args.plast_proportion,
         }
         # Key change here: use the determined wandb_run_id and resume="allow"
         print(f"tags given to wandb: {args.tags}")

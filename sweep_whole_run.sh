@@ -102,8 +102,8 @@ DATASET='palindrome_dataset_vary_length'
 BATCH_SIZE=4
 N_ITERS=10000000000000
 PRINT_FREQ=2500
-PLOT_FREQ=2500
 SAVE_FREQUENCY=10000000
+PLAST_PROPORTION=0.2   # <-- Add this line
 
 # ======================== Execution ===========================================
 echo "--- Starting Training Task $SLURM_ARRAY_TASK_ID ---"
@@ -114,6 +114,7 @@ echo "    Learning Rate: $LEARNING_RATE"
 echo "    Plast Clip: $PLAST_CLIP"
 echo "    Forget Rate: $FORGET_RATE"
 echo "    Grad Clip: $GRAD_CLIP" # Added grad clip logging
+echo "    Plast Proportion: $PLAST_PROPORTION" # <-- Add this line
 echo "  W&B Group: $GROUP"
 echo "  W&B Notes/Run Name: $RUN_NOTES"
 echo "  Output File: slurm_logs/hebby_sweep_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.out"
@@ -140,11 +141,11 @@ python -u hebby.py \
     --batch_size $BATCH_SIZE \
     --n_iters $N_ITERS \
     --print_freq $PRINT_FREQ \
-    --plot_freq $PLOT_FREQ \
     --save_frequency $SAVE_FREQUENCY \
     --track true \
     --group "$GROUP" \
-    --notes "$RUN_NOTES"
+    --notes "$RUN_NOTES" \
+    --plast_proportion $PLAST_PROPORTION   # <-- Pass plast_proportion
 
 echo "--- Task $SLURM_ARRAY_TASK_ID Finished ---"
 

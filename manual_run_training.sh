@@ -33,7 +33,7 @@ TAGS=(mega norms_measured)
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
-CHECKPOINT_SAVE_FREQ=50000
+CHECKPOINT_SAVE_FREQ=100000
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
@@ -48,8 +48,9 @@ GRAD_CLIP=0                  # Max gradient norm
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
 IMPRINT_RATE=0.3             # Hebbian imprint strength
-FORGET_RATE=0.01              # Weight decay/forgetting factor
+FORGET_RATE=0.01             # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
+PLAST_PROPORTION=0.1         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
@@ -109,7 +110,8 @@ python -u hebby.py \
     --track true \
     --group "$GROUP" \
     --tags "${TAGS[@]}" \
-    --notes "$NOTES"
+    --notes "$NOTES" \
+    --plast_proportion $PLAST_PROPORTION   # <-- Pass plast_proportion
 
 echo "--- Training Finished ---"
 # ==============================================================================

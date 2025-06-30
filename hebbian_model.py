@@ -19,7 +19,7 @@ class PlasticityNorm(nn.Module):
         return self.lr * plasticity / norm
 
 class HebbianLinear(nn.Linear):
-    def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, update_rule='damage', requires_grad=False, is_last_layer=False, plast_clip=1, batch_size=1, forget_rate=0.7):
+    def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, update_rule='damage', requires_grad=False, is_last_layer=False, plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
 
         # Set requires_grad for the base class parameters
@@ -51,7 +51,7 @@ class HebbianLinear(nn.Linear):
             self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
             distribution = torch.ones_like(self.weight)
             rand_vals = torch.rand_like(self.weight)
-            self.mask = nn.Parameter((rand_vals < 0.2).bool(), requires_grad=False)
+            self.mask = nn.Parameter((rand_vals < plast_proportion).bool(), requires_grad=False)
             distribution[self.mask] = plast_clip
 
             mask_tier_two = rand_vals < 0.01
@@ -275,29 +275,66 @@ class HebbianLinear(nn.Linear):
         }
 
 class HebbyRNN(torch.nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, charset, dropout_rate=0, residual_connection=False, init_type='zero', normalize=True, clip_weights=False, update_rule='damage', plast_clip=1, batch_size=1, forget_rate=0.7):
+    def __init__(
+        self, input_size, hidden_size, output_size, num_layers, charset,
+        dropout_rate=0, residual_connection=False, init_type='zero',
+        normalize=True, clip_weights=False, update_rule='damage',
+        plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2
+    ):
         super(HebbyRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout_rate = dropout_rate
         self.init_type = init_type
-        inner_size = input_size+hidden_size
+        inner_size = input_size + hidden_size
         self.residual_connection = residual_connection
         self.batch_size = batch_size
         self.forget_rate = forget_rate
 
         # Using HebbianLinear instead of Linear
-        self.linear_layers = torch.nn.ModuleList([HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, plast_clip=plast_clip, batch_size=batch_size, forget_rate = forget_rate)])
+        self.linear_layers = torch.nn.ModuleList([
+            HebbianLinear(
+                inner_size, inner_size, charset,
+                normalize=normalize, clip_weights=clip_weights,
+                update_rule=update_rule, plast_clip=plast_clip,
+                batch_size=batch_size, forget_rate=forget_rate,
+                plast_proportion=plast_proportion  # <-- pass plast_proportion
+            )
+        ])
         for _ in range(1, num_layers):
-            self.linear_layers.append(HebbianLinear(inner_size, inner_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, plast_clip=plast_clip, batch_size=batch_size, forget_rate = forget_rate))
+            self.linear_layers.append(HebbianLinear(
+                inner_size, inner_size, charset,
+                normalize=normalize, clip_weights=clip_weights,
+                update_rule=update_rule, plast_clip=plast_clip,
+                batch_size=batch_size, forget_rate=forget_rate,
+                plast_proportion=plast_proportion  # <-- pass plast_proportion
+            ))
 
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
 
         # Final layers for hidden and output, also using HebbianLinear
-        self.i2h = HebbianLinear(inner_size, hidden_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, plast_clip=plast_clip, batch_size=batch_size, forget_rate = forget_rate)
-        self.i2o = HebbianLinear(inner_size, output_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=False, is_last_layer=True, plast_clip=plast_clip, batch_size=batch_size, forget_rate = forget_rate)
-        self.self_grad = HebbianLinear(inner_size, output_size, charset, normalize=normalize, clip_weights=clip_weights, update_rule=update_rule, requires_grad=False, is_last_layer=True, plast_clip=plast_clip, batch_size=batch_size, forget_rate = forget_rate)
+        self.i2h = HebbianLinear(
+            inner_size, hidden_size, charset,
+            normalize=normalize, clip_weights=clip_weights,
+            update_rule=update_rule, plast_clip=plast_clip,
+            batch_size=batch_size, forget_rate=forget_rate,
+            plast_proportion=plast_proportion  # <-- pass plast_proportion
+        )
+        self.i2o = HebbianLinear(
+            inner_size, output_size, charset,
+            normalize=normalize, clip_weights=clip_weights,
+            update_rule=update_rule, requires_grad=False, is_last_layer=True,
+            plast_clip=plast_clip, batch_size=batch_size, forget_rate=forget_rate,
+            plast_proportion=plast_proportion  # <-- pass plast_proportion
+        )
+        self.self_grad = HebbianLinear(
+            inner_size, output_size, charset,
+            normalize=normalize, clip_weights=clip_weights,
+            update_rule=update_rule, requires_grad=False, is_last_layer=True,
+            plast_clip=plast_clip, batch_size=batch_size, forget_rate=forget_rate,
+            plast_proportion=plast_proportion  # <-- pass plast_proportion
+        )
         self.softmax = torch.nn.LogSoftmax(dim=1)
 
     def forward(self, input, hidden):

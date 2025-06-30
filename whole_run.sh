@@ -90,6 +90,7 @@ GRAD_CLIP=0                  # Max gradient norm
 IMPRINT_RATE=0.3             # Hebbian imprint strength
 FORGET_RATE=0.01              # Weight decay/forgetting factor
 SELF_GRAD=1e-6                  # Experimental recurrent replacement
+PLAST_PROPORTION=0.2          # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
@@ -151,7 +152,8 @@ python -u hebby.py \
     --track true \
     --group "$GROUP" \
     --tags "${TAGS[@]}" \
-    --notes "$NOTES"
+    --notes "$NOTES" \
+    --plast_proportion $PLAST_PROPORTION   # <-- Pass plast_proportion
 
 echo "--- Training Finished ---"
 
