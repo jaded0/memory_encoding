@@ -173,3 +173,4 @@ slurm*
 response.json
 .aider*
 checkpoints/
+synth_datasets/

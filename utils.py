@@ -19,10 +19,18 @@ dataset_keys = {
     "1_palindrome_dataset_vary_length": "text", 
     "2_palindrome_dataset_vary_length": "text", 
     "3_palindrome_dataset_vary_length": "text", 
-    "4_palindrome_dataset_vary_length": "text", }
+    "4_palindrome_dataset_vary_length": "text",
+    "1_small_palindrome_dataset_vary_length": "text", 
+    "2_small_palindrome_dataset_vary_length": "text", 
+    "3_small_palindrome_dataset_vary_length": "text", 
+    "4_small_palindrome_dataset_vary_length": "text", }
 
 def get_charset(dataset_name):
-    if dataset_name == "long_range_memory_dataset" or any(tag in dataset_name for tag in ("palindrome_dataset", "resequence")):
+
+    if dataset_name in "small":
+        set = "23. "
+        return set
+    elif dataset_name == "long_range_memory_dataset" or any(tag in dataset_name for tag in ("palindrome_dataset", "resequence")):
     # if (dataset_name == "long_range_memory_dataset") or (dataset_name == "palindrome_dataset") or (dataset_name == "palindrome_dataset_vary_length") or "resequence" in dataset_name:
         set = "0?!123,. "
         # print(f"Using a custom charset for long_range_memory_dataset or palindrome_dataset, of length {len(set)}")

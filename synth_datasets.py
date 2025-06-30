@@ -65,7 +65,7 @@ dataset_dict = DatasetDict({
 })
 
 # Save the long range memory dataset to disk
-dataset_dict.save_to_disk("long_range_memory_dataset")
+dataset_dict.save_to_disk(f"synth_datasets/long_range_memory_dataset")
 
 # Generate resequence datasets
 for n in range(1, 5):
@@ -82,11 +82,11 @@ for n in range(1, 5):
     })
     
     # Save the resequence dataset to disk
-    resequence_dataset_dict.save_to_disk(f"{n}_resequence")
+    resequence_dataset_dict.save_to_disk(f"synth_datasets/{n}_resequence")
 
 
 # palindromes
-def generate_palindrome_sample(fixed=True, half_length=2):
+def generate_palindrome_sample(charset_type="palindrome_dataset", fixed=True, half_length=2):
     """
     Generates a palindrome sample.
 
@@ -104,7 +104,7 @@ def generate_palindrome_sample(fixed=True, half_length=2):
     """
     # Assume initialize_charset returns: charset_string, char_to_idx, idx_to_char, n_characters
     # We only need the charset_string here.
-    charset, _, _, _ = initialize_charset("palindrome_dataset")
+    charset, _, _, _ = initialize_charset(charset_type)
     start = "" # Seems unused in the original, kept for consistency
 
     if fixed:
@@ -140,10 +140,13 @@ def generate_palindrome_sample(fixed=True, half_length=2):
         # Return the variable-length palindrome with the fixed middle and EOS char
         return start + left_half + middle + left_half[::-1] + (eos_char * ((half_length - r_half_length) * 2))
 
-def generate_palindrome_dataset(num_samples, split, fixed=True, half_length=2):
-    samples = [generate_palindrome_sample(fixed=fixed, half_length=half_length) for _ in range(num_samples)]
+def generate_palindrome_dataset(num_samples, split, charset_type="palindrome_dataset", fixed=True, half_length=2):
+    samples = [generate_palindrome_sample(charset_type=charset_type, fixed=fixed, half_length=half_length) for _ in range(num_samples)]
     print(f"First 5 samples for {split}: {samples[:5]}")
     return Dataset.from_dict({"text": samples}, split=split)
+
+
+
 
 # Generate and save palindrome datasets
 train_palindrome = generate_palindrome_dataset(num_samples=1000000, split="train")
@@ -158,7 +161,7 @@ palindrome_dataset_dict = DatasetDict({
 for split in palindrome_dataset_dict:
     print(f"palindrome_dataset {split} columns: {palindrome_dataset_dict[split].column_names}")
     print(f"Sample {split}: {palindrome_dataset_dict[split][0]}")
-palindrome_dataset_dict.save_to_disk("palindrome_dataset")
+palindrome_dataset_dict.save_to_disk("synth_datasets/palindrome_dataset")
 
 # Generate and save palindrome datasets with varying lengths
 train_palindrome_vary_length = generate_palindrome_dataset(num_samples=1000000, split="train", fixed=False)
@@ -174,7 +177,7 @@ palindrome_dataset_vary_length_dict = DatasetDict({
 for split in palindrome_dataset_vary_length_dict:
     print(f"palindrome_dataset_vary_length {split} columns: {palindrome_dataset_vary_length_dict[split].column_names}")
     print(f"Sample {split}: {palindrome_dataset_vary_length_dict[split][0]}")
-palindrome_dataset_vary_length_dict.save_to_disk("palindrome_dataset_vary_length")
+palindrome_dataset_vary_length_dict.save_to_disk(f"synth_datasets/palindrome_dataset_vary_length")
 
 # Generate palindrome_vary_length datasets
 for n in range(1, 5):
@@ -193,4 +196,24 @@ for n in range(1, 5):
     for split in dataset_dict:
         print(f"{n}_palindrome_dataset_vary_length {split} columns: {dataset_dict[split].column_names}")
         print(f"Sample {split}: {dataset_dict[split][0]}")
-    dataset_dict.save_to_disk(sample_type)
+    dataset_dict.save_to_disk(f"synth_datasets/{sample_type}")
+
+
+# generate small palindrome datasets with varying lengths
+for n in range(1, 5):
+    sample_type = f"{n}_small_palindrome_dataset_vary_length"
+    # Generate and save palindrome datasets with varying lengths
+    train_palindrome_vary_length = generate_palindrome_dataset(num_samples=1000000, split="train", charset_type="small", fixed=False, half_length=n)
+    validation_palindrome_vary_length = generate_palindrome_dataset(num_samples=5000, split="validation", charset_type="small", fixed=False, half_length=n)
+    test_palindrome_vary_length = generate_palindrome_dataset(num_samples=20000, split="test", charset_type="small", fixed=False, half_length=n)
+
+    dataset_dict = DatasetDict({
+        "train": train_palindrome_vary_length,
+        "validation": validation_palindrome_vary_length,
+        "test": test_palindrome_vary_length
+    })
+
+    for split in dataset_dict:
+        print(f"{n}_small_palindrome_dataset_vary_length {split} columns: {dataset_dict[split].column_names}")
+        print(f"Sample {split}: {dataset_dict[split][0]}")
+    dataset_dict.save_to_disk(f"synth_datasets/{sample_type}")

@@ -13,7 +13,7 @@ export WANDB_MODE=online # online | offline | disabled
 # Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
 # the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
 # Let's assume you have a base experiment name.
-EXPERIMENT_NAME="tagsplz"
+EXPERIMENT_NAME="new_dataset"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # --- Experiment Identification (W&B) ---
@@ -27,7 +27,7 @@ CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for thi
 # For simplicity with --requeue, you might let WandB create new runs and correlate them manually by group/notes.
 
 GROUP=$EXPERIMENT_NAME
-NOTES="trying to get tags working"
+NOTES="trying a new dataset"
 TAGS=(mega norms_measured)
 
 
@@ -63,13 +63,12 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='1_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
+DATASET='2_small_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
 BATCH_SIZE=16                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=1000000000           # Total training steps (iterations)
 PRINT_FREQ=5000                # Console print basic avg loss/acc frequency
-PLOT_FREQ=5000                # WandB log freq + Detailed console print freq
 
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"
@@ -85,7 +84,7 @@ mkdir -p "$CHECKPOINT_DIR"
 cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
 
-python hebby.py \
+python -u hebby.py \
     --update_rule $UPDATE_RULE \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
@@ -105,7 +104,6 @@ python hebby.py \
     --batch_size $BATCH_SIZE \
     --n_iters $N_ITERS \
     --print_freq $PRINT_FREQ \
-    --plot_freq $PLOT_FREQ \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --track true \

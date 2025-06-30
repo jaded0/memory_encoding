@@ -16,13 +16,17 @@ dataset_keys = {
     "1_palindrome_dataset_vary_length": "train", 
     "2_palindrome_dataset_vary_length": "train", 
     "3_palindrome_dataset_vary_length": "train", 
-    "4_palindrome_dataset_vary_length": "train", 
+    "4_palindrome_dataset_vary_length": "train",
+    "1_small_palindrome_dataset_vary_length": "train", 
+    "2_small_palindrome_dataset_vary_length": "train", 
+    "3_small_palindrome_dataset_vary_length": "train", 
+    "4_small_palindrome_dataset_vary_length": "train", 
 }
 
 # Load dataset
 def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True):
     if ("palindrome_dataset" in dataset_name) or ("long_range_memory_dataset" in dataset_name) or ("resequence" in dataset_name):
-        dataset = load_from_disk(dataset_name)
+        dataset = load_from_disk(f"synth_datasets/{dataset_name}")
         print(f"loaded dataset {dataset_name}")
     else:
         dataset = load_dataset(dataset_name)
