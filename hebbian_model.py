@@ -55,7 +55,7 @@ class HebbianLinear(nn.Linear):
             distribution[self.mask] = plast_clip
 
             mask_tier_two = rand_vals < 0.01
-            forget_dist = torch.ones_like(self.weight)
+            forget_dist = torch.zeros_like(self.weight)
             forget_dist[self.mask] = forget_rate
             forget_dist[mask_tier_two] = forget_rate
             self.forgetting_factor = nn.Parameter(forget_dist, requires_grad=False)
@@ -156,7 +156,7 @@ class HebbianLinear(nn.Linear):
             else:
                 plastic_mask = (((torch.cos(self.t * self.frequency.data + self.phase_shift) + 1) * 0.5) > 0.5)
                 # plastic_mask = self.mask
-                self.candidate_weights *= torch.max(~self.mask, (1 - plastic_mask * (self.forgetting_factor)))
+                self.candidate_weights.mul_(1 - plastic_mask * self.forgetting_factor)
                 update = update * (learning_rate * self.plasticity.data) * plastic_mask
                 self.t += 1
                 # self.weight.data += update
@@ -197,7 +197,7 @@ class HebbianLinear(nn.Linear):
                 self.candidate_weights.add_(update, alpha=learning_rate)
 
             else:
-                self.candidate_weights.mul_(torch.max(~self.mask, (1 - self.forgetting_factor)))      # forget
+                self.candidate_weights.mul_(1 - self.forgetting_factor)      # forget
 
                 update.mul_(learning_rate * self.plasticity)             # scale
                 update.mul_(self.mask)                                   # gate
