@@ -197,7 +197,7 @@ class HebbianLinear(nn.Linear):
                 self.candidate_weights.add_(update, alpha=learning_rate)
 
             else:
-                self.candidate_weights.mul_(self.forgetting_factor)      # forget
+                self.candidate_weights.mul_(torch.max(~self.mask, (1 - self.forgetting_factor)))      # forget
 
                 update.mul_(learning_rate * self.plasticity)             # scale
                 update.mul_(self.mask)                                   # gate
