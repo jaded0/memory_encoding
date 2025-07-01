@@ -10,7 +10,7 @@
 #SBATCH --gpus=1               # Number of GPUs requested
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
-#SBATCH --job-name=big_run_try_self_grad # Job name in queue
+#SBATCH --job-name=nocycles_small_plast # Job name in queue
 #SBATCH --output=hebby_train_%j.out # Standard output file (%j = job ID)
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 #SBATCH --qos=standby      # Make it preemptable
@@ -69,27 +69,27 @@ fi
 
 GROUP=$EXPERIMENT_NAME
 NOTES="tryna get tags working"
-TAGS=(mega forgetful norms_measured)
+TAGS=(mega cycle_test)
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
-CHECKPOINT_SAVE_FREQ=50000
+CHECKPOINT_SAVE_FREQ=500000
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
-UPDATE_RULE='static_plastic_candidate'       # backprop | static_plastic_candidate | dfa | etc.
+UPDATE_RULE='nocycle'       # backprop | static_plastic_candidate | dfa | etc.
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-4           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
+PLAST_CLIP=5e3               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient norm
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
 IMPRINT_RATE=0.3             # Hebbian imprint strength
 FORGET_RATE=0.01              # Weight decay/forgetting factor
-SELF_GRAD=1e-6                  # Experimental recurrent replacement
+SELF_GRAD=0                  # Experimental recurrent replacement
 PLAST_PROPORTION=0.2          # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
 
 # --- Regularization & Stability ---
@@ -104,8 +104,8 @@ POS_ENCODING=128             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='2_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
-BATCH_SIZE=4                 # Sequences per batch
+DATASET='2_small_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
+BATCH_SIZE=16                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=1000000000           # Total training steps (iterations)

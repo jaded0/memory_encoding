@@ -261,7 +261,7 @@ def main():
         "batch_size": args.batch_size,
         "self_grad": args.self_grad,
         "input_mode": args.input_mode,
-        "plast_proportion": args.plast_proportion,  # <-- Add this line
+        "plast_proportion": args.plast_proportion,
     }
     print(f"Input mode selected: {args.input_mode}") # Inform user
 
@@ -474,7 +474,7 @@ def main():
             "learning_rate": args.learning_rate,
             "plast_learning_rate": args.plast_learning_rate,
             "plast_clip": args.plast_clip,
-            "effective_lr": args.learning_rate * (0.9 + 0.1 * args.plast_clip),
+            "effective_lr": args.learning_rate * (1-args.plast_proportion + args.plast_proportion * args.plast_clip),
             "architecture": "crazy hebbian thing" if args.update_rule != "backprop" else "SimpleRNN", # Adjusted architecture name
             "update_rule": args.update_rule,
             "residual_connection": args.residual_connection,
