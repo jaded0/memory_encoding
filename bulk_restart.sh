@@ -13,7 +13,7 @@ while IFS= read -r run || [[ -n $run ]]; do
     if [[ -x $jobscript ]]; then
       echo "➜  sbatch $jobscript"
       sbatch "$jobscript"
-      sleep 1  # Add 3-second delay between submissions
+      sleep 10  # Add 3-second delay between submissions
     else
       echo "⚠️  $jobscript missing or not executable"
     fi
