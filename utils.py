@@ -27,7 +27,7 @@ dataset_keys = {
 
 def get_charset(dataset_name):
 
-    if dataset_name in "small":
+    if "small" in dataset_name:
         set = "23. "
         return set
     elif dataset_name == "long_range_memory_dataset" or any(tag in dataset_name for tag in ("palindrome_dataset", "resequence")):
