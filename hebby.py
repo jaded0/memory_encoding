@@ -76,7 +76,7 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
             # If no positional encoding, the input is just the combined characters
             hot_input_char_tensor = combined_char_tensor
 
-        output, hidden = rnn(hot_input_char_tensor, hidden)
+        output, hidden, _ = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[:, i+1, :]
         # criterion with reduction='mean' gives the average loss for this step's batch
         step_loss = criterion(output, final_char)
@@ -161,6 +161,7 @@ def train_dfa(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs=F
 
         # Compute the loss for this step
         final_char = onehot_line_tensor[:, i+1, :]
+        output.requires_grad_(True) # Set requires_grad for autograd.grad to work.
         # Make sure criterion reduction is 'none' to get per-batch-item loss
         loss = config['criterion'](output, final_char)
         losses.append(loss.detach()) # Store the loss tensor [batch_size] for this step

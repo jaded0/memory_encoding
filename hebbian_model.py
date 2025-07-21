@@ -334,13 +334,13 @@ class HebbyRNN(torch.nn.Module):
             combined += residual
 
         # Split into hidden and output
-        hidden = self.i2h(combined)
+        # hidden = self.i2h(combined) # This call is expensive and its result is immediately discarded.
         hidden = torch.zeros_like(hidden) # disable hidden connection
         output = self.i2o(combined)
         self_grad = self.self_grad(combined)
         hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
 
-        output.requires_grad = True
+        # output.requires_grad = True # This is now handled in the training loop for DFA.
         # output = self.dropout(output)  # Apply dropout to the output before softmax
         # output = self.softmax(output)
         return output, hidden, self_grad
@@ -436,7 +436,7 @@ class SimpleRNN(nn.Module):
         hidden = torch.tanh(hidden)
         # output = self.dropout(output)
         # output = self.softmax(output)
-        return output, hidden
+        return output, hidden, None
 
     def get_all_norms(self):
         """Calculates weight and gradient norms for SimpleRNN."""
