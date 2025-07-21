@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # --- W&B Tracking ---
-export WANDB_MODE=disabled # online | offline | disabled
+export WANDB_MODE=online # online | offline | disabled
 
 # ======================== Experiment Identification ===========================
 
