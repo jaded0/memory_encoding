@@ -91,7 +91,7 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
 
         # For HebbyRNN, scale gradients for differential plasticity before clipping/stepping
         if isinstance(rnn, HebbyRNN):
-            rnn.scale_gradients(config['plast_learning_rate'], config['learning_rate'])
+            rnn.scale_gradients(config['plast_clip'])
 
         # Apply gradient clipping only if grad_clip is positive
         if config['grad_clip'] > 0:

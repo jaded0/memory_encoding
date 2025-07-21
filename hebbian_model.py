@@ -212,22 +212,23 @@ class HebbianLinear(nn.Linear):
             # computation graph needed by autograd for the backward pass.
             self.candidate_weights.data = self.candidate_weights.data * (1 - self.forgetting_factor)
 
-    def scale_gradients(self, plast_learning_rate, learning_rate):
+    def scale_gradients(self, plast_clip):
         """Scales gradients for high-plasticity weights before optimizer step."""
         if self.candidate_weights.grad is None:
             return
 
         with torch.no_grad():
-            if learning_rate > 0:
-                # Create a scaling tensor based on the plasticity mask
-                # Default scale is 1, high plasticity scale is plast_lr / base_lr
-                lr_scale = (plast_learning_rate / learning_rate)
-                # self.mask is [out, in], grad is [B, out, in]
-                scaling_factor = torch.ones_like(self.mask, dtype=torch.float)
-                scaling_factor[self.mask] = lr_scale
-                
-                # Apply scaling
-                self.candidate_weights.grad *= scaling_factor.unsqueeze(0)
+            # Create a scaling tensor based on the plasticity mask.
+            # The scaling factor is `plast_clip`, making the effective learning rate
+            # for high-plasticity weights `learning_rate * plast_clip`, which
+            # mirrors the logic in the DFA updater.
+            lr_scale = plast_clip
+            # self.mask is [out, in], grad is [B, out, in]
+            scaling_factor = torch.ones_like(self.mask, dtype=torch.float)
+            scaling_factor[self.mask] = lr_scale
+            
+            # Apply scaling
+            self.candidate_weights.grad *= scaling_factor.unsqueeze(0)
 
     def get_norms(self):
         """Calculates and returns weight and last update norms."""
@@ -360,14 +361,14 @@ class HebbyRNN(torch.nn.Module):
         self.i2o.apply_forget_step()
         self.self_grad.apply_forget_step()
 
-    def scale_gradients(self, plast_learning_rate, learning_rate):
+    def scale_gradients(self, plast_clip):
         """Calls scale_gradients on all HebbianLinear layers."""
         for layer in self.linear_layers:
-            layer.scale_gradients(plast_learning_rate, learning_rate)
-        self.i2h.scale_gradients(plast_learning_rate, learning_rate)
-        self.i2o.scale_gradients(plast_learning_rate, learning_rate)
+            layer.scale_gradients(plast_clip)
+        self.i2h.scale_gradients(plast_clip)
+        self.i2o.scale_gradients(plast_clip)
         # self_grad is not trained with backprop, so no gradients to scale
-        # self.self_grad.scale_gradients(plast_learning_rate, learning_rate)
+        # self.self_grad.scale_gradients(plast_clip)
 
     def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state):
         # Apply imprints for all HebbianLinear layers
