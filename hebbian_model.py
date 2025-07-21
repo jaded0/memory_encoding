@@ -19,18 +19,19 @@ class PlasticityNorm(nn.Module):
         return self.lr * plasticity / norm
 
 class HebbianLinear(nn.Linear):
-    def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, update_rule='damage', requires_grad=False, is_last_layer=False, plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2):
+    def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, updater='dfa', requires_grad=False, is_last_layer=False, plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
 
         # Set requires_grad for the base class parameters
-        self.weight.requires_grad = requires_grad
+        self.weight.requires_grad = False # Base weights are not trained directly
         if bias:
-            self.bias.requires_grad = requires_grad
+            # Bias is trained with backprop if the updater is backprop
+            self.bias.requires_grad = (updater == 'backprop')
 
         self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
         self.normalize = normalize
         self.clip_weights = clip_weights
-        self.update_rule = update_rule
+        self.updater = updater
         self.is_last_layer = is_last_layer
         self.in_traces = nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
         self.out_traces = nn.Parameter(torch.zeros(batch_size, out_features), requires_grad=requires_grad)
@@ -46,33 +47,34 @@ class HebbianLinear(nn.Linear):
         self.feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
         # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
-        if update_rule == 'plastic_candidate' or update_rule == 'static_plastic_candidate' or update_rule == 'nocycle':
-            self.candidate_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=False)
-            self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
-            distribution = torch.ones_like(self.weight)
-            rand_vals = torch.rand_like(self.weight)
-            self.mask = nn.Parameter((rand_vals < plast_proportion).bool(), requires_grad=False)
-            distribution[self.mask] = plast_clip
+        # Candidate weights are per-sample and store the "fast" or plastic weights.
+        # They require gradients only if we are using the backprop updater.
+        self.candidate_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=(updater == 'backprop'))
+        self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
+        distribution = torch.ones_like(self.weight)
+        rand_vals = torch.rand_like(self.weight)
+        self.mask = nn.Parameter((rand_vals < plast_proportion).bool(), requires_grad=False)
+        distribution[self.mask] = plast_clip
 
-            mask_tier_two = rand_vals < 0.01
-            forget_dist = torch.zeros_like(self.weight)
-            forget_dist[self.mask] = forget_rate
-            forget_dist[mask_tier_two] = forget_rate
-            self.forgetting_factor = nn.Parameter(forget_dist, requires_grad=False)
+        mask_tier_two = rand_vals < 0.01
+        forget_dist = torch.zeros_like(self.weight)
+        forget_dist[self.mask] = forget_rate
+        forget_dist[mask_tier_two] = forget_rate
+        self.forgetting_factor = nn.Parameter(forget_dist, requires_grad=False)
 
-            uniform = torch.empty_like(self.weight).uniform_(0.1, 2.0) * math.pi
-            self.phase_shift = nn.Parameter(torch.zeros_like(self.weight), requires_grad=False)
-            self.phase_shift[(rand_vals < 0.1).bool()] = math.pi/2
-            uniform[~self.mask] = 0 # only wave on our high-plast values here.
-            # Initialize plasticity parameters with the generated values
-            if self.is_last_layer == False:
-                self.plasticity = nn.Parameter(distribution, requires_grad=requires_grad)
-                self.frequency = nn.Parameter(uniform, requires_grad=requires_grad)  # Initialize plasticity parameters
-            else:
-                self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
-            print(f"Number of non-zero values in self.plasticity: {torch.count_nonzero(self.plasticity).item()}")
+        uniform = torch.empty_like(self.weight).uniform_(0.1, 2.0) * math.pi
+        self.phase_shift = nn.Parameter(torch.zeros_like(self.weight), requires_grad=False)
+        self.phase_shift[(rand_vals < 0.1).bool()] = math.pi/2
+        uniform[~self.mask] = 0 # only wave on our high-plast values here.
+        # Initialize plasticity parameters with the generated values
+        if self.is_last_layer == False:
+            self.plasticity = nn.Parameter(distribution, requires_grad=requires_grad)
+            self.frequency = nn.Parameter(uniform, requires_grad=requires_grad)  # Initialize plasticity parameters
+        else:
+            self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
+        print(f"Number of non-zero values in self.plasticity: {torch.count_nonzero(self.plasticity).item()}")
 
-            self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
+        self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
 
     def wipe(self):
         # Suppose candidate_weights is of shape [B, out_features, in_features]
@@ -139,92 +141,46 @@ class HebbianLinear(nn.Linear):
             # relu_derivative = (output.squeeze() > 0).float()  # 1 for activated neurons, 0 otherwise
             # projected_error *= relu_derivative
 
-        # original update rule with cyclic plasticity and positional encoding
-        if self.update_rule == 'static_plastic_candidate':
-            out = projected_error.unsqueeze(2)
+        # This is the DFA update rule, previously 'nocycle'. It's the only non-backprop rule.
+        out = projected_error.unsqueeze(2)
 
-            candidate_update = out * input.unsqueeze(1)#(input.unsqueeze(1) - out_weights_product)
-            
-            # Reset or decay candidate_weights
-            batch_agg_candidate_update = candidate_update#.mean(dim=0)
-            update = batch_agg_candidate_update
-
-            if self.is_last_layer:
-                update = update * learning_rate #* 0.1
-                # self.weight.data += update
-                self.candidate_weights.data += update
-            else:
-                plastic_mask = (((torch.cos(self.t * self.frequency.data + self.phase_shift) + 1) * 0.5) > 0.5)
-                # plastic_mask = self.mask
-                self.candidate_weights.mul_(1 - plastic_mask * self.forgetting_factor)
-                update = update * (learning_rate * self.plasticity.data) * plastic_mask
-                self.t += 1
-                # self.weight.data += update
-                # Only apply clamp if grad_clip is positive
-                if grad_clip > 0:
-                    update[self.mask.unsqueeze(0).expand_as(update)].clamp_(-grad_clip, grad_clip)
-                self.candidate_weights.data += update
-                # print(self.weight.norm(p=2))
+        candidate_update = out * input.unsqueeze(1)#(input.unsqueeze(1) - out_weights_product)
         
-            if state["log_norms_now"] == True:
-                # Log the norms of the weights and updates
-                with torch.no_grad():
-                    mask_expanded = self.mask.unsqueeze(0).expand_as(update)
-
-                    high_plast_update = update[mask_expanded]
-                    low_plast_update = update[~mask_expanded]
-
-                    # Calculate and store high plasticity update norm
-                    high_norm = torch.norm(high_plast_update).item() if high_plast_update.numel() > 0 else 0.0
-                    self.last_high_plast_update_norm.data.fill_(high_norm)
-
-                    # Calculate and store low plasticity update norm
-                    low_norm = torch.norm(low_plast_update).item() if low_plast_update.numel() > 0 else 0.0
-                    self.last_low_plast_update_norm.data.fill_(low_norm)
-
-        # update rule without cyclic plasticity
-        elif self.update_rule == 'nocycle':
-            out = projected_error.unsqueeze(2)
-
-            candidate_update = out * input.unsqueeze(1)#(input.unsqueeze(1) - out_weights_product)
-            
-            # Reset or decay candidate_weights
-            batch_agg_candidate_update = candidate_update#.mean(dim=0)
-            update = batch_agg_candidate_update
+        # Reset or decay candidate_weights
+        batch_agg_candidate_update = candidate_update#.mean(dim=0)
+        update = batch_agg_candidate_update
 
 
-            if self.is_last_layer:
-                self.candidate_weights.add_(update, alpha=learning_rate)
+        if self.is_last_layer:
+            self.candidate_weights.add_(update, alpha=learning_rate)
 
-            else:
-                self.candidate_weights.mul_(1 - self.forgetting_factor)      # forget
-
-                update.mul_(learning_rate * self.plasticity)             # scale
-                update.mul_(self.mask)                                   # gate
-
-                if grad_clip > 0:
-                    update.masked_clamp_(self.mask, -grad_clip, grad_clip)
-
-                self.candidate_weights.add_(update)
-
-        
-            if state["log_norms_now"] == True:
-                # Log the norms of the weights and updates
-                with torch.no_grad():
-                    mask_expanded = self.mask.unsqueeze(0).expand_as(update)
-
-                    high_plast_update = update[mask_expanded]
-                    low_plast_update = update[~mask_expanded]
-
-                    # Calculate and store high plasticity update norm
-                    high_norm = torch.norm(high_plast_update).item() if high_plast_update.numel() > 0 else 0.0
-                    self.last_high_plast_update_norm.data.fill_(high_norm)
-
-                    # Calculate and store low plasticity update norm
-                    low_norm = torch.norm(low_plast_update).item() if low_plast_update.numel() > 0 else 0.0
-                    self.last_low_plast_update_norm.data.fill_(low_norm)
         else:
-            raise ValueError(f'Invalid update rule: {self.update_rule}')
+            self.candidate_weights.mul_(1 - self.forgetting_factor)      # forget
+
+            update.mul_(learning_rate * self.plasticity)             # scale
+            update.mul_(self.mask)                                   # gate
+
+            if grad_clip > 0:
+                update.masked_clamp_(self.mask, -grad_clip, grad_clip)
+
+            self.candidate_weights.add_(update)
+
+    
+        if state["log_norms_now"] == True:
+            # Log the norms of the weights and updates
+            with torch.no_grad():
+                mask_expanded = self.mask.unsqueeze(0).expand_as(update)
+
+                high_plast_update = update[mask_expanded]
+                low_plast_update = update[~mask_expanded]
+
+                # Calculate and store high plasticity update norm
+                high_norm = torch.norm(high_plast_update).item() if high_plast_update.numel() > 0 else 0.0
+                self.last_high_plast_update_norm.data.fill_(high_norm)
+
+                # Calculate and store low plasticity update norm
+                low_norm = torch.norm(low_plast_update).item() if low_plast_update.numel() > 0 else 0.0
+                self.last_low_plast_update_norm.data.fill_(low_norm)
 
 
         # self.weight.data += update
@@ -278,7 +234,7 @@ class HebbyRNN(torch.nn.Module):
     def __init__(
         self, input_size, hidden_size, output_size, num_layers, charset,
         dropout_rate=0, residual_connection=False, init_type='zero',
-        normalize=True, clip_weights=False, update_rule='damage',
+        normalize=True, clip_weights=False, updater='dfa',
         plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2
     ):
         super(HebbyRNN, self).__init__()
@@ -296,18 +252,18 @@ class HebbyRNN(torch.nn.Module):
             HebbianLinear(
                 inner_size, inner_size, charset,
                 normalize=normalize, clip_weights=clip_weights,
-                update_rule=update_rule, plast_clip=plast_clip,
+                updater=updater, plast_clip=plast_clip,
                 batch_size=batch_size, forget_rate=forget_rate,
-                plast_proportion=plast_proportion  # <-- pass plast_proportion
+                plast_proportion=plast_proportion
             )
         ])
         for _ in range(1, num_layers):
             self.linear_layers.append(HebbianLinear(
                 inner_size, inner_size, charset,
                 normalize=normalize, clip_weights=clip_weights,
-                update_rule=update_rule, plast_clip=plast_clip,
+                updater=updater, plast_clip=plast_clip,
                 batch_size=batch_size, forget_rate=forget_rate,
-                plast_proportion=plast_proportion  # <-- pass plast_proportion
+                plast_proportion=plast_proportion
             ))
 
         # Dropout layers
@@ -317,23 +273,23 @@ class HebbyRNN(torch.nn.Module):
         self.i2h = HebbianLinear(
             inner_size, hidden_size, charset,
             normalize=normalize, clip_weights=clip_weights,
-            update_rule=update_rule, plast_clip=plast_clip,
+            updater=updater, plast_clip=plast_clip,
             batch_size=batch_size, forget_rate=forget_rate,
-            plast_proportion=plast_proportion  # <-- pass plast_proportion
+            plast_proportion=plast_proportion
         )
         self.i2o = HebbianLinear(
             inner_size, output_size, charset,
             normalize=normalize, clip_weights=clip_weights,
-            update_rule=update_rule, requires_grad=False, is_last_layer=True,
+            updater=updater, requires_grad=False, is_last_layer=True,
             plast_clip=plast_clip, batch_size=batch_size, forget_rate=forget_rate,
-            plast_proportion=plast_proportion  # <-- pass plast_proportion
+            plast_proportion=plast_proportion
         )
         self.self_grad = HebbianLinear(
             inner_size, output_size, charset,
             normalize=normalize, clip_weights=clip_weights,
-            update_rule=update_rule, requires_grad=False, is_last_layer=True,
+            updater=updater, requires_grad=False, is_last_layer=True,
             plast_clip=plast_clip, batch_size=batch_size, forget_rate=forget_rate,
-            plast_proportion=plast_proportion  # <-- pass plast_proportion
+            plast_proportion=plast_proportion
         )
         self.softmax = torch.nn.LogSoftmax(dim=1)
 
@@ -369,6 +325,23 @@ class HebbyRNN(torch.nn.Module):
     def initHidden(self, batch_size):
         device = next(self.parameters()).device
         return torch.zeros(batch_size, self.hidden_size, device=device, requires_grad=False)
+
+    def apply_forget_step(self):
+        """Calls apply_forget_step on all HebbianLinear layers."""
+        for layer in self.linear_layers:
+            layer.apply_forget_step()
+        self.i2h.apply_forget_step()
+        self.i2o.apply_forget_step()
+        self.self_grad.apply_forget_step()
+
+    def scale_gradients(self, plast_learning_rate, learning_rate):
+        """Calls scale_gradients on all HebbianLinear layers."""
+        for layer in self.linear_layers:
+            layer.scale_gradients(plast_learning_rate, learning_rate)
+        self.i2h.scale_gradients(plast_learning_rate, learning_rate)
+        self.i2o.scale_gradients(plast_learning_rate, learning_rate)
+        # self_grad is not trained with backprop, so no gradients to scale
+        # self.self_grad.scale_gradients(plast_learning_rate, learning_rate)
 
     def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state):
         # Apply imprints for all HebbianLinear layers

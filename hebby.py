@@ -30,8 +30,7 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
 
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
-    rnn.zero_grad()
-    rnn.zero_grad() # Ensure gradients are zeroed before the forward pass
+    optimizer.zero_grad()
 
     loss_total = 0
     num_steps = 0 # Keep track of the number of steps for averaging
@@ -41,6 +40,10 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
     n_characters = onehot_line_tensor.shape[2] # Get n_characters from the tensor shape
 
     for i in range(onehot_line_tensor.size()[1] - 1):
+        # For HebbyRNN with backprop, apply per-step weight decay (forgetting)
+        if isinstance(rnn, HebbyRNN):
+            rnn.apply_forget_step()
+
         # Get current character's one-hot vector
         current_char_tensor = onehot_line_tensor[:, i, :]
 
@@ -88,6 +91,10 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
         loss_avg_per_step = loss_total / num_steps # Calculate the average loss over all steps
         loss_avg_per_step.backward() # Compute gradients based on the average loss
 
+        # For HebbyRNN, scale gradients for differential plasticity before clipping/stepping
+        if isinstance(rnn, HebbyRNN):
+            rnn.scale_gradients(config['plast_learning_rate'], config['learning_rate'])
+
         # Apply gradient clipping only if grad_clip is positive
         if config['grad_clip'] > 0:
             torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
@@ -99,7 +106,7 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
 
     return output, loss_avg_item, 0, 0, all_outputs, all_labels # Return averaged loss item
 
-def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs=False):
+def train_dfa(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs=False):
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
     losses = []
@@ -190,14 +197,20 @@ def train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs
 
 
 def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
-    if config['update_rule'] == "backprop":
+    if config['updater'] == "backprop":
+        # Ensure criterion reduction is 'mean' for backprop
+        if config['criterion'].reduction != 'mean':
+             print("Warning: Overriding criterion reduction to 'mean' for backprop training.")
+             config['criterion'] = type(config['criterion'])(reduction='mean')
         return train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_outputs)
-    else:
-        # Ensure criterion reduction is 'none' for Hebby calculation of per-example gradient
+    elif config['updater'] == "dfa":
+        # Ensure criterion reduction is 'none' for DFA calculation of per-example gradient
         if config['criterion'].reduction != 'none':
-             print("Warning: Overriding criterion reduction to 'none' for Hebby training.")
+             print("Warning: Overriding criterion reduction to 'none' for DFA training.")
              config['criterion'] = type(config['criterion'])(reduction='none') # Recreate criterion with 'none'
-        return train_hebby(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs)
+        return train_dfa(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs)
+    else:
+        raise ValueError(f"Unknown updater: {config['updater']}")
 
 def main():
     # Parse command-line arguments
@@ -215,7 +228,8 @@ def main():
     parser.add_argument('--num_layers', type=int, default=3, help='Number of layers in RNN')
     parser.add_argument('--n_iters', type=int, default=10000, help='Number of training iterations')
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
-    parser.add_argument('--update_rule', type=str, default='damage', help='How to update weights.')
+    parser.add_argument('--model_type', type=str, default='hebby', choices=['rnn', 'hebby'], help='Model architecture to use.')
+    parser.add_argument('--updater', type=str, default='dfa', choices=['dfa', 'backprop'], help='Weight update algorithm to use.')
     parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=True, help='Whether to normalize the weights.')
     parser.add_argument('--clip_weights', type=float, default=1, help='Whether to clip the weights.')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
@@ -257,7 +271,8 @@ def main():
         "n_layers": args.num_layers,
         "track": args.track,
         "dataset": args.dataset,
-        "update_rule": args.update_rule,
+        "model_type": args.model_type,
+        "updater": args.updater,
         "batch_size": args.batch_size,
         "self_grad": args.self_grad,
         "input_mode": args.input_mode,
@@ -356,29 +371,28 @@ def main():
 
     optimizer = None
     start_iter = 1
+    base_input_size = input_size # The size calculated above (chars + PE)
 
-    if args.update_rule == "backprop":
-        # Note: SimpleRNN's internal structure assumes input -> hidden, not input -> combined
-        # Let's adjust SimpleRNN or how input_size is used if needed.
-        # Assuming SimpleRNN's first layer takes input_size + hidden_size
-        # We need to adjust the SimpleRNN definition or how we call it if input_size logic differs.
-        # --> Sticking to the provided SimpleRNN structure for now. It seems it *always* concatenates input+hidden.
-        # --> We need to pass the 'base' input size (chars + PE) to SimpleRNN, not the already-combined size.
-        base_input_size = input_size # The size calculated above (chars + PE)
-        rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"], dropout_rate=0) # Pass base_input_size
-        optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
-    else:
-        # HebbyRNN takes the combined size (input+hidden) in its layers.
-        # The calculated 'input_size' above is just the 'input' part fed at each step.
-        # HebbyRNN internally combines it with hidden_size.
-        base_input_size = input_size # The size calculated above (chars + PE)
+    if args.model_type == 'rnn':
+        print("Initializing SimpleRNN model.")
+        if args.updater != 'backprop':
+            raise ValueError("SimpleRNN model only supports the 'backprop' updater.")
+        rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"], dropout_rate=0)
+    elif args.model_type == 'hebby':
+        print(f"Initializing HebbyRNN model with '{args.updater}' updater.")
         rnn = HebbyRNN(
             base_input_size, config["n_hidden"], output_size, config["n_layers"], charset,
             normalize=args.normalize, residual_connection=args.residual_connection,
-            clip_weights=args.clip_weights, update_rule=args.update_rule,
+            clip_weights=args.clip_weights, updater=args.updater,
             plast_clip=config["plast_clip"], batch_size=config["batch_size"],
-            forget_rate=config["forget_rate"], plast_proportion=config["plast_proportion"]  # <-- Pass plast_proportion
+            forget_rate=config["forget_rate"], plast_proportion=config["plast_proportion"]
         )
+    else:
+        raise ValueError(f"Unknown model_type: {args.model_type}")
+
+    # Optimizer is only needed for backprop
+    if args.updater == 'backprop':
+        optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
 
     state = {
         "training_instance": 0,
@@ -475,8 +489,8 @@ def main():
             "plast_learning_rate": args.plast_learning_rate,
             "plast_clip": args.plast_clip,
             "effective_lr": args.learning_rate * (1-args.plast_proportion + args.plast_proportion * args.plast_clip),
-            "architecture": "crazy hebbian thing" if args.update_rule != "backprop" else "SimpleRNN", # Adjusted architecture name
-            "update_rule": args.update_rule,
+            "architecture": args.model_type,
+            "updater": args.updater,
             "residual_connection": args.residual_connection,
             "grad_clip": args.grad_clip,
             "n_hidden": args.hidden_size,

@@ -37,7 +37,14 @@ CHECKPOINT_SAVE_FREQ=100000
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
-UPDATE_RULE='nocycle'       # backprop | static_plastic_candidate | dfa | etc.
+# MODEL_TYPE: 'hebby' for the plastic model, 'rnn' for a standard SimpleRNN.
+# UPDATER: 'dfa' for Direct Feedback Alignment, 'backprop' for standard backpropagation.
+#
+# To run HebbyRNN with backprop: MODEL_TYPE='hebby', UPDATER='backprop', LEARNING_RATE=1e-5 (example)
+# To run SimpleRNN with backprop: MODEL_TYPE='rnn', UPDATER='backprop', LEARNING_RATE=1e-3 (example)
+#
+MODEL_TYPE='hebby'           # hebby | rnn
+UPDATER='dfa'                # dfa | backprop
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
@@ -86,7 +93,8 @@ cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
 
 python -u hebby.py \
-    --update_rule $UPDATE_RULE \
+    --model_type $MODEL_TYPE \
+    --updater $UPDATER \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
     --plast_learning_rate $PLAST_LEARNING_RATE \
