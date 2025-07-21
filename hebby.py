@@ -31,6 +31,10 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
 
+    # For HebbyRNN, reset high-plasticity weights at the start of the sequence.
+    if isinstance(rnn, HebbyRNN):
+        rnn.wipe()
+
     loss_total = 0.0
     num_steps = 0 # Keep track of the number of steps for averaging
 
@@ -95,6 +99,9 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
 
         # Apply gradient clipping only if grad_clip is positive
         if config['grad_clip'] > 0:
+            # TODO: This clips the norm of all gradients combined, which differs from
+            # the per-update element-wise clipping (`masked_clamp_`) in the DFA path.
+            # This is an intentional difference for now but worth noting for comparisons.
             torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
 
         optimizer.step() # Update parameters using the optimizer

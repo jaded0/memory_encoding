@@ -26,6 +26,10 @@ class HebbianLinear(nn.Linear):
         self.weight.requires_grad = False # Base weights are not trained directly
         if bias:
             # Bias is trained with backprop if the updater is backprop
+            # TODO: The bias update method differs between updaters. Backprop uses
+            # standard gradient descent via the optimizer. DFA uses a manual update
+            # based on the projected error signal in `apply_imprints`. This is a
+            # known difference for comparison.
             self.bias.requires_grad = (updater == 'backprop')
 
         self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
