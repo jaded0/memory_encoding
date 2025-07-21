@@ -21,6 +21,28 @@ class TermColors:
     WHITE = '\033[97m'
     RESET = '\033[0m'
 
+def plot_ascii_bar_graph(data, title, max_width=40):
+    if not data:
+        return
+
+    print(f"--- {title} ---")
+    
+    # Check if there's anything to plot
+    valid_values = [v for v in data.values() if v > 0]
+    if not valid_values:
+        for label, value in sorted(data.items()):
+            print(f"  {label}: {value:.6f}")
+        print("  (all values are zero or negative)")
+        return
+
+    max_val = max(valid_values)
+    max_label_len = max(len(label) for label in data.keys())
+
+    for label, value in sorted(data.items()):
+        bar_len = int((value / max_val) * max_width) if value > 0 else 0
+        bar = '█' * bar_len
+        print(f"  {label.ljust(max_label_len)} | {bar} ({value:.6f})")
+
 # from memory_profiler import profile
 
 trigger_sync = TriggerWandbSyncHook()  # <--- New!
@@ -742,6 +764,20 @@ def main():
                 if args.track:
                     # Calculate and gather norms
                     model_norms = rnn.get_all_norms()
+
+                    # --- ASCII Bar Graph for Gradient/Update Norms ---
+                    hp_update_norms = {
+                        k.replace('_high_plast_update_norm', ''): v
+                        for k, v in model_norms.items()
+                        if 'high_plast_update_norm' in k
+                    }
+                    lp_update_norms = {
+                        k.replace('_low_plast_update_norm', ''): v
+                        for k, v in model_norms.items()
+                        if 'low_plast_update_norm' in k
+                    }
+                    plot_ascii_bar_graph(hp_update_norms, "High-Plast Update/Grad Norms")
+                    plot_ascii_bar_graph(lp_update_norms, "Low-Plast Update/Grad Norms")
                     
                     # Calculate averages for each type
                     high_plast_weights = [v for k, v in model_norms.items() if 'high_plast_weight_norm' in k]
