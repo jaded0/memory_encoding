@@ -400,7 +400,7 @@ def main():
 
     # Optimizer is only needed for backprop
     if args.updater == 'backprop':
-        optimizer = torch.optim.Adam(rnn.parameters(), lr=config['learning_rate'])
+        optimizer = torch.optim.SGD(rnn.parameters(), lr=config['learning_rate'])
 
     state = {
         "training_instance": 0,

@@ -217,6 +217,10 @@ class HebbianLinear(nn.Linear):
         if self.candidate_weights.grad is None:
             return
 
+        # Do not scale gradients for the final layer, mirroring the DFA update rule.
+        if self.is_last_layer:
+            return
+
         with torch.no_grad():
             # Create a scaling tensor based on the plasticity mask.
             # The scaling factor is `plast_clip`, making the effective learning rate
