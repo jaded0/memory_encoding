@@ -577,7 +577,7 @@ def main():
             onehot_line_tensor = onehot_line_tensor.to(device)
 
             # Ensure batch size matches model expectation if using HebbyRNN with fixed batch size param
-            if args.update_rule != "backprop" and hasattr(rnn, 'batch_size') and onehot_line_tensor.shape[0] != rnn.batch_size:
+            if args.updater != "backprop" and hasattr(rnn, 'batch_size') and onehot_line_tensor.shape[0] != rnn.batch_size:
                  print(f"Warning: Batch size mismatch ({onehot_line_tensor.shape[0]} vs {rnn.batch_size}). Skipping batch.")
                  continue # Skip this batch
 
