@@ -207,7 +207,10 @@ class HebbianLinear(nn.Linear):
         """Applies forgetting factor to high-plasticity weights.
         This is done with no_grad to prevent interference with backprop."""
         with torch.no_grad():
-            self.candidate_weights.mul_(1 - self.forgetting_factor)
+            # Use non-inplace multiplication to avoid RuntimeError during backprop.
+            # The original `mul_` was an inplace operation that corrupted the
+            # computation graph needed by autograd for the backward pass.
+            self.candidate_weights.data = self.candidate_weights.data * (1 - self.forgetting_factor)
 
     def scale_gradients(self, plast_learning_rate, learning_rate):
         """Scales gradients for high-plasticity weights before optimizer step."""
