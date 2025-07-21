@@ -203,6 +203,29 @@ class HebbianLinear(nn.Linear):
             # for p in self.weight:
             self.weight.data.clamp_(-max_weight_value, max_weight_value)
 
+    def apply_forget_step(self):
+        """Applies forgetting factor to high-plasticity weights.
+        This is done with no_grad to prevent interference with backprop."""
+        with torch.no_grad():
+            self.candidate_weights.mul_(1 - self.forgetting_factor)
+
+    def scale_gradients(self, plast_learning_rate, learning_rate):
+        """Scales gradients for high-plasticity weights before optimizer step."""
+        if self.candidate_weights.grad is None:
+            return
+
+        with torch.no_grad():
+            if learning_rate > 0:
+                # Create a scaling tensor based on the plasticity mask
+                # Default scale is 1, high plasticity scale is plast_lr / base_lr
+                lr_scale = (plast_learning_rate / learning_rate)
+                # self.mask is [out, in], grad is [B, out, in]
+                scaling_factor = torch.ones_like(self.mask, dtype=torch.float)
+                scaling_factor[self.mask] = lr_scale
+                
+                # Apply scaling
+                self.candidate_weights.grad *= scaling_factor.unsqueeze(0)
+
     def get_norms(self):
         """Calculates and returns weight and last update norms."""
         with torch.no_grad():
