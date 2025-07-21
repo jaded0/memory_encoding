@@ -92,7 +92,8 @@ class HebbianLinear(nn.Linear):
 
         # Apply the mask
         self.weight[self.mask] = 0
-        self.candidate_weights[batch_mask] = 0
+        # Use .data to modify the tensor in-place without interfering with autograd
+        self.candidate_weights.data[batch_mask] = 0
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
 
@@ -408,7 +409,9 @@ class HebbyRNN(torch.nn.Module):
     def wipe(self):
         for layer in self.linear_layers:
             layer.wipe()
-        
+        self.i2h.wipe()
+        self.i2o.wipe()
+        self.self_grad.wipe()
 
 
 class SimpleRNN(nn.Module):
