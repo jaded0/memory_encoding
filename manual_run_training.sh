@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # --- W&B Tracking ---
-export WANDB_MODE=online # online | offline | disabled
+export WANDB_MODE=disabled # online | offline | disabled
 
 # ======================== Experiment Identification ===========================
 
@@ -44,7 +44,7 @@ CHECKPOINT_SAVE_FREQ=100000
 # To run SimpleRNN with backprop: MODEL_TYPE='rnn', UPDATER='backprop', LEARNING_RATE=1e-3 (example)
 #
 MODEL_TYPE='hebby'           # hebby | rnn
-UPDATER='dfa'                # dfa | backprop
+UPDATER='backprop'                # dfa | backprop
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
@@ -76,7 +76,7 @@ BATCH_SIZE=16                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=1000000000           # Total training steps (iterations)
-PRINT_FREQ=100000                # Console print basic avg loss/acc frequency
+PRINT_FREQ=5000                # Console print basic avg loss/acc frequency
 
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"
