@@ -66,7 +66,7 @@ CLIP_WEIGHTS=0               # Max absolute weight value (0=off)
 # ======================== Model Architecture ==================================
 HIDDEN_SIZE=512              # RNN hidden state units
 NUM_LAYERS=3                 # Number of RNN layers
-RESIDUAL_CONNECTION=false    # Use skip connections (true/false)
+RESIDUAL_CONNECTION=true     # Use skip connections (true/false)
 POS_ENCODING=0             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
