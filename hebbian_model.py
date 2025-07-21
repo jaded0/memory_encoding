@@ -266,6 +266,26 @@ class HebbianLinear(nn.Linear):
             'low_plast_update_norm': self.last_low_plast_update_norm.item(),
         }
 
+    def store_grad_norms(self):
+        """Calculates the norm of the current gradient and stores it."""
+        if self.candidate_weights.grad is None:
+            self.last_high_plast_update_norm.data.fill_(0.0)
+            self.last_low_plast_update_norm.data.fill_(0.0)
+            return
+
+        with torch.no_grad():
+            grad = self.candidate_weights.grad
+            mask_expanded = self.mask.unsqueeze(0).expand_as(grad)
+
+            high_plast_grad = grad[mask_expanded]
+            low_plast_grad = grad[~mask_expanded]
+
+            high_norm = torch.norm(high_plast_grad).item() if high_plast_grad.numel() > 0 else 0.0
+            self.last_high_plast_update_norm.data.fill_(high_norm)
+
+            low_norm = torch.norm(low_plast_grad).item() if low_plast_grad.numel() > 0 else 0.0
+            self.last_low_plast_update_norm.data.fill_(low_norm)
+
 class HebbyRNN(torch.nn.Module):
     def __init__(
         self, input_size, hidden_size, output_size, num_layers, charset,
@@ -405,6 +425,15 @@ class HebbyRNN(torch.nn.Module):
         _collect_norms([self.self_grad], 'self_grad') 
 
         return all_norms
+
+    def store_all_grad_norms(self):
+        """Calls store_grad_norms on all HebbianLinear layers that are trained."""
+        for layer in self.linear_layers:
+            layer.store_grad_norms()
+        self.i2h.store_grad_norms()
+        self.i2o.store_grad_norms()
+        # self_grad is not trained with backprop, so its grad will be None.
+        # self.self_grad.store_grad_norms()
 
     def wipe(self):
         for layer in self.linear_layers:

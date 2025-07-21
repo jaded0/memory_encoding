@@ -25,7 +25,7 @@ class TermColors:
 
 trigger_sync = TriggerWandbSyncHook()  # <--- New!
 
-def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_outputs=False):
+def train_backprop(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=False):
     criterion = config['criterion']
 
     batch_size = onehot_line_tensor.shape[0]
@@ -96,6 +96,10 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
         # For HebbyRNN, scale gradients for differential plasticity before clipping/stepping
         if isinstance(rnn, HebbyRNN):
             rnn.scale_gradients(config['plast_clip'])
+
+        # If it's a logging iteration, store the gradient norms from this step
+        if state['log_norms_now'] and isinstance(rnn, HebbyRNN):
+            rnn.store_all_grad_norms()
 
         # Apply gradient clipping only if grad_clip is positive
         if config['grad_clip'] > 0:
@@ -217,7 +221,7 @@ def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, l
         if config['criterion'].reduction != 'mean':
              print("Warning: Overriding criterion reduction to 'mean' for backprop training.")
              config['criterion'] = type(config['criterion'])(reduction='mean')
-        return train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_outputs)
+        return train_backprop(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
     elif config['updater'] == "dfa":
         # Ensure criterion reduction is 'none' for DFA calculation of per-example gradient
         if config['criterion'].reduction != 'none':
