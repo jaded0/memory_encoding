@@ -30,9 +30,8 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
 
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
-    optimizer.zero_grad()
 
-    loss_total = 0
+    loss_total = 0.0
     num_steps = 0 # Keep track of the number of steps for averaging
 
     all_outputs = []
@@ -40,6 +39,12 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
     n_characters = onehot_line_tensor.shape[2] # Get n_characters from the tensor shape
 
     for i in range(onehot_line_tensor.size()[1] - 1):
+        optimizer.zero_grad() # Zero gradients for this specific step
+
+        # Prevent BPTT by detaching the hidden state. Recurrence is disabled anyway,
+        # but this is good practice for this training style.
+        hidden = hidden.detach()
+
         # For HebbyRNN with backprop, apply per-step weight decay (forgetting)
         if isinstance(rnn, HebbyRNN):
             rnn.apply_forget_step()
@@ -80,16 +85,9 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
         final_char = onehot_line_tensor[:, i+1, :]
         # criterion with reduction='mean' gives the average loss for this step's batch
         step_loss = criterion(output, final_char)
-        loss_total += step_loss
-        num_steps += 1
-
-        if log_outputs:
-            all_outputs.append(output[0]) # Note: Only logs the first item in the batch
-            all_labels.append(final_char[0]) # Note: Only logs the first item in the batch
-
-    if num_steps > 0:
-        loss_avg_per_step = loss_total / num_steps # Calculate the average loss over all steps
-        loss_avg_per_step.backward() # Compute gradients based on the average loss
+        
+        # Perform backward pass and update for THIS step
+        step_loss.backward()
 
         # For HebbyRNN, scale gradients for differential plasticity before clipping/stepping
         if isinstance(rnn, HebbyRNN):
@@ -100,7 +98,16 @@ def train_backprop(line_tensor, onehot_line_tensor, rnn, config, optimizer, log_
             torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
 
         optimizer.step() # Update parameters using the optimizer
-        loss_avg_item = loss_avg_per_step.item()
+
+        loss_total += step_loss.item()
+        num_steps += 1
+
+        if log_outputs:
+            all_outputs.append(output[0]) # Note: Only logs the first item in the batch
+            all_labels.append(final_char[0]) # Note: Only logs the first item in the batch
+
+    if num_steps > 0:
+        loss_avg_item = loss_total / num_steps # Calculate the average loss over all steps
     else:
         loss_avg_item = 0.0 # Handle case with no steps
 
