@@ -5,7 +5,7 @@
 # ==============================================================================
 
 # --- SLURM Directives (MUST BE NEAR THE TOP) ---
-#SBATCH --time=1:00:00        # Max walltime per task
+#SBATCH --time=3:00:00        # Max walltime per task
 #SBATCH --nodes=1              # Request 1 node per task
 #SBATCH --ntasks=10             # Request 1 task per job array instance
 #SBATCH --cpus-per-task=1      # Explicitly request 1 CPU core for that task
@@ -13,36 +13,30 @@
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
 #SBATCH --job-name=hebby_sweep # Base job name
-#SBATCH --array=0-503%10        # CALCULATE AND UPDATE THIS RANGE (see below) - Example: Run max 10 of 24 jobs
+#SBATCH --array=0-11%10        # CALCULATE AND UPDATE THIS RANGE (see below) - Example: Run max 10 of 12 jobs
 #SBATCH --output=slurm_logs/hebby_sweep_%A_%a.out # Ensure slurm_logs directory exists! %A=jobID, %a=taskID
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
 
 # ======================== Parameter Definitions & Calculation ================
 echo "--- Preparing Sweep Parameters ---"
-# --- Define Hyperparameter Options ---
-declare -a update_rules=('static_plastic_candidate')
-declare -a input_modes=('last_two')
-declare -a learning_rates=('1e-3' '1e-4' '1e-5')
-declare -a plast_clips=('1e2' '1e3' '1e4' '1e5')
-declare -a forget_rates=('0.3' '0.1' '0.01' '0.5' '0.7' '0.9' '0.99')
-declare -a grad_clips=('0' '0.01' '0.1' '1' '10' '0.5') # Added grad_clip
+# --- Define Hyperparameter Options for Architecture Sweep ---
+declare -a model_types=('ethereal' 'rnn')
+declare -a updaters=('backprop' 'dfa' 'bptt')
+declare -a enable_recurrence=('true' 'false')
 
 # --- Calculate Total Number of Jobs ---
-num_update_rules=${#update_rules[@]}
-num_input_modes=${#input_modes[@]}
-num_learning_rates=${#learning_rates[@]}
-num_plast_clips=${#plast_clips[@]}
-num_forget_rates=${#forget_rates[@]}
-num_grad_clips=${#grad_clips[@]} # Added grad_clip count
-total_jobs=$((num_update_rules * num_input_modes * num_learning_rates * num_plast_clips * num_forget_rates * num_grad_clips)) # Added grad_clip to calculation
+num_model_types=${#model_types[@]}
+num_updaters=${#updaters[@]}
+num_enable_recurrence=${#enable_recurrence[@]}
+total_jobs=$((num_model_types * num_updaters * num_enable_recurrence))
 last_job_index=$((total_jobs - 1)) # SLURM array indices are 0-based
 
 # *** IMPORTANT: Update the --array directive above with the calculated last_job_index ***
 #     You might need to run this calculation part once manually first, or
 #     submit a preliminary job that just calculates and echoes the range,
 #     or accept that the #SBATCH line might have a placeholder range initially.
-#     For now, I'll leave the example range (0-23), assuming 2*2*3*2=24 jobs.
+#     For now, I'll leave the example range (0-11), assuming 2*3*2=12 jobs.
 echo "Sweep Info: Total Jobs = $total_jobs (Indices 0-$last_job_index)"
 echo "Note: Ensure #SBATCH --array line matches 0-$last_job_index"
 
@@ -66,55 +60,54 @@ echo "--- Environment Setup Complete ---"
 
 # ======================== Parameter Calculation for this Task =================
 # Map the SLURM_ARRAY_TASK_ID to specific hyperparameter indices
-# Order: plast_clip -> learning_rate -> input_mode -> forget_rate -> grad_clip -> update_rule
-idx_pc=$((SLURM_ARRAY_TASK_ID % num_plast_clips))
-idx_lr=$(((SLURM_ARRAY_TASK_ID / num_plast_clips) % num_learning_rates))
-idx_im=$(((SLURM_ARRAY_TASK_ID / (num_plast_clips * num_learning_rates)) % num_input_modes))
-idx_fr=$(((SLURM_ARRAY_TASK_ID / (num_plast_clips * num_learning_rates * num_input_modes)) % num_forget_rates))
-idx_gc=$(((SLURM_ARRAY_TASK_ID / (num_plast_clips * num_learning_rates * num_input_modes * num_forget_rates)) % num_grad_clips)) # Added grad_clip index
-idx_ur=$(((SLURM_ARRAY_TASK_ID / (num_plast_clips * num_learning_rates * num_input_modes * num_forget_rates * num_grad_clips)) % num_update_rules)) # Adjusted update_rule index
+# Order: enable_recurrence -> updater -> model_type
+idx_er=$((SLURM_ARRAY_TASK_ID % num_enable_recurrence))
+idx_up=$(((SLURM_ARRAY_TASK_ID / num_enable_recurrence) % num_updaters))
+idx_mt=$(((SLURM_ARRAY_TASK_ID / (num_enable_recurrence * num_updaters)) % num_model_types))
 
 # Get the actual parameter values
-UPDATE_RULE=${update_rules[$idx_ur]}
-INPUT_MODE=${input_modes[$idx_im]}
-LEARNING_RATE=${learning_rates[$idx_lr]}
-PLAST_CLIP=${plast_clips[$idx_pc]}
-FORGET_RATE=${forget_rates[$idx_fr]}
-GRAD_CLIP=${grad_clips[$idx_gc]} # Added grad_clip selection
+MODEL_TYPE=${model_types[$idx_mt]}
+UPDATER=${updaters[$idx_up]}
+ENABLE_RECURRENCE=${enable_recurrence[$idx_er]}
 
 # ======================== Experiment Identification (Dynamic) =================
-GROUP='mega_clip_sweep'
-RUN_NOTES="Rule=${UPDATE_RULE}_Mode=${INPUT_MODE}_LR=${LEARNING_RATE}_PC=${PLAST_CLIP}_FR=${FORGET_RATE}_GC=${GRAD_CLIP}_TaskID=${SLURM_ARRAY_TASK_ID}" # Added GC to notes
+GROUP='arch_sweep'
+RUN_NOTES="Model=${MODEL_TYPE}_Updater=${UPDATER}_Recurrence=${ENABLE_RECURRENCE}_TaskID=${SLURM_ARRAY_TASK_ID}"
 
-# ======================== Fixed Parameters (Not Swept) ========================
-PLAST_LEARNING_RATE=1e-10
-# GRAD_CLIP=0 # Removed fixed grad_clip
-IMPRINT_RATE=0.3
-# FORGET_RATE=0.3 # Removed fixed forget_rate
-SELF_GRAD=0
-NORMALIZE=false
-CLIP_WEIGHTS=0
-HIDDEN_SIZE=256
-NUM_LAYERS=3
-RESIDUAL_CONNECTION=false
-POS_ENCODING=128
-DATASET='palindrome_dataset_vary_length'
-BATCH_SIZE=4
-N_ITERS=10000000000000
-PRINT_FREQ=2500
-SAVE_FREQUENCY=10000000
-PLAST_PROPORTION=0.2   # <-- Add this line
+# ======================== Fixed Parameters (Not Swept) - Based on whole_run.sh ========================
+INPUT_MODE='last_one'        # From whole_run.sh
+LEARNING_RATE=1e-4           # From whole_run.sh
+PLAST_LEARNING_RATE=1e-10    # From whole_run.sh
+PLAST_CLIP=5e3               # From whole_run.sh (5e3 instead of 1e4)
+GRAD_CLIP=0                  # From whole_run.sh
+IMPRINT_RATE=0.3             # From whole_run.sh
+FORGET_RATE=0.01             # From whole_run.sh (0.01 instead of variable)
+SELF_GRAD=0                  # From whole_run.sh
+NORMALIZE=false              # From whole_run.sh
+CLIP_WEIGHTS=0               # From whole_run.sh
+HIDDEN_SIZE=256              # From whole_run.sh
+NUM_LAYERS=3                 # From whole_run.sh
+RESIDUAL_CONNECTION=false    # From whole_run.sh
+POS_ENCODING=128             # From whole_run.sh
+DATASET='2_small_palindrome_dataset_vary_length' # From whole_run.sh
+BATCH_SIZE=16                # From whole_run.sh (16 instead of 4)
+N_ITERS=1000000000           # From whole_run.sh
+PRINT_FREQ=5000              # From whole_run.sh (5000 instead of 2500)
+CHECKPOINT_SAVE_FREQ=500000  # From whole_run.sh
+PLAST_PROPORTION=0.2         # From whole_run.sh
 
 # ======================== Execution ===========================================
 echo "--- Starting Training Task $SLURM_ARRAY_TASK_ID ---"
 echo "  Parameters for this task:"
-echo "    Update Rule: $UPDATE_RULE"
+echo "    Model Type: $MODEL_TYPE"
+echo "    Updater: $UPDATER"
+echo "    Enable Recurrence: $ENABLE_RECURRENCE"
 echo "    Input Mode: $INPUT_MODE"
 echo "    Learning Rate: $LEARNING_RATE"
 echo "    Plast Clip: $PLAST_CLIP"
 echo "    Forget Rate: $FORGET_RATE"
-echo "    Grad Clip: $GRAD_CLIP" # Added grad clip logging
-echo "    Plast Proportion: $PLAST_PROPORTION" # <-- Add this line
+echo "    Grad Clip: $GRAD_CLIP"
+echo "    Plast Proportion: $PLAST_PROPORTION"
 echo "  W&B Group: $GROUP"
 echo "  W&B Notes/Run Name: $RUN_NOTES"
 echo "  Output File: slurm_logs/hebby_sweep_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_TASK_ID}.out"
@@ -122,7 +115,8 @@ echo "---"
 
 # Run the python script
 python -u hebby.py \
-    --update_rule $UPDATE_RULE \
+    --model_type $MODEL_TYPE \
+    --updater $UPDATER \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
     --plast_learning_rate $PLAST_LEARNING_RATE \
@@ -141,11 +135,12 @@ python -u hebby.py \
     --batch_size $BATCH_SIZE \
     --n_iters $N_ITERS \
     --print_freq $PRINT_FREQ \
-    --save_frequency $SAVE_FREQUENCY \
+    --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --track true \
     --group "$GROUP" \
     --notes "$RUN_NOTES" \
-    --plast_proportion $PLAST_PROPORTION   # <-- Pass plast_proportion
+    --plast_proportion $PLAST_PROPORTION \
+    --enable_recurrence $ENABLE_RECURRENCE
 
 echo "--- Task $SLURM_ARRAY_TASK_ID Finished ---"
 
