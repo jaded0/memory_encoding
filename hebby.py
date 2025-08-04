@@ -408,9 +408,7 @@ def main():
     base_input_size = input_size # The size calculated above (chars + PE)
 
     if args.model_type == 'rnn':
-        print("Initializing SimpleRNN model.")
-        if args.updater != 'backprop':
-            raise ValueError("SimpleRNN model only supports the 'backprop' updater.")
+        print(f"Initializing SimpleRNN model with '{args.updater}' updater.")
         rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"], 
                        dropout_rate=0, enable_recurrence=args.enable_recurrence)
     elif args.model_type == 'ethereal':
@@ -426,7 +424,7 @@ def main():
     else:
         raise ValueError(f"Unknown model_type: {args.model_type}")
 
-    # Optimizer is only needed for backprop and bptt
+    # Optimizer is only needed for backprop and bptt (regardless of model type)
     if args.updater in ['backprop', 'bptt']:
         optimizer = torch.optim.SGD(rnn.parameters(), lr=config['learning_rate'])
 
