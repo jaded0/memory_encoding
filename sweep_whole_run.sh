@@ -73,6 +73,7 @@ ENABLE_RECURRENCE=${enable_recurrence[$idx_er]}
 # ======================== Experiment Identification (Dynamic) =================
 GROUP='arch_sweep'
 RUN_NOTES="Model=${MODEL_TYPE}_Updater=${UPDATER}_Recurrence=${ENABLE_RECURRENCE}_TaskID=${SLURM_ARRAY_TASK_ID}"
+TAGS=(arch_sweep sweep)
 
 # ======================== Fixed Parameters (Not Swept) - Based on whole_run.sh ========================
 INPUT_MODE='last_one'        # From whole_run.sh
@@ -138,6 +139,7 @@ python -u hebby.py \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --track true \
     --group "$GROUP" \
+    --tags "${TAGS[@]}" \
     --notes "$RUN_NOTES" \
     --plast_proportion $PLAST_PROPORTION \
     --enable_recurrence $ENABLE_RECURRENCE
