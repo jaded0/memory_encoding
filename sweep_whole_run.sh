@@ -13,7 +13,7 @@
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
 #SBATCH --job-name=hebby_sweep # Base job name
-#SBATCH --array=0-11%10        # CALCULATE AND UPDATE THIS RANGE (see below) - Example: Run max 10 of 12 jobs
+#SBATCH --array=0-11%15        # CALCULATE AND UPDATE THIS RANGE (see below) - Example: Run max 10 of 12 jobs
 #SBATCH --output=slurm_logs/hebby_sweep_%A_%a.out # Ensure slurm_logs directory exists! %A=jobID, %a=taskID
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
