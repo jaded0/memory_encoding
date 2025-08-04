@@ -545,6 +545,7 @@ def main():
             "self_grad": args.self_grad,
             "input_mode": args.input_mode,
             "plast_proportion": args.plast_proportion,
+            "enable_recurrence": args.enable_recurrence,
         }
         # Key change here: use the determined wandb_run_id and resume="allow"
         print(f"tags given to wandb: {args.tags}")
