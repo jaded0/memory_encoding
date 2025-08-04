@@ -77,24 +77,24 @@ TAGS=(arch_sweep sweep)
 
 # ======================== Fixed Parameters (Not Swept) - Based on whole_run.sh ========================
 INPUT_MODE='last_one'        # From whole_run.sh
-LEARNING_RATE=1e-4           # From whole_run.sh
+LEARNING_RATE=1e-3           # From whole_run.sh
 PLAST_LEARNING_RATE=1e-10    # From whole_run.sh
-PLAST_CLIP=5e3               # From whole_run.sh (5e3 instead of 1e4)
+PLAST_CLIP=1e4               # From whole_run.sh (5e3 instead of 1e4)
 GRAD_CLIP=0                  # From whole_run.sh
 IMPRINT_RATE=0.3             # From whole_run.sh
 FORGET_RATE=0.01             # From whole_run.sh (0.01 instead of variable)
 SELF_GRAD=0                  # From whole_run.sh
 NORMALIZE=false              # From whole_run.sh
 CLIP_WEIGHTS=0               # From whole_run.sh
-HIDDEN_SIZE=256              # From whole_run.sh
+HIDDEN_SIZE=512              # From whole_run.sh
 NUM_LAYERS=3                 # From whole_run.sh
-RESIDUAL_CONNECTION=false    # From whole_run.sh
-POS_ENCODING=128             # From whole_run.sh
+RESIDUAL_CONNECTION=true    # From whole_run.sh
+POS_ENCODING=0             # From whole_run.sh
 DATASET='2_small_palindrome_dataset_vary_length' # From whole_run.sh
 BATCH_SIZE=16                # From whole_run.sh (16 instead of 4)
 N_ITERS=1000000000           # From whole_run.sh
 PRINT_FREQ=5000              # From whole_run.sh (5000 instead of 2500)
-CHECKPOINT_SAVE_FREQ=500000  # From whole_run.sh
+CHECKPOINT_SAVE_FREQ=10000000  # From whole_run.sh
 PLAST_PROPORTION=0.2         # From whole_run.sh
 
 # ======================== Execution ===========================================
