@@ -1,6 +1,6 @@
 # hebby.py
 import torch
-from hebbian_model import HebbianLinear, HebbyRNN, SimpleRNN
+from hebbian_model import EtherealRNN, SimpleRNN
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
@@ -47,211 +47,202 @@ def plot_ascii_bar_graph(data, title, max_width=40):
 
 trigger_sync = TriggerWandbSyncHook()  # <--- New!
 
-def train_backprop(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=False):
+def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
+    """Unified training function for DFA, backprop, and BPTT."""
+    updater = config['updater']
     criterion = config['criterion']
-
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
 
-    # For HebbyRNN, reset high-plasticity weights at the start of the sequence.
-    if isinstance(rnn, HebbyRNN):
+    # For EtherealRNN, reset high-plasticity weights at the start of the sequence
+    if isinstance(rnn, EtherealRNN):
         rnn.wipe()
 
     loss_total = 0.0
-    num_steps = 0 # Keep track of the number of steps for averaging
-
+    losses = []  # For DFA (per-batch losses)
+    num_steps = 0
     all_outputs = []
     all_labels = []
-    n_characters = onehot_line_tensor.shape[2] # Get n_characters from the tensor shape
 
     for i in range(onehot_line_tensor.size()[1] - 1):
-        optimizer.zero_grad() # Zero gradients for this specific step
-
-        # Prevent BPTT by detaching the hidden state. Recurrence is disabled anyway,
-        # but this is good practice for this training style.
-        hidden = hidden.detach()
-
-        # For HebbyRNN with backprop, apply per-step weight decay (forgetting)
-        if isinstance(rnn, HebbyRNN):
-            rnn.apply_forget_step()
+        # For BPTT, we keep gradients flowing through time by NOT detaching hidden state
+        if updater != 'bptt':
+            hidden = hidden.detach()
 
         # Get current character's one-hot vector
         current_char_tensor = onehot_line_tensor[:, i, :]
+        if updater == 'dfa':
+            current_char_tensor.requires_grad = False
 
-        # --- Start Modification: Conditional Input Construction ---
+        # Conditional Input Construction
         if config['input_mode'] == 'last_two':
-            # Get previous character's one-hot vector (or zeros if i=0)
             if i == 0:
                 previous_char_tensor = torch.zeros_like(current_char_tensor)
             else:
                 previous_char_tensor = onehot_line_tensor[:, i-1, :]
-            # Concatenate current and previous character tensors
+            if updater == 'dfa':
+                previous_char_tensor.requires_grad = False
             combined_char_tensor = torch.cat([current_char_tensor, previous_char_tensor], dim=1)
         elif config['input_mode'] == 'last_one':
-            # Use only the current character
             combined_char_tensor = current_char_tensor
         else:
             raise ValueError(f"Invalid input_mode: {config['input_mode']}")
-        # --- End Modification ---
 
-        # Handle positional encoding (concatenated onto the combined_char_tensor)
+        # Handle positional encoding
         pe_matrix = config["pe_matrix"]
         if pe_matrix is not None:
-            # position i might exceed MAX_SEQ_LEN, so clamp or wrap as needed
-            pe_vec = pe_matrix[min(i, pe_matrix.size(0)-1)]  # shape [pos_dim]
-            # expand to [batch_size, pos_dim]
+            pe_vec = pe_matrix[min(i, pe_matrix.size(0)-1)]
             pe_vec = pe_vec.unsqueeze(0).expand(batch_size, -1)
-            # concat positional encoding onto the character tensor
             hot_input_char_tensor = torch.cat([combined_char_tensor, pe_vec], dim=1)
         else:
-            # If no positional encoding, the input is just the combined characters
             hot_input_char_tensor = combined_char_tensor
 
-        output, hidden, _ = rnn(hot_input_char_tensor, hidden)
+        # Forward pass
+        output, hidden, self_grad = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[:, i+1, :]
-        # criterion with reduction='mean' gives the average loss for this step's batch
-        step_loss = criterion(output, final_char)
         
-        # Perform backward pass and update for THIS step
-        step_loss.backward()
+        # Compute loss and update weights based on updater type
+        if updater == 'dfa':
+            # DFA-specific processing
+            output.requires_grad_(True)
+            loss = criterion(output, final_char)
+            losses.append(loss.detach())
+            
+            # Convert loss to reward signal
+            global_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
+            reward_update = -global_error
+            rnn.zero_grad()
+            
+            # Add self_grad if configured
+            if config.get("self_grad", 0) > 0:
+                reward_update += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
+            
+            # Apply DFA updates
+            rnn.update_weights_dfa(reward_update, config["learning_rate"], config["plast_learning_rate"], 
+                                 config["plast_clip"], config["imprint_rate"], config["grad_clip"], state)
+            
+            state['training_instance'] += 1
+            loss_total += loss.mean().item()  # Convert to scalar for consistency
+            
+        elif updater == 'backprop':
+            # Backprop-specific processing
+            if isinstance(rnn, EtherealRNN):
+                # EtherealRNN with backprop
+                step_loss = criterion(output, final_char)
+                # With 'none' reduction, we get per-example losses, so take mean for backward
+                total_loss = step_loss.mean() if step_loss.dim() > 0 else step_loss
+                total_loss.backward(retain_graph=False)
+                
+                # Apply forgetting step before optimizer step
+                rnn.apply_forget_step()
+                
+                # Scale gradients for high-plasticity weights
+                rnn.scale_gradients(config["plast_clip"])
+                
+                # Store gradient norms for logging
+                if state.get('log_norms_now', False):
+                    rnn.store_all_grad_norms()
+                
+                # Manual optimizer step for HebbyRNN
+                with torch.no_grad():
+                    for param in rnn.parameters():
+                        if param.grad is not None:
+                            param.data -= config["learning_rate"] * param.grad
+                            param.grad.zero_()
+            else:
+                # Standard SimpleRNN with backprop
+                optimizer.zero_grad()
+                step_loss = criterion(output, final_char)
+                # With 'none' reduction, we get per-example losses, so take mean for backward
+                total_loss = step_loss.mean() if step_loss.dim() > 0 else step_loss
+                total_loss.backward()
+                
+                if config['grad_clip'] > 0:
+                    torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
+                
+                optimizer.step()
+            
+            loss_total += step_loss.mean().item() if step_loss.dim() > 0 else step_loss.item()
+            
+        elif updater == 'bptt':
+            # BPTT-specific processing - accumulate loss across sequence
+            step_loss = criterion(output, final_char)
+            
+            # For BPTT, accumulate losses across the entire sequence
+            if i == 0:
+                # Initialize accumulated loss on first step
+                accumulated_loss = step_loss
+            else:
+                # Add to accumulated loss (this maintains the computation graph)
+                accumulated_loss = accumulated_loss + step_loss
+            
+            loss_total += step_loss.mean().item() if step_loss.dim() > 0 else step_loss.item()
+            
+            # Only backward and update on the last step to get full sequence gradients
+            if i == onehot_line_tensor.size()[1] - 2:  # Last step
+                if isinstance(rnn, EtherealRNN):
+                    # EtherealRNN with BPTT - backward through entire accumulated loss
+                    total_loss = accumulated_loss.mean() if accumulated_loss.dim() > 0 else accumulated_loss
+                    total_loss.backward(retain_graph=False)
+                    
+                    # Apply forgetting step before optimizer step
+                    rnn.apply_forget_step()
+                    
+                    # Scale gradients for high-plasticity weights
+                    rnn.scale_gradients(config["plast_clip"])
+                    
+                    # Store gradient norms for logging
+                    if state.get('log_norms_now', False):
+                        rnn.store_all_grad_norms()
+                    
+                    # Manual optimizer step for HebbyRNN
+                    with torch.no_grad():
+                        for param in rnn.parameters():
+                            if param.grad is not None:
+                                param.data -= config["learning_rate"] * param.grad
+                                param.grad.zero_()
+                else:
+                    # Standard SimpleRNN with BPTT
+                    optimizer.zero_grad()
+                    total_loss = accumulated_loss.mean() if accumulated_loss.dim() > 0 else accumulated_loss
+                    total_loss.backward()
+                    
+                    if config['grad_clip'] > 0:
+                        torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
+                    
+                    optimizer.step()
 
-        # For HebbyRNN, scale gradients for differential plasticity before clipping/stepping
-        if isinstance(rnn, HebbyRNN):
-            rnn.scale_gradients(config['plast_clip'])
-
-        # If it's a logging iteration, store the gradient norms from this step
-        if state['log_norms_now'] and isinstance(rnn, HebbyRNN):
-            rnn.store_all_grad_norms()
-
-        # Apply gradient clipping only if grad_clip is positive
-        if config['grad_clip'] > 0:
-            # TODO: This clips the norm of all gradients combined, which differs from
-            # the per-update element-wise clipping (`masked_clamp_`) in the DFA path.
-            # This is an intentional difference for now but worth noting for comparisons.
-            torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
-
-        optimizer.step() # Update parameters using the optimizer
-
-        loss_total += step_loss.item()
         num_steps += 1
 
         if log_outputs:
-            all_outputs.append(output[0]) # Note: Only logs the first item in the batch
-            all_labels.append(final_char[0]) # Note: Only logs the first item in the batch
-
-    if num_steps > 0:
-        loss_avg_item = loss_total / num_steps # Calculate the average loss over all steps
-    else:
-        loss_avg_item = 0.0 # Handle case with no steps
-
-    return output, loss_avg_item, 0, 0, all_outputs, all_labels # Return averaged loss item
-
-def train_dfa(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs=False):
-    batch_size = onehot_line_tensor.shape[0]
-    hidden = rnn.initHidden(batch_size=batch_size)
-    losses = []
-    output = None
-    all_outputs = []
-    all_labels = []
-
-    rnn.wipe()
-    n_characters = onehot_line_tensor.shape[2] # Get n_characters from the tensor shape
-
-    for i in range(onehot_line_tensor.shape[1] - 1):
-        l2_reg = None  # Reset L2 regularization term for each character
-
-        # Get current character's one-hot vector
-        current_char_tensor = onehot_line_tensor[:, i, :]
-        current_char_tensor.requires_grad = False
-
-        # --- Start Modification: Conditional Input Construction ---
-        if config['input_mode'] == 'last_two':
-            # Get previous character's one-hot vector (or zeros if i=0)
-            if i == 0:
-                previous_char_tensor = torch.zeros_like(current_char_tensor)
+            if updater == 'dfa':
+                all_outputs.append(output[0].detach())
+                all_labels.append(final_char[0].detach())
             else:
-                previous_char_tensor = onehot_line_tensor[:, i-1, :]
-            previous_char_tensor.requires_grad = False
-            # Concatenate current and previous character tensors
-            combined_char_tensor = torch.cat([current_char_tensor, previous_char_tensor], dim=1)
-        elif config['input_mode'] == 'last_one':
-             # Use only the current character
-            combined_char_tensor = current_char_tensor
-        else:
-            raise ValueError(f"Invalid input_mode: {config['input_mode']}")
-        # --- End Modification ---
+                all_outputs.append(output[0])
+                all_labels.append(final_char[0])
 
-
-        # Handle positional encoding (concatenated onto the combined_char_tensor)
-        pe_matrix = config["pe_matrix"]
-        if pe_matrix is not None:
-            # position i might exceed MAX_SEQ_LEN, so clamp or wrap as needed
-            pe_vec = pe_matrix[min(i, pe_matrix.size(0)-1)]  # shape [pos_dim]
-            # regularize to onehot magnitude
-            # pe_vec *= 1/onehot_line_tensor.shape[1]
-            # expand to [batch_size, pos_dim]
-            pe_vec = pe_vec.unsqueeze(0).expand(batch_size, -1)
-            # concat positional encoding onto the character tensor
-            hot_input_char_tensor = torch.cat([combined_char_tensor, pe_vec], dim=1)
-        else:
-            # If no positional encoding, the input is just the combined characters
-            hot_input_char_tensor = combined_char_tensor
-
-        output, hidden, self_grad = rnn(hot_input_char_tensor, hidden)
-
-        # Compute the loss for this step
-        final_char = onehot_line_tensor[:, i+1, :]
-        output.requires_grad_(True) # Set requires_grad for autograd.grad to work.
-        # Make sure criterion reduction is 'none' to get per-batch-item loss
-        loss = config['criterion'](output, final_char)
-        losses.append(loss.detach()) # Store the loss tensor [batch_size] for this step
-
-        # Convert loss to a reward signal for Hebbian updates
-        # Ensure grad_outputs matches the shape of loss
-        global_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
-        reward_update = -global_error
-        rnn.zero_grad()
-
-        lr = config["learning_rate"]
-        plast_clip = config["plast_clip"]
-        reward_update += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
-        rnn.apply_imprints(reward_update, lr, config["plast_learning_rate"], plast_clip, config["imprint_rate"], config["grad_clip"], state)
-
-        state['training_instance'] += 1
-
-        if log_outputs:
-            all_outputs.append(output[0].detach()) # Note: Only logs the first item in the batch
-            all_labels.append(final_char[0].detach()) # Note: Only logs the first item in the batch
-
-
-    # Calculate the average loss for the sequence (average over batch and time)
-    if losses:
-        # Stack losses: list of [B] tensors -> tensor [T, B]
+    # Calculate final loss
+    if updater == 'dfa' and losses:
         stacked_losses = torch.stack(losses)
-        # Average over time (dim 0) and batch (dim 1)
         loss_avg = stacked_losses.mean().item()
     else:
-        loss_avg = 0.0 # Handle edge case of very short sequences
+        loss_avg = loss_total / num_steps if num_steps > 0 else 0.0
 
-    og_loss_avg, reg_loss_avg = 0,0 # i don wanna refactor rn
+    og_loss_avg, reg_loss_avg = 0, 0  # Legacy return values
     return output, loss_avg, og_loss_avg, reg_loss_avg, all_outputs, all_labels
 
 
 def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
-    if config['updater'] == "backprop":
-        # Ensure criterion reduction is 'mean' for backprop
-        if config['criterion'].reduction != 'mean':
-             print("Warning: Overriding criterion reduction to 'mean' for backprop training.")
-             config['criterion'] = type(config['criterion'])(reduction='mean')
-        return train_backprop(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
-    elif config['updater'] == "dfa":
-        # Ensure criterion reduction is 'none' for DFA calculation of per-example gradient
-        if config['criterion'].reduction != 'none':
-             print("Warning: Overriding criterion reduction to 'none' for DFA training.")
-             config['criterion'] = type(config['criterion'])(reduction='none') # Recreate criterion with 'none'
-        return train_dfa(line_tensor, onehot_line_tensor, rnn, config, state, log_outputs)
-    else:
-        raise ValueError(f"Unknown updater: {config['updater']}")
+    """Main training function that sets up criterion and calls unified trainer."""
+    # For ALL updaters, use 'none' reduction to preserve per-example gradients
+    # This allows independent weight updates per sequence in the batch
+    # This is critical for ethereal weights to adapt independently per sequence
+    if config['criterion'].reduction != 'none':
+        print(f"Warning: Overriding criterion reduction to 'none' for {config['updater']} training.")
+        config['criterion'] = type(config['criterion'])(reduction='none')
+    
+    return train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
 
 def main():
     # Parse command-line arguments
@@ -269,8 +260,8 @@ def main():
     parser.add_argument('--num_layers', type=int, default=3, help='Number of layers in RNN')
     parser.add_argument('--n_iters', type=int, default=10000, help='Number of training iterations')
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
-    parser.add_argument('--model_type', type=str, default='hebby', choices=['rnn', 'hebby'], help='Model architecture to use.')
-    parser.add_argument('--updater', type=str, default='dfa', choices=['dfa', 'backprop'], help='Weight update algorithm to use.')
+    parser.add_argument('--model_type', type=str, default='ethereal', choices=['rnn', 'ethereal'], help='Model architecture to use.')
+    parser.add_argument('--updater', type=str, default='dfa', choices=['dfa', 'backprop', 'bptt'], help='Weight update algorithm to use.')
     parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=True, help='Whether to normalize the weights.')
     parser.add_argument('--clip_weights', type=float, default=1, help='Whether to clip the weights.')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
@@ -289,6 +280,7 @@ def main():
     parser.add_argument('--resume_checkpoint', type=str, default=None,
                         help='Path to checkpoint to resume training from (e.g., checkpoints/latest_checkpoint.pth).')
     parser.add_argument('--plast_proportion', type=float, default=0.2, help='Proportion of weights that are plastic in Hebbian layers.')  # <-- Add this line
+    parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=True, help='Whether to enable recurrent hidden state connections')
 
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
@@ -318,6 +310,7 @@ def main():
         "self_grad": args.self_grad,
         "input_mode": args.input_mode,
         "plast_proportion": args.plast_proportion,
+        "enable_recurrence": args.enable_recurrence,
     }
     print(f"Input mode selected: {args.input_mode}") # Inform user
 
@@ -418,21 +411,23 @@ def main():
         print("Initializing SimpleRNN model.")
         if args.updater != 'backprop':
             raise ValueError("SimpleRNN model only supports the 'backprop' updater.")
-        rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"], dropout_rate=0)
-    elif args.model_type == 'hebby':
-        print(f"Initializing HebbyRNN model with '{args.updater}' updater.")
-        rnn = HebbyRNN(
+        rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"], 
+                       dropout_rate=0, enable_recurrence=args.enable_recurrence)
+    elif args.model_type == 'ethereal':
+        print(f"Initializing EtherealRNN model with '{args.updater}' updater.")
+        rnn = EtherealRNN(
             base_input_size, config["n_hidden"], output_size, config["n_layers"], charset,
             normalize=args.normalize, residual_connection=args.residual_connection,
             clip_weights=args.clip_weights, updater=args.updater,
             plast_clip=config["plast_clip"], batch_size=config["batch_size"],
-            forget_rate=config["forget_rate"], plast_proportion=config["plast_proportion"]
+            forget_rate=config["forget_rate"], plast_proportion=config["plast_proportion"],
+            enable_recurrence=args.enable_recurrence
         )
     else:
         raise ValueError(f"Unknown model_type: {args.model_type}")
 
-    # Optimizer is only needed for backprop
-    if args.updater == 'backprop':
+    # Optimizer is only needed for backprop and bptt
+    if args.updater in ['backprop', 'bptt']:
         optimizer = torch.optim.SGD(rnn.parameters(), lr=config['learning_rate'])
 
     state = {

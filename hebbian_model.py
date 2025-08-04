@@ -25,12 +25,12 @@ class HebbianLinear(nn.Linear):
         # Set requires_grad for the base class parameters
         self.weight.requires_grad = False # Base weights are not trained directly
         if bias:
-            # Bias is trained with backprop if the updater is backprop
-            # TODO: The bias update method differs between updaters. Backprop uses
+            # Bias is trained with backprop/bptt if the updater is backprop or bptt
+            # TODO: The bias update method differs between updaters. Backprop/BPTT uses
             # standard gradient descent via the optimizer. DFA uses a manual update
             # based on the projected error signal in `apply_imprints`. This is a
             # known difference for comparison.
-            self.bias.requires_grad = (updater == 'backprop')
+            self.bias.requires_grad = (updater in ['backprop', 'bptt'])
 
         self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
         self.normalize = normalize
@@ -52,8 +52,8 @@ class HebbianLinear(nn.Linear):
         # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
         # Candidate weights are per-sample and store the "fast" or plastic weights.
-        # They require gradients only if we are using the backprop updater.
-        self.candidate_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=(updater == 'backprop'))
+        # They require gradients only if we are using the backprop or bptt updater.
+        self.candidate_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=(updater in ['backprop', 'bptt']))
         self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
         distribution = torch.ones_like(self.weight)
         rand_vals = torch.rand_like(self.weight)
@@ -117,96 +117,111 @@ class HebbianLinear(nn.Linear):
         self.in_traces.data = input
         self.out_traces.data = output
 
-    def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state):
+    def update_weights(self, error_signal, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa'):
+        """Unified weight update method for both DFA and backprop.
+        
+        Args:
+            error_signal: The error signal to use for updates
+            method: 'dfa' or 'backprop' - determines error signal source only
+        """
         input = self.in_traces.data
         output = self.out_traces.data
-        # reward = reward.detach()
-        # input = self.in_traces.detach()
-        # output = self.out_traces.detach()
         
-        # Reshape input and output for broadcasting
+        # Reshape input for broadcasting
         input_expanded = input.unsqueeze(1)  # Shape: [batch_size, 1, in_features]
-        output_expanded = output.unsqueeze(2)  # Shape: [batch_size, out_features, 1]
-        global_error = reward
-
-        # Project the global error using the fixed random matrix
-        # I think in backprop these two values actually come from the next layer's 
-        # error vector and weights. chain ruleee
-        # print(self.feedback_weights.shape)
-        if self.is_last_layer==True: 
-            projected_error = global_error
-        else:
-            projected_error = global_error @ self.feedback_weights  # assuming matrix multiplication
-            # I am currently completely ignoring the effect of dropout and relu. 
-            # it oughta look like the derivative of the output of the two with respect to the inputs. 
-            # prolly either one or zero. It'll just zero out some values in the error signal bc they were
-            # zeroed out in the actual output.
-
-            # Apply ReLU derivative
-            # relu_derivative = (output.squeeze() > 0).float()  # 1 for activated neurons, 0 otherwise
-            # projected_error *= relu_derivative
-
-        # This is the DFA update rule, previously 'nocycle'. It's the only non-backprop rule.
-        out = projected_error.unsqueeze(2)
-
-        candidate_update = out * input.unsqueeze(1)#(input.unsqueeze(1) - out_weights_product)
         
-        # Reset or decay candidate_weights
-        batch_agg_candidate_update = candidate_update#.mean(dim=0)
-        update = batch_agg_candidate_update
-
-
+        # For DFA, project the error signal using feedback weights
+        # For backprop, error_signal should already be the correct gradient
+        if method == 'dfa':
+            if self.is_last_layer:
+                projected_error = error_signal
+            else:
+                # For non-last layers in DFA, we need to project the error signal
+                # The feedback weights should match: [vocab_size, out_features]
+                # error_signal: [batch_size, vocab_size] -> projected_error: [batch_size, out_features]
+                projected_error = error_signal @ self.feedback_weights
+        else:  # backprop
+            projected_error = error_signal
+        
+        # Compute weight updates using outer product
+        # projected_error: [batch_size, out_features]
+        # input_expanded: [batch_size, 1, in_features]
+        out = projected_error.unsqueeze(2)  # [batch_size, out_features, 1]
+        candidate_update = out * input_expanded  # [batch_size, out_features, in_features]
+        update = candidate_update
+        
+        # Apply forgetting (weight decay) before update
+        if not self.is_last_layer:
+            # Use non-inplace operations for both DFA and backprop
+            self.candidate_weights.data = self.candidate_weights.data * (1 - self.forgetting_factor)
+        
+        # Apply update with plasticity scaling and masking
         if self.is_last_layer:
-            self.candidate_weights.add_(update, alpha=learning_rate)
-
+            # Use non-inplace operations for both DFA and backprop
+            self.candidate_weights.data = self.candidate_weights.data + learning_rate * update
         else:
-            self.candidate_weights.mul_(1 - self.forgetting_factor)      # forget
-
-            update.mul_(learning_rate * self.plasticity)             # scale
-            update.mul_(self.mask)                                   # gate
-
+            # Scale by plasticity and mask - need to broadcast properly
+            # self.plasticity: [out_features, in_features]
+            # update: [batch_size, out_features, in_features]
+            plasticity_expanded = self.plasticity.unsqueeze(0)  # [1, out_features, in_features]
+            mask_expanded = self.mask.unsqueeze(0)  # [1, out_features, in_features]
+            
+            update = update * learning_rate * plasticity_expanded
+            update = update * mask_expanded
+            
+            # Apply gradient clipping (element-wise for consistency)
             if grad_clip > 0:
-                update.masked_clamp_(self.mask, -grad_clip, grad_clip)
-
-            self.candidate_weights.add_(update)
-
+                update = torch.where(mask_expanded, 
+                                   torch.clamp(update, -grad_clip, grad_clip), 
+                                   update)
+            
+            # Use non-inplace operations for both DFA and backprop
+            self.candidate_weights.data = self.candidate_weights.data + update
+        
+        # Log norms if requested
+        if state.get("log_norms_now", False):
+            self._log_update_norms(update)
+        
+        # Update bias using the same projected error
+        self._update_bias(projected_error, learning_rate)
+        
+        # Apply normalization and weight clipping if enabled
+        self._apply_regularization()
     
-        if state["log_norms_now"] == True:
-            # Log the norms of the weights and updates
-            with torch.no_grad():
-                mask_expanded = self.mask.unsqueeze(0).expand_as(update)
-
-                high_plast_update = update[mask_expanded]
-                low_plast_update = update[~mask_expanded]
-
-                # Calculate and store high plasticity update norm
-                high_norm = torch.norm(high_plast_update).item() if high_plast_update.numel() > 0 else 0.0
-                self.last_high_plast_update_norm.data.fill_(high_norm)
-
-                # Calculate and store low plasticity update norm
-                low_norm = torch.norm(low_plast_update).item() if low_plast_update.numel() > 0 else 0.0
-                self.last_low_plast_update_norm.data.fill_(low_norm)
-
-
-        # self.weight.data += update
-
-        # Update bias if applicable
-        if hasattr(self, 'bias') and self.bias is not None:
-            # print("has")
-            # Bias is updated based on the mean error across the batch
-            # print(f'shape of bias:{self.bias.data.shape}, shape of mean: {projected_error.mean(dim=0).shape}')
-            bias_update = learning_rate * projected_error.mean(dim=0).mean(dim=0)
+    def _log_update_norms(self, update):
+        """Helper method to log update norms."""
+        with torch.no_grad():
+            mask_expanded = self.mask.unsqueeze(0).expand_as(update)
+            
+            high_plast_update = update[mask_expanded]
+            low_plast_update = update[~mask_expanded]
+            
+            high_norm = torch.norm(high_plast_update).item() if high_plast_update.numel() > 0 else 0.0
+            self.last_high_plast_update_norm.data.fill_(high_norm)
+            
+            low_norm = torch.norm(low_plast_update).item() if low_plast_update.numel() > 0 else 0.0
+            self.last_low_plast_update_norm.data.fill_(low_norm)
+    
+    def _update_bias(self, projected_error, learning_rate):
+        """Helper method to update bias consistently."""
+        if hasattr(self, 'bias') and self.bias is not None and self.updater == 'dfa':
+            # For DFA, manually update bias. For backprop, optimizer handles it.
+            bias_update = learning_rate * projected_error.mean(dim=0)
+            if len(bias_update.shape) > 1:
+                bias_update = bias_update.mean(dim=0)
             self.bias.data += bias_update
-
+    
+    def _apply_regularization(self):
+        """Helper method to apply normalization and weight clipping."""
         if self.normalize:
-            # Normalize the weights to prevent them from exploding
             for p in self.parameters():
-                p.data = p.data / (p.data.norm(2) + 1e-6)
+                # Skip boolean tensors (like masks) and only normalize float tensors
+                if p.dtype.is_floating_point:
+                    p.data = p.data / (p.data.norm(2) + 1e-6)
         
         if self.clip_weights != 0:
-            max_weight_value = self.clip_weights
-            # for p in self.weight:
-            self.weight.data.clamp_(-max_weight_value, max_weight_value)
+            self.weight.data.clamp_(-self.clip_weights, self.clip_weights)
+
 
     def apply_forget_step(self):
         """Applies forgetting factor to high-plasticity weights.
@@ -286,14 +301,15 @@ class HebbianLinear(nn.Linear):
             low_norm = torch.norm(low_plast_grad).item() if low_plast_grad.numel() > 0 else 0.0
             self.last_low_plast_update_norm.data.fill_(low_norm)
 
-class HebbyRNN(torch.nn.Module):
+class EtherealRNN(torch.nn.Module):
     def __init__(
         self, input_size, hidden_size, output_size, num_layers, charset,
         dropout_rate=0, residual_connection=False, init_type='zero',
         normalize=True, clip_weights=False, updater='dfa',
-        plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2
+        plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2,
+        enable_recurrence=True
     ):
-        super(HebbyRNN, self).__init__()
+        super(EtherealRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout_rate = dropout_rate
@@ -302,6 +318,7 @@ class HebbyRNN(torch.nn.Module):
         self.residual_connection = residual_connection
         self.batch_size = batch_size
         self.forget_rate = forget_rate
+        self.enable_recurrence = enable_recurrence
 
         # Using HebbianLinear instead of Linear
         self.linear_layers = torch.nn.ModuleList([
@@ -367,8 +384,10 @@ class HebbyRNN(torch.nn.Module):
             combined += residual
 
         # Split into hidden and output
-        # hidden = self.i2h(combined) # This call is expensive and its result is immediately discarded.
-        hidden = torch.zeros_like(hidden) # disable hidden connection
+        if self.enable_recurrence:
+            hidden = self.i2h(combined)
+        else:
+            hidden = torch.zeros_like(hidden)  # disable hidden connection
         output = self.i2o(combined)
         self_grad = self.self_grad(combined)
         hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
@@ -399,13 +418,13 @@ class HebbyRNN(torch.nn.Module):
         # self_grad is not trained with backprop, so no gradients to scale
         # self.self_grad.scale_gradients(plast_clip)
 
-    def apply_imprints(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state):
-        # Apply imprints for all HebbianLinear layers
+    def update_weights_dfa(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state):
+        """Apply DFA weight updates to all HebbianLinear layers."""
         for layer in self.linear_layers:
-            layer.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state)
-        # self.i2h.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate)
-        self.i2o.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state)
-        self.self_grad.apply_imprints(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state)
+            layer.update_weights(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa')
+        # self.i2h.update_weights(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa')
+        self.i2o.update_weights(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa')
+        self.self_grad.update_weights(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa')
     
     def get_all_norms(self):
         """Aggregates norms from all HebbianLinear layers."""
@@ -444,12 +463,13 @@ class HebbyRNN(torch.nn.Module):
 
 
 class SimpleRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero'):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero', enable_recurrence=True):
         super(SimpleRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout_rate = dropout_rate
         self.init_type = init_type
+        self.enable_recurrence = enable_recurrence
 
         # Replace HebbianLinear with standard Linear layers
         self.linear_layers = nn.ModuleList([nn.Linear(input_size + hidden_size, hidden_size)])
@@ -475,7 +495,10 @@ class SimpleRNN(nn.Module):
             # combined = self.dropout(combined)
 
         # Split into hidden and output
-        hidden = self.i2h(combined)
+        if self.enable_recurrence:
+            hidden = self.i2h(combined)
+        else:
+            hidden = torch.zeros_like(hidden)  # disable hidden connection
         output = self.i2o(combined)
         hidden = torch.tanh(hidden)
         # output = self.dropout(output)

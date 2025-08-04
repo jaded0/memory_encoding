@@ -13,7 +13,7 @@ export WANDB_MODE=online # online | offline | disabled
 # Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
 # the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
 # Let's assume you have a base experiment name.
-EXPERIMENT_NAME="bp_on_eth"
+EXPERIMENT_NAME="bp_on_ethereal_refactor"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # --- Experiment Identification (W&B) ---
@@ -28,7 +28,7 @@ CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for thi
 
 GROUP=$EXPERIMENT_NAME
 NOTES="just run backprop on the ethereal embeddings stuff"
-TAGS=(mega bp_on_eth)
+TAGS=(mega big_refactor)
 
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
@@ -37,14 +37,15 @@ CHECKPOINT_SAVE_FREQ=100000
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
-# MODEL_TYPE: 'hebby' for the plastic model, 'rnn' for a standard SimpleRNN.
-# UPDATER: 'dfa' for Direct Feedback Alignment, 'backprop' for standard backpropagation.
+# MODEL_TYPE: 'ethereal' for the plastic model, 'rnn' for a standard SimpleRNN.
+# UPDATER: 'dfa' for Direct Feedback Alignment, 'backprop' for standard backpropagation, 'bptt' for backpropagation through time.
 #
-# To run HebbyRNN with backprop: MODEL_TYPE='hebby', UPDATER='backprop', LEARNING_RATE=1e-5 (example)
+# To run EtherealRNN with backprop: MODEL_TYPE='ethereal', UPDATER='backprop', LEARNING_RATE=1e-5 (example)
 # To run SimpleRNN with backprop: MODEL_TYPE='rnn', UPDATER='backprop', LEARNING_RATE=1e-3 (example)
+# To run EtherealRNN with BPTT: MODEL_TYPE='ethereal', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
 #
-MODEL_TYPE='hebby'           # hebby | rnn
-UPDATER='backprop'                # dfa | backprop
+MODEL_TYPE='ethereal'           # ethereal | rnn
+UPDATER='backprop'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
@@ -58,6 +59,7 @@ IMPRINT_RATE=0.3             # Hebbian imprint strength
 FORGET_RATE=0.01             # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
 PLAST_PROPORTION=0.2         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
+ENABLE_RECURRENCE=true       # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
@@ -119,7 +121,8 @@ python -u hebby.py \
     --group "$GROUP" \
     --tags "${TAGS[@]}" \
     --notes "$NOTES" \
-    --plast_proportion $PLAST_PROPORTION   # <-- Pass plast_proportion
+    --plast_proportion $PLAST_PROPORTION \
+    --enable_recurrence $ENABLE_RECURRENCE
 
 echo "--- Training Finished ---"
 # ==============================================================================
