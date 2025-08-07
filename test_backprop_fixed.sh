@@ -13,7 +13,7 @@ export WANDB_MODE=online # online | offline | disabled
 # Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
 # the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
 # Let's assume you have a base experiment name.
-EXPERIMENT_NAME="bptt_refactor"
+EXPERIMENT_NAME="test_backprop_fixed"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # --- Experiment Identification (W&B) ---
@@ -27,7 +27,7 @@ CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for thi
 # For simplicity with --requeue, you might let WandB create new runs and correlate them manually by group/notes.
 
 GROUP=$EXPERIMENT_NAME
-NOTES="is bptt working?"
+NOTES="Testing fixed backprop with unified updates"
 # TAGS=(bptt)
 
 
@@ -45,17 +45,17 @@ CHECKPOINT_SAVE_FREQ=100000
 # To run EtherealRNN with BPTT: MODEL_TYPE='ethereal', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
 #
 MODEL_TYPE='ethereal'           # ethereal | rnn
-UPDATER='dfa'                # dfa | backprop | bptt
+UPDATER='backprop'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-3           # Base learning rate
+LEARNING_RATE=1e-4           # Base learning rate (lower for stability)
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
-GRAD_CLIP=0                  # Max gradient norm
+PLAST_CLIP=1e1               # Plasticity max value (much lower for stability)
+GRAD_CLIP=1e0                  # Max gradient norm (enable clipping)
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
-IMPRINT_RATE=0.3             # Hebbian imprint strength
+IMPRINT_RATE=0.0             # Hebbian imprint strength (none for backprop)
 FORGET_RATE=0.01             # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
 PLAST_PROPORTION=0.2         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
@@ -63,22 +63,22 @@ ENABLE_RECURRENCE=true       # Whether to enable recurrent hidden state connecti
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=0               # Max absolute weight value (0=off)
+CLIP_WEIGHTS=1e0               # Max absolute weight value
 
 # ======================== Model Architecture ==================================
-HIDDEN_SIZE=512              # RNN hidden state units
-NUM_LAYERS=3                 # Number of RNN layers
+HIDDEN_SIZE=256              # RNN hidden state units (smaller for testing)
+NUM_LAYERS=2                 # Number of RNN layers (fewer for testing)
 RESIDUAL_CONNECTION=true     # Use skip connections (true/false)
 POS_ENCODING=0             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
 DATASET='2_small_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
-BATCH_SIZE=16                 # Sequences per batch
+BATCH_SIZE=8                 # Sequences per batch (smaller for testing)
 
 # --- Loop Control & Logging ---
-N_ITERS=1000000000           # Total training steps (iterations)
-PRINT_FREQ=5000                # Console print basic avg loss/acc frequency
+N_ITERS=50           # Total training steps (iterations)
+PRINT_FREQ=10                # Console print basic avg loss/acc frequency
 
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"

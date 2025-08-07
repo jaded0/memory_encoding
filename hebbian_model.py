@@ -117,6 +117,85 @@ class HebbianLinear(nn.Linear):
         self.in_traces.data = input
         self.out_traces.data = output
 
+    def populate_dfa_gradients(self, error_signal):
+        """Populate gradients using DFA feedback weights for gradient-based update."""
+        input = self.in_traces.data
+        input_expanded = input.unsqueeze(1)  # Shape: [batch_size, 1, in_features]
+        
+        # Project error signal using feedback weights (DFA-specific)
+        if self.is_last_layer:
+            projected_error = error_signal
+        else:
+            # For non-last layers in DFA, project the error signal
+            # The feedback weights should match: [vocab_size, out_features]
+            # error_signal: [batch_size, vocab_size] -> projected_error: [batch_size, out_features]
+            projected_error = error_signal @ self.feedback_weights
+        
+        # Store projected error for bias updates
+        self._last_projected_error = projected_error
+        
+        # Compute per-batch gradient using outer product
+        # projected_error: [batch_size, out_features]
+        # input_expanded: [batch_size, 1, in_features]
+        out = projected_error.unsqueeze(2)  # [batch_size, out_features, 1]
+        gradient = out * input_expanded  # [batch_size, out_features, in_features]
+        
+        # Populate candidate_weights.grad
+        if self.candidate_weights.grad is None:
+            self.candidate_weights.grad = gradient.clone()
+        else:
+            self.candidate_weights.grad.copy_(gradient)
+
+    def apply_unified_updates(self, learning_rate, grad_clip, state):
+        """Unified update mechanism for both DFA and backprop.
+        
+        Args:
+            learning_rate: Learning rate for updates
+            grad_clip: Gradient clipping value
+            state: Training state dictionary for logging
+        """
+        if self.candidate_weights.grad is None:
+            return
+            
+        # Get the gradient (already populated by either DFA or backprop)
+        update = self.candidate_weights.grad.clone()
+        
+        # Apply plasticity scaling and masking (same for both methods)
+        if not self.is_last_layer:
+            plasticity_expanded = self.plasticity.unsqueeze(0)  # [1, out_features, in_features]
+            mask_expanded = self.mask.unsqueeze(0)  # [1, out_features, in_features]
+            
+            # Scale by plasticity and mask
+            update = update * plasticity_expanded
+            update = update * mask_expanded
+            
+            # Apply gradient clipping (element-wise for consistency)
+            if grad_clip > 0:
+                update = torch.where(mask_expanded, 
+                                   torch.clamp(update, -grad_clip, grad_clip), 
+                                   update)
+        
+        # Apply update (positive because gradients are already in the right direction)
+        self.candidate_weights.data = self.candidate_weights.data + learning_rate * update
+        
+        # Log norms if requested
+        if state.get("log_norms_now", False):
+            self._log_update_norms(update)
+        
+        # Update bias using the gradient if this is DFA
+        self._update_bias_from_grad(learning_rate)
+
+    def _update_bias_from_grad(self, learning_rate):
+        """Helper method to update bias using stored gradients."""
+        if hasattr(self, 'bias') and self.bias is not None and self.updater == 'dfa':
+            # For DFA, we need to manually update bias since it's not part of autograd
+            # Use the projected error from the last DFA computation
+            if hasattr(self, '_last_projected_error'):
+                bias_update = learning_rate * self._last_projected_error.mean(dim=0)
+                if len(bias_update.shape) > 1:
+                    bias_update = bias_update.mean(dim=0)
+                self.bias.data += bias_update
+
     def update_weights(self, error_signal, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa'):
         """Unified weight update method for both DFA and backprop.
         
@@ -150,10 +229,8 @@ class HebbianLinear(nn.Linear):
         candidate_update = out * input_expanded  # [batch_size, out_features, in_features]
         update = candidate_update
         
-        # Apply forgetting (weight decay) before update
-        if not self.is_last_layer:
-            # Use non-inplace operations for both DFA and backprop
-            self.candidate_weights.data = self.candidate_weights.data * (1 - self.forgetting_factor)
+        # NOTE: Forgetting is now handled in the training loop (apply_forget_step)
+        # to prevent double forgetting when using backprop/BPTT
         
         # Apply update with plasticity scaling and masking
         if self.is_last_layer:

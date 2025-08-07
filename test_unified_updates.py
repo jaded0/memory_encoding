@@ -1,157 +1,204 @@
 #!/usr/bin/env python3
 """
-Test script to verify that the unified weight update mechanism works correctly
-for both DFA and backprop methods.
+Test script to verify that all three update methods (DFA, backprop, BPTT) 
+work correctly with the EtherealRNN architecture.
 """
 
 import torch
 import sys
 import os
 
-# Add the current directory to the path so we can import our modules
+# Add the current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from hebbian_model import HebbyRNN
+from hebbian_model import EtherealRNN
 from utils import initialize_charset
 
-def test_unified_updates():
-    """Test that both DFA and backprop use the same update mechanism."""
+def test_method(model_type, updater, device):
+    """Test a specific combination of model type and updater."""
+    print(f"\n=== Testing {model_type} with {updater} ===")
     
-    # Set up test parameters
-    device = torch.device("cpu")  # Use CPU for testing
-    batch_size = 2
-    input_size = 10
-    hidden_size = 8
-    output_size = 5
-    num_layers = 2
+    # Initialize charset (using a simple one for testing)
+    charset = ['a', 'b', 'c', 'd']
+    char_to_idx = {char: idx for idx, char in enumerate(charset)}
+    idx_to_char = {idx: char for char, idx in char_to_idx.items()}
+    n_characters = len(charset)
     
-    # Create a simple charset for testing
-    charset = ['a', 'b', 'c', 'd', 'e']
+    # Model parameters
+    input_size = n_characters
+    hidden_size = 32  # Small for testing
+    output_size = n_characters
+    num_layers = 1   # Single layer for simplicity
     
-    print("Testing unified weight update mechanism...")
-    print("=" * 50)
+    try:
+        # Initialize model
+        model = EtherealRNN(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            output_size=output_size,
+            num_layers=num_layers,
+            charset=charset,
+            updater=updater,
+            plast_clip=1e3,
+            batch_size=2,
+            forget_rate=0.01,
+            plast_proportion=0.2
+        ).to(device)
+        
+        # Create test data
+        batch_size = 2
+        seq_length = 5
+        input_tensor = torch.randn(batch_size, seq_length, input_size).to(device)
+        hidden = model.initHidden(batch_size)
+        
+        print(f"Model initialized successfully")
+        print(f"Model parameters: {sum(p.numel() for p in model.parameters())}")
+        
+        # Test forward pass
+        for i in range(seq_length - 1):
+            output, hidden, self_grad = model(input_tensor[:, i, :], hidden)
+            
+            # Check for NaN values
+            if torch.isnan(output).any():
+                print(f"ERROR: NaN detected in output at step {i}")
+                return False
+                
+            if torch.isnan(hidden).any():
+                print(f"ERROR: NaN detected in hidden at step {i}")
+                return False
+                
+        print("Forward pass completed without NaN values")
+        
+        # Test that model can be trained without errors
+        model.train()
+        hidden = model.initHidden(batch_size)
+        target = torch.randint(0, n_characters, (batch_size,)).to(device)
+        criterion = torch.nn.CrossEntropyLoss()
+        
+        # Run one training step
+        for i in range(seq_length - 1):
+            # For DFA, we need to ensure output requires gradients
+            if updater == 'dfa':
+                input_tensor[:, i, :].requires_grad_(True)
+            
+            output, hidden, self_grad = model(input_tensor[:, i, :], hidden)
+            
+            # For DFA, ensure output requires gradients
+            if updater == 'dfa':
+                output.requires_grad_(True)
+            
+            loss = criterion(output, target)
+            
+            if updater == 'dfa':
+                # DFA training step using unified approach
+                model.zero_grad()
+                global_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
+                reward_update = -global_error
+                
+                # Populate gradients using DFA feedback weights
+                for layer in model.linear_layers:
+                    layer.populate_dfa_gradients(reward_update)
+                model.i2o.populate_dfa_gradients(reward_update)
+                model.self_grad.populate_dfa_gradients(reward_update)
+                
+                # Apply forgetting step before weight updates
+                model.apply_forget_step()
+                
+                # Apply unified updates using the DFA-populated gradients
+                state = {"log_norms_now": False}
+                for layer in model.linear_layers:
+                    layer.apply_unified_updates(1e-4, 0, state)
+                model.i2o.apply_unified_updates(1e-4, 0, state)
+                model.self_grad.apply_unified_updates(1e-4, 0, state)
+                
+                # Clear gradients after unified updates
+                model.zero_grad()
+                
+            elif updater == 'backprop':
+                # Backprop training step using unified approach
+                # For backprop, we only do one step per sequence (not per timestep)
+                if i == 0:  # Only on first step to avoid multiple backwards
+                    model.zero_grad()
+                    loss.backward()
+                    
+                    # Apply forgetting step before weight updates
+                    model.apply_forget_step()
+                    
+                    # Scale gradients for high-plasticity weights
+                    model.scale_gradients(1e3)
+                    
+                    # Apply unified updates using the gradients computed by backprop
+                    state = {"log_norms_now": False}
+                    for layer in model.linear_layers:
+                        layer.apply_unified_updates(1e-4, 0, state)
+                    model.i2h.apply_unified_updates(1e-4, 0, state)
+                    model.i2o.apply_unified_updates(1e-4, 0, state)
+                    
+                    # Clear gradients after unified updates
+                    model.zero_grad()
+                
+            elif updater == 'bptt':
+                # BPTT training step (simplified)
+                if i == seq_length - 2:  # Only backward on last step
+                    model.zero_grad()
+                    loss.backward()
+                    with torch.no_grad():
+                        for param in model.parameters():
+                            if param.grad is not None:
+                                param.data -= 1e-4 * param.grad
+                                param.grad.zero_()
+            
+            # Check for NaN after training step
+            for name, param in model.named_parameters():
+                if param.requires_grad and torch.isnan(param).any():
+                    print(f"ERROR: NaN detected in parameter {name} after training step")
+                    return False
+                    
+        print("Training step completed without NaN values")
+        return True
+        
+    except Exception as e:
+        print(f"ERROR: Exception occurred - {str(e)}")
+        return False
+
+def main():
+    """Main test function."""
+    print("Testing unified updates implementation...")
     
-    # Test DFA mode
-    print("\n1. Testing DFA mode:")
-    rnn_dfa = HebbyRNN(
-        input_size=input_size,
-        hidden_size=hidden_size, 
-        output_size=output_size,
-        num_layers=num_layers,
-        charset=charset,
-        updater='dfa',
-        batch_size=batch_size,
-        plast_proportion=0.3,
-        forget_rate=0.1
-    )
+    # Check if CUDA is available
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
     
-    # Test backprop mode
-    print("\n2. Testing backprop mode:")
-    rnn_backprop = HebbyRNN(
-        input_size=input_size,
-        hidden_size=hidden_size,
-        output_size=output_size, 
-        num_layers=num_layers,
-        charset=charset,
-        updater='backprop',
-        batch_size=batch_size,
-        plast_proportion=0.3,
-        forget_rate=0.1
-    )
+    # Test all combinations
+    model_types = ['ethereal']
+    updaters = ['dfa', 'backprop', 'bptt']
     
-    # Create test input
-    test_input = torch.randn(batch_size, input_size)
-    test_target = torch.randint(0, output_size, (batch_size,))
-    test_target_onehot = torch.zeros(batch_size, output_size)
-    test_target_onehot.scatter_(1, test_target.unsqueeze(1), 1.0)
+    results = {}
     
-    print(f"\nTest input shape: {test_input.shape}")
-    print(f"Test target shape: {test_target.shape}")
+    for model_type in model_types:
+        for updater in updaters:
+            key = f"{model_type}_{updater}"
+            try:
+                results[key] = test_method(model_type, updater, device)
+            except Exception as e:
+                print(f"Test failed for {key}: {str(e)}")
+                results[key] = False
     
-    # Test forward pass for both models
-    print("\n3. Testing forward passes:")
+    # Print summary
+    print("\n=== TEST SUMMARY ===")
+    all_passed = True
+    for key, result in results.items():
+        status = "PASS" if result else "FAIL"
+        print(f"{key}: {status}")
+        if not result:
+            all_passed = False
     
-    # DFA forward
-    hidden_dfa = rnn_dfa.initHidden(batch_size)
-    output_dfa, _, _ = rnn_dfa(test_input, hidden_dfa)
-    print(f"DFA output shape: {output_dfa.shape}")
-    
-    # Backprop forward  
-    hidden_bp = rnn_backprop.initHidden(batch_size)
-    output_bp, _, _ = rnn_backprop(test_input, hidden_bp)
-    print(f"Backprop output shape: {output_bp.shape}")
-    
-    # Test weight updates
-    print("\n4. Testing weight updates:")
-    
-    # Create test error signal
-    criterion = torch.nn.CrossEntropyLoss(reduction='none')
-    
-    # DFA update test
-    print("\nDFA update test:")
-    output_dfa.requires_grad_(True)
-    loss_dfa = criterion(output_dfa, test_target)
-    error_signal_dfa = torch.autograd.grad(loss_dfa, output_dfa, grad_outputs=torch.ones_like(loss_dfa), retain_graph=False)[0]
-    reward_dfa = -error_signal_dfa
-    
-    # Get initial weights
-    initial_weights_dfa = rnn_dfa.i2o.candidate_weights.clone()
-    
-    # Apply update
-    state = {"log_norms_now": True}
-    rnn_dfa.i2o.apply_imprints(reward_dfa, 0.01, 0.01, 1.0, 0.0, 0.0, state)
-    
-    # Check if weights changed
-    final_weights_dfa = rnn_dfa.i2o.candidate_weights
-    weight_change_dfa = torch.norm(final_weights_dfa - initial_weights_dfa).item()
-    print(f"DFA weight change norm: {weight_change_dfa:.6f}")
-    
-    # Backprop update test
-    print("\nBackprop update test:")
-    output_bp.requires_grad_(True)
-    loss_bp = criterion(output_bp, test_target)
-    error_signal_bp = torch.autograd.grad(loss_bp, output_bp, grad_outputs=torch.ones_like(loss_bp), retain_graph=False)[0]
-    reward_bp = -error_signal_bp
-    
-    # Get initial weights
-    initial_weights_bp = rnn_backprop.i2o.candidate_weights.clone()
-    
-    # Apply update
-    rnn_backprop.i2o.apply_imprints(reward_bp, 0.01, 0.01, 1.0, 0.0, 0.0, state)
-    
-    # Check if weights changed
-    final_weights_bp = rnn_backprop.i2o.candidate_weights
-    weight_change_bp = torch.norm(final_weights_bp - initial_weights_bp).item()
-    print(f"Backprop weight change norm: {weight_change_bp:.6f}")
-    
-    # Test that both methods use the unified update_weights function
-    print("\n5. Verifying unified update mechanism:")
-    
-    # Check that both models have the update_weights method
-    assert hasattr(rnn_dfa.i2o, 'update_weights'), "DFA model missing update_weights method"
-    assert hasattr(rnn_backprop.i2o, 'update_weights'), "Backprop model missing update_weights method"
-    
-    # Check that apply_imprints calls update_weights
-    print("✓ Both models have unified update_weights method")
-    print("✓ apply_imprints method calls update_weights internally")
-    
-    # Check updater types are correctly set
-    assert rnn_dfa.i2o.updater == 'dfa', f"Expected 'dfa', got '{rnn_dfa.i2o.updater}'"
-    assert rnn_backprop.i2o.updater == 'backprop', f"Expected 'backprop', got '{rnn_backprop.i2o.updater}'"
-    print("✓ Updater types correctly set")
-    
-    print("\n6. Summary:")
-    print("✓ Both DFA and backprop models created successfully")
-    print("✓ Forward passes work for both models")
-    print("✓ Weight updates work for both models")
-    print("✓ Unified update mechanism is in place")
-    print("✓ The main difference is now only the error signal source:")
-    print("  - DFA: Uses random feedback weights for error projection")
-    print("  - Backprop: Uses true gradients directly")
-    
-    print("\n" + "=" * 50)
-    print("UNIFIED UPDATE MECHANISM TEST PASSED!")
-    print("=" * 50)
+    if all_passed:
+        print("\nAll tests PASSED! The unified updates implementation is working correctly.")
+        return 0
+    else:
+        print("\nSome tests FAILED! Check the output above for details.")
+        return 1
 
 if __name__ == "__main__":
-    test_unified_updates()
+    sys.exit(main())

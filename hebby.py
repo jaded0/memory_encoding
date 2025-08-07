@@ -13,7 +13,10 @@ import numpy as np
 import itertools
 import os
 import psutil
-from wandb_osh.hooks import TriggerWandbSyncHook  # <-- New!
+try:
+    from wandb_osh.hooks import TriggerWandbSyncHook  # <-- New!
+except ImportError:
+    TriggerWandbSyncHook = None
 
 class TermColors:
     GREEN = '\033[92m'
@@ -45,7 +48,7 @@ def plot_ascii_bar_graph(data, title, max_width=40):
 
 # from memory_profiler import profile
 
-trigger_sync = TriggerWandbSyncHook()  # <--- New!
+trigger_sync = TriggerWandbSyncHook() if TriggerWandbSyncHook else None  # <--- New!
 
 def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
     """Unified training function for DFA, backprop, and BPTT."""
@@ -117,9 +120,29 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
             if config.get("self_grad", 0) > 0:
                 reward_update += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
             
-            # Apply DFA updates
-            rnn.update_weights_dfa(reward_update, config["learning_rate"], config["plast_learning_rate"], 
-                                 config["plast_clip"], config["imprint_rate"], config["grad_clip"], state)
+            # Apply DFA updates using unified approach
+            if isinstance(rnn, EtherealRNN):
+                # Populate gradients using DFA feedback weights
+                for layer in rnn.linear_layers:
+                    layer.populate_dfa_gradients(reward_update)
+                rnn.i2o.populate_dfa_gradients(reward_update)
+                rnn.self_grad.populate_dfa_gradients(reward_update)
+                
+                # Apply forgetting step before weight updates
+                rnn.apply_forget_step()
+                
+                # Apply unified updates using the DFA-populated gradients
+                for layer in rnn.linear_layers:
+                    layer.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
+                rnn.i2o.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
+                rnn.self_grad.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
+                
+                # Clear gradients after unified updates
+                rnn.zero_grad()
+            else:
+                # Apply DFA updates for non-Ethereal models (fallback to original method)
+                rnn.update_weights_dfa(reward_update, config["learning_rate"], config["plast_learning_rate"], 
+                                     config["plast_clip"], config["imprint_rate"], config["grad_clip"], state)
             
             state['training_instance'] += 1
             loss_total += loss.mean().item()  # Convert to scalar for consistency
@@ -127,13 +150,18 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
         elif updater == 'backprop':
             # Backprop-specific processing
             if isinstance(rnn, EtherealRNN):
-                # EtherealRNN with backprop
+                # EtherealRNN with TRUE backprop - compute gradients through the network
                 step_loss = criterion(output, final_char)
-                # With 'none' reduction, we get per-example losses, so take mean for backward
+                losses.append(step_loss.detach())
+                
+                # Zero gradients before backward pass
+                rnn.zero_grad()
+                
+                # Compute gradients through the entire network (true backprop)
                 total_loss = step_loss.mean() if step_loss.dim() > 0 else step_loss
                 total_loss.backward(retain_graph=False)
                 
-                # Apply forgetting step before optimizer step
+                # Apply forgetting step before weight updates
                 rnn.apply_forget_step()
                 
                 # Scale gradients for high-plasticity weights
@@ -143,12 +171,17 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                 if state.get('log_norms_now', False):
                     rnn.store_all_grad_norms()
                 
-                # Manual optimizer step for HebbyRNN
-                with torch.no_grad():
-                    for param in rnn.parameters():
-                        if param.grad is not None:
-                            param.data -= config["learning_rate"] * param.grad
-                            param.grad.zero_()
+                # Apply unified updates using the gradients computed by backprop
+                for layer in rnn.linear_layers:
+                    layer.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
+                rnn.i2h.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
+                rnn.i2o.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
+                
+                # Clear gradients after unified updates
+                rnn.zero_grad()
+                
+                state['training_instance'] += 1
+                loss_total += step_loss.mean().item() if step_loss.dim() > 0 else step_loss.item()
             else:
                 # Standard SimpleRNN with backprop
                 optimizer.zero_grad()
@@ -161,8 +194,7 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                     torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
                 
                 optimizer.step()
-            
-            loss_total += step_loss.mean().item() if step_loss.dim() > 0 else step_loss.item()
+                loss_total += step_loss.mean().item() if step_loss.dim() > 0 else step_loss.item()
             
         elif updater == 'bptt':
             # BPTT-specific processing - accumulate loss across sequence
@@ -185,7 +217,7 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                     total_loss = accumulated_loss.mean() if accumulated_loss.dim() > 0 else accumulated_loss
                     total_loss.backward(retain_graph=False)
                     
-                    # Apply forgetting step before optimizer step
+                    # Apply forgetting step before optimizer step (only once here)
                     rnn.apply_forget_step()
                     
                     # Scale gradients for high-plasticity weights
@@ -827,7 +859,8 @@ def main():
                 #     print(f"Log frequency has been updated to {log_freq} in the environment variable.")
                 #     log_freq = int(os.getenv("LOG_FREQ", "5000")) # Update log_freq if changed in env
                 try:
-                    trigger_sync()
+                    if trigger_sync:
+                        trigger_sync()
                 except Exception as e:
                     print(f"Error during W&B sync: {e}")
 
