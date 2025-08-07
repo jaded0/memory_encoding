@@ -184,6 +184,8 @@ class HebbianLinear(nn.Linear):
         
         # Update bias using the gradient if this is DFA
         self._update_bias_from_grad(learning_rate)
+        # Apply normalization and weight clipping if enabled
+        self._apply_regularization()
 
     def _update_bias_from_grad(self, learning_rate):
         """Helper method to update bias using stored gradients."""
@@ -297,7 +299,7 @@ class HebbianLinear(nn.Linear):
                     p.data = p.data / (p.data.norm(2) + 1e-6)
         
         if self.clip_weights != 0:
-            self.weight.data.clamp_(-self.clip_weights, self.clip_weights)
+            self.candidate_weights.data.clamp_(-self.clip_weights, self.clip_weights)
 
 
     def apply_forget_step(self):
