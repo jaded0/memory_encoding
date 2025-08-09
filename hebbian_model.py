@@ -169,14 +169,14 @@ class HebbianLinear(nn.Linear):
             update = update * plasticity_expanded
             update = update * mask_expanded
             
-            # Apply gradient clipping (element-wise for consistency)
-            if grad_clip > 0:
-                update = torch.where(mask_expanded, 
-                                   torch.clamp(update, -grad_clip, grad_clip), 
-                                   update)
+        # Apply gradient clipping (element-wise for consistency)
+        if grad_clip > 0:
+            update = torch.where(mask_expanded, 
+                                torch.clamp(update, -grad_clip, grad_clip), 
+                                update)
         
         # Apply update (positive because gradients are already in the right direction)
-        self.candidate_weights.data = self.candidate_weights.data + learning_rate * update
+        self.candidate_weights.data = -self.candidate_weights.data + learning_rate * update
         
         # Log norms if requested
         if state.get("log_norms_now", False):

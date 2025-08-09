@@ -33,7 +33,7 @@ NOTES="is bptt working?"
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
-CHECKPOINT_SAVE_FREQ=100000
+CHECKPOINT_SAVE_FREQ=1000000
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
@@ -51,19 +51,19 @@ INPUT_MODE='last_one'        # last_one | last_two
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-3           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
-GRAD_CLIP=0                  # Max gradient norm
+PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
+GRAD_CLIP=0                  # Max gradient
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
 IMPRINT_RATE=0.3             # Hebbian imprint strength
-FORGET_RATE=0.01             # Weight decay/forgetting factor
+FORGET_RATE=0.1             # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
 PLAST_PROPORTION=0.2         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
 ENABLE_RECURRENCE=true       # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=1e-4               # Max absolute weight value (0=off)
+CLIP_WEIGHTS=1               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
 HIDDEN_SIZE=512              # RNN hidden state units

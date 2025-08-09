@@ -113,7 +113,7 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
             
             # Convert loss to reward signal
             global_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
-            reward_update = -global_error
+            reward_update = global_error
             rnn.zero_grad()
             
             # Add self_grad if configured
