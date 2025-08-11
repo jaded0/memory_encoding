@@ -158,7 +158,7 @@ class HebbianLinear(nn.Linear):
             return
             
         # Get the gradient (already populated by either DFA or backprop)
-        update = self.candidate_weights.grad.clone()
+        update = -self.candidate_weights.grad.clone()
         
         # Apply plasticity scaling and masking (same for both methods)
         if not self.is_last_layer:
@@ -175,8 +175,7 @@ class HebbianLinear(nn.Linear):
                                 torch.clamp(update, -grad_clip, grad_clip), 
                                 update)
         
-        # Apply update (positive because gradients are already in the right direction)
-        self.candidate_weights.data = -self.candidate_weights.data + learning_rate * update
+        self.candidate_weights.data = self.candidate_weights.data + learning_rate * update
         
         # Log norms if requested
         if state.get("log_norms_now", False):
@@ -193,7 +192,7 @@ class HebbianLinear(nn.Linear):
             # For DFA, we need to manually update bias since it's not part of autograd
             # Use the projected error from the last DFA computation
             if hasattr(self, '_last_projected_error'):
-                bias_update = learning_rate * self._last_projected_error.mean(dim=0)
+                bias_update = -learning_rate * self._last_projected_error.mean(dim=0)
                 if len(bias_update.shape) > 1:
                     bias_update = bias_update.mean(dim=0)
                 self.bias.data += bias_update
