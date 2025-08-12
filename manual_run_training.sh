@@ -13,7 +13,7 @@ export WANDB_MODE=online # online | offline | disabled
 # Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
 # the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
 # Let's assume you have a base experiment name.
-EXPERIMENT_NAME="newdfabench"
+EXPERIMENT_NAME="newbpbench"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # --- Experiment Identification (W&B) ---
@@ -27,7 +27,7 @@ CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for thi
 # For simplicity with --requeue, you might let WandB create new runs and correlate them manually by group/notes.
 
 GROUP=$EXPERIMENT_NAME
-NOTES="dfa with the new, fixed? rules"
+NOTES="bp with the new, fixed? rules"
 # TAGS=(bptt)
 
 
@@ -45,7 +45,7 @@ CHECKPOINT_SAVE_FREQ=1000000
 # To run EtherealRNN with BPTT: MODEL_TYPE='ethereal', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
 #
 MODEL_TYPE='ethereal'           # ethereal | rnn
-UPDATER='dfa'                # dfa | backprop | bptt
+UPDATER='backprop'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
@@ -63,7 +63,7 @@ ENABLE_RECURRENCE=true       # Whether to enable recurrent hidden state connecti
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=0               # Max absolute weight value (0=off)
+CLIP_WEIGHTS=10               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
 HIDDEN_SIZE=512              # RNN hidden state units
