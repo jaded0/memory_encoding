@@ -45,7 +45,7 @@ CHECKPOINT_SAVE_FREQ=1000000
 # To run EtherealRNN with BPTT: MODEL_TYPE='ethereal', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
 #
 MODEL_TYPE='ethereal'           # ethereal | rnn
-UPDATER='dfa'                # dfa | backprop | bptt
+UPDATER='backprop'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
