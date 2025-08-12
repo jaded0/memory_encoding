@@ -171,6 +171,17 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                 if state.get('log_norms_now', False):
                     rnn.store_all_grad_norms()
                 
+                # # Store projected error for bias updates (backprop case)
+                # # For backprop, we can extract the bias gradient that was already computed
+                # # The bias gradient is equivalent to the sum of output gradients across batch
+                # if hasattr(rnn.i2o, 'bias') and rnn.i2o.bias is not None and rnn.i2o.bias.grad is not None:
+                #     # Use the bias gradient as the projected error (it's already summed across batch)
+                #     bias_grad = rnn.i2o.bias.grad.clone()
+                #     for layer in rnn.linear_layers:
+                #         layer._last_projected_error = bias_grad.unsqueeze(0)  # Add batch dim for consistency
+                #     rnn.i2h._last_projected_error = bias_grad.unsqueeze(0)
+                #     rnn.i2o._last_projected_error = bias_grad.unsqueeze(0)
+                
                 # Apply unified updates using the gradients computed by backprop
                 for layer in rnn.linear_layers:
                     layer.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)

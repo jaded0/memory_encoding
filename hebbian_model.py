@@ -25,11 +25,8 @@ class HebbianLinear(nn.Linear):
         # Set requires_grad for the base class parameters
         self.weight.requires_grad = False # Base weights are not trained directly
         if bias:
-            # Bias is trained with backprop/bptt if the updater is backprop or bptt
-            # TODO: The bias update method differs between updaters. Backprop/BPTT uses
-            # standard gradient descent via the optimizer. DFA uses a manual update
-            # based on the projected error signal in `apply_imprints`. This is a
-            # known difference for comparison.
+            # For backprop/bptt, bias needs requires_grad=True so PyTorch computes bias.grad
+            # For DFA, we set it to False since we handle bias manually
             self.bias.requires_grad = (updater in ['backprop', 'bptt'])
 
         self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
@@ -188,14 +185,19 @@ class HebbianLinear(nn.Linear):
 
     def _update_bias_from_grad(self, learning_rate):
         """Helper method to update bias using stored gradients."""
-        if hasattr(self, 'bias') and self.bias is not None and self.updater == 'dfa':
-            # For DFA, we need to manually update bias since it's not part of autograd
-            # Use the projected error from the last DFA computation
-            if hasattr(self, '_last_projected_error'):
-                bias_update = -learning_rate * self._last_projected_error.mean(dim=0)
-                if len(bias_update.shape) > 1:
-                    bias_update = bias_update.mean(dim=0)
-                self.bias.data += bias_update
+        if hasattr(self, 'bias') and self.bias is not None:
+            if self.updater == 'dfa':
+                # For DFA, manually update bias using projected error
+                if hasattr(self, '_last_projected_error'):
+                    bias_update = -learning_rate * self._last_projected_error.mean(dim=0)
+                    if len(bias_update.shape) > 1:
+                        bias_update = bias_update.mean(dim=0)
+                    self.bias.data += bias_update
+            elif self.updater in ['backprop', 'bptt']:
+                # For backprop/bptt, manually update bias using the computed bias gradient
+                if self.bias.grad is not None:
+                    bias_update = -learning_rate * self.bias.grad
+                    self.bias.data += bias_update
 
     def update_weights(self, error_signal, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa'):
         """Unified weight update method for both DFA and backprop.
