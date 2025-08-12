@@ -139,10 +139,6 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                 
                 # Clear gradients after unified updates
                 rnn.zero_grad()
-            else:
-                # Apply DFA updates for non-Ethereal models (fallback to original method)
-                rnn.update_weights_dfa(reward_update, config["learning_rate"], config["plast_learning_rate"], 
-                                     config["plast_clip"], config["imprint_rate"], config["grad_clip"], state)
             
             state['training_instance'] += 1
             loss_total += loss.mean().item()  # Convert to scalar for consistency

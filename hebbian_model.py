@@ -9,15 +9,6 @@ import torch.nn.utils.parametrize as parametrize
 # from memory_profiler import profile
 
 
-class PlasticityNorm(nn.Module):
-    def __init__(self, lr):
-        super().__init__()
-        self.lr = lr
-
-    def forward(self, plasticity):
-        norm = plasticity.norm(p=2, dim=None, keepdim=True)
-        return self.lr * plasticity / norm
-
 class HebbianLinear(nn.Linear):
     def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, updater='dfa', requires_grad=False, is_last_layer=False, plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2):
         super(HebbianLinear, self).__init__(in_features, out_features, bias)
@@ -29,7 +20,6 @@ class HebbianLinear(nn.Linear):
             # For DFA, we set it to False since we handle bias manually
             self.bias.requires_grad = (updater in ['backprop', 'bptt'])
 
-        self.imprints = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
         self.normalize = normalize
         self.clip_weights = clip_weights
         self.updater = updater
@@ -40,7 +30,6 @@ class HebbianLinear(nn.Linear):
         self.last_high_plast_update_norm = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.last_low_plast_update_norm = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.register_buffer('t', torch.tensor(1.0))
-        self.learning_rate = 1
         self.batch_size = batch_size
 
 
@@ -51,7 +40,6 @@ class HebbianLinear(nn.Linear):
         # Candidate weights are per-sample and store the "fast" or plastic weights.
         # They require gradients only if we are using the backprop or bptt updater.
         self.candidate_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=(updater in ['backprop', 'bptt']))
-        self.plasticity_candidate_weights = nn.Parameter(torch.zeros_like(self.weight), requires_grad=requires_grad)
         distribution = torch.ones_like(self.weight)
         rand_vals = torch.rand_like(self.weight)
         self.mask = nn.Parameter((rand_vals < plast_proportion).bool(), requires_grad=False)
@@ -63,16 +51,11 @@ class HebbianLinear(nn.Linear):
         forget_dist[mask_tier_two] = forget_rate
         self.forgetting_factor = nn.Parameter(forget_dist, requires_grad=False)
 
-        uniform = torch.empty_like(self.weight).uniform_(0.1, 2.0) * math.pi
-        self.phase_shift = nn.Parameter(torch.zeros_like(self.weight), requires_grad=False)
-        self.phase_shift[(rand_vals < 0.1).bool()] = math.pi/2
-        uniform[~self.mask] = 0 # only wave on our high-plast values here.
         # Initialize plasticity parameters with the generated values
         if self.is_last_layer == False:
             self.plasticity = nn.Parameter(distribution, requires_grad=requires_grad)
-            self.frequency = nn.Parameter(uniform, requires_grad=requires_grad)  # Initialize plasticity parameters
         else:
-            self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)  # Initialize plasticity parameters
+            self.plasticity = nn.Parameter(torch.ones_like(self.weight), requires_grad=requires_grad)
         print(f"Number of non-zero values in self.plasticity: {torch.count_nonzero(self.plasticity).item()}")
 
         self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
@@ -164,13 +147,13 @@ class HebbianLinear(nn.Linear):
             
             # Scale by plasticity and mask
             update = update * plasticity_expanded
-            update = update * mask_expanded
+            # update = update * mask_expanded
             
-        # Apply gradient clipping (element-wise for consistency)
-        if grad_clip > 0:
-            update = torch.where(mask_expanded, 
-                                torch.clamp(update, -grad_clip, grad_clip), 
-                                update)
+            # Apply gradient clipping (element-wise for consistency)
+            if grad_clip > 0:
+                update = torch.where(mask_expanded, 
+                                    torch.clamp(update, -grad_clip, grad_clip), 
+                                    update)
         
         self.candidate_weights.data = self.candidate_weights.data + learning_rate * update
         
@@ -199,74 +182,6 @@ class HebbianLinear(nn.Linear):
                     bias_update = -learning_rate * self.bias.grad
                     self.bias.data += bias_update
 
-    def update_weights(self, error_signal, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa'):
-        """Unified weight update method for both DFA and backprop.
-        
-        Args:
-            error_signal: The error signal to use for updates
-            method: 'dfa' or 'backprop' - determines error signal source only
-        """
-        input = self.in_traces.data
-        output = self.out_traces.data
-        
-        # Reshape input for broadcasting
-        input_expanded = input.unsqueeze(1)  # Shape: [batch_size, 1, in_features]
-        
-        # For DFA, project the error signal using feedback weights
-        # For backprop, error_signal should already be the correct gradient
-        if method == 'dfa':
-            if self.is_last_layer:
-                projected_error = error_signal
-            else:
-                # For non-last layers in DFA, we need to project the error signal
-                # The feedback weights should match: [vocab_size, out_features]
-                # error_signal: [batch_size, vocab_size] -> projected_error: [batch_size, out_features]
-                projected_error = error_signal @ self.feedback_weights
-        else:  # backprop
-            projected_error = error_signal
-        
-        # Compute weight updates using outer product
-        # projected_error: [batch_size, out_features]
-        # input_expanded: [batch_size, 1, in_features]
-        out = projected_error.unsqueeze(2)  # [batch_size, out_features, 1]
-        candidate_update = out * input_expanded  # [batch_size, out_features, in_features]
-        update = candidate_update
-        
-        # NOTE: Forgetting is now handled in the training loop (apply_forget_step)
-        # to prevent double forgetting when using backprop/BPTT
-        
-        # Apply update with plasticity scaling and masking
-        if self.is_last_layer:
-            # Use non-inplace operations for both DFA and backprop
-            self.candidate_weights.data = self.candidate_weights.data + learning_rate * update
-        else:
-            # Scale by plasticity and mask - need to broadcast properly
-            # self.plasticity: [out_features, in_features]
-            # update: [batch_size, out_features, in_features]
-            plasticity_expanded = self.plasticity.unsqueeze(0)  # [1, out_features, in_features]
-            mask_expanded = self.mask.unsqueeze(0)  # [1, out_features, in_features]
-            
-            update = update * learning_rate * plasticity_expanded
-            update = update * mask_expanded
-            
-            # Apply gradient clipping (element-wise for consistency)
-            if grad_clip > 0:
-                update = torch.where(mask_expanded, 
-                                   torch.clamp(update, -grad_clip, grad_clip), 
-                                   update)
-            
-            # Use non-inplace operations for both DFA and backprop
-            self.candidate_weights.data = self.candidate_weights.data + update
-        
-        # Log norms if requested
-        if state.get("log_norms_now", False):
-            self._log_update_norms(update)
-        
-        # Update bias using the same projected error
-        self._update_bias(projected_error, learning_rate)
-        
-        # Apply normalization and weight clipping if enabled
-        self._apply_regularization()
     
     def _log_update_norms(self, update):
         """Helper method to log update norms."""
@@ -498,13 +413,6 @@ class EtherealRNN(torch.nn.Module):
         # self_grad is not trained with backprop, so no gradients to scale
         # self.self_grad.scale_gradients(plast_clip)
 
-    def update_weights_dfa(self, reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state):
-        """Apply DFA weight updates to all HebbianLinear layers."""
-        for layer in self.linear_layers:
-            layer.update_weights(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa')
-        # self.i2h.update_weights(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa')
-        self.i2o.update_weights(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa')
-        self.self_grad.update_weights(reward, learning_rate, plast_learning_rate, plast_clip, imprint_rate, grad_clip, state, method='dfa')
     
     def get_all_norms(self):
         """Aggregates norms from all HebbianLinear layers."""

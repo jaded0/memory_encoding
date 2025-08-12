@@ -45,7 +45,7 @@ CHECKPOINT_SAVE_FREQ=1000000
 # To run EtherealRNN with BPTT: MODEL_TYPE='ethereal', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
 #
 MODEL_TYPE='ethereal'           # ethereal | rnn
-UPDATER='backprop'                # dfa | backprop | bptt
+UPDATER='dfa'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
@@ -63,7 +63,7 @@ ENABLE_RECURRENCE=true       # Whether to enable recurrent hidden state connecti
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=10               # Max absolute weight value (0=off)
+CLIP_WEIGHTS=1               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
 HIDDEN_SIZE=512              # RNN hidden state units
