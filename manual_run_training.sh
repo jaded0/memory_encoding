@@ -45,13 +45,13 @@ CHECKPOINT_SAVE_FREQ=1000000
 # To run EtherealRNN with BPTT: MODEL_TYPE='ethereal', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
 #
 MODEL_TYPE='ethereal'           # ethereal | rnn
-UPDATER='backprop'                # dfa | backprop | bptt
+UPDATER='dfa'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-3           # Base learning rate
+LEARNING_RATE=1e-4           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
+PLAST_CLIP=1e5               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
@@ -59,14 +59,14 @@ IMPRINT_RATE=0.3             # Hebbian imprint strength
 FORGET_RATE=0.01             # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
 PLAST_PROPORTION=0.2         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
-ENABLE_RECURRENCE=true       # Whether to enable recurrent hidden state connections
+ENABLE_RECURRENCE=false       # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=1               # Max absolute weight value (0=off)
+CLIP_WEIGHTS=0               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
-HIDDEN_SIZE=512              # RNN hidden state units
+HIDDEN_SIZE=256              # RNN hidden state units
 NUM_LAYERS=3                 # Number of RNN layers
 RESIDUAL_CONNECTION=true     # Use skip connections (true/false)
 POS_ENCODING=0             # Positional encoding dimension (0=off)
@@ -77,7 +77,7 @@ DATASET='2_small_palindrome_dataset_vary_length' # palindrome_dataset | roneneld
 BATCH_SIZE=16                 # Sequences per batch
 
 # --- Loop Control & Logging ---
-N_ITERS=1000000000           # Total training steps (iterations)
+N_ITERS=4000000           # Total training steps (iterations)
 PRINT_FREQ=5000                # Console print basic avg loss/acc frequency
 
 # ======================== Execution ===========================================

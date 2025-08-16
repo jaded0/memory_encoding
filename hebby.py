@@ -617,6 +617,9 @@ def main():
     current_correct = 0 # Using top-1 accuracy here for simplicity in aggregation
     all_losses = []
     start = time.time()
+    
+    # Flag to track if NaN has been detected
+    nan_detected = False
 
     def infinite_dataloader(dataloader):
         while True:
@@ -664,6 +667,18 @@ def main():
             output, loss, og_loss, reg_loss, current_iter_all_outputs, current_iter_all_labels = train(
                 line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train
             )
+            
+            # Check for NaN in loss and terminate if detected
+            if torch.isnan(torch.tensor(loss)).any():
+                print("NaN detected in loss. Terminating training.")
+                nan_detected = True
+                if args.track and wandb.run:
+                    # Add "NaN" tag to the run
+                    current_tags = list(wandb.run.tags)
+                    if "NaN" not in current_tags:
+                        wandb.run.tags = current_tags + ["NaN"]
+                    print("Added 'NaN' tag to WandB run.")
+                break  # Exit the training loop
             
             # Store detailed outputs if they were generated FOR THIS ITERATION for print_freq
             if log_outputs_for_train:
@@ -891,6 +906,11 @@ def main():
             print("Final W&B sync and finish run...")
             trigger_sync() 
             wandb.finish()
+            
+        # If NaN was detected, we should not log the normal completion
+        if nan_detected:
+            print("Training terminated due to NaN loss. Run has been tagged with 'NaN'.")
+            sys.exit(1)
 
 
     except KeyboardInterrupt:

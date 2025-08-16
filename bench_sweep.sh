@@ -5,7 +5,7 @@
 # ==============================================================================
 
 # --- SLURM Directives (MUST NEAR AT THE TOP) ---
-#SBATCH --time=05:00:00        # Max walltime per task
+#SBATCH --time=48:00:00        # Max walltime per task
 #SBATCH --nodes=1              # Request 1 node per task
 #SBATCH --ntasks=10             # Request 1 task per job array instance
 #SBATCH --cpus-per-task=1      # Explicitly request 1 CPU core for that task
@@ -91,11 +91,11 @@ RESIDUAL_CONNECTION=${residual_connections[$idx_rc]}
 # ======================== Experiment Identification (Dynamic) =================
 GROUP='bench_sweep'
 RUN_NOTES="Model=${MODEL_TYPE}_Updater=${UPDATER}_Recurrence=${ENABLE_RECURRENCE}_ClipWeights=${CLIP_WEIGHTS}_PlastClip=${PLAST_CLIP}_GradClip=${GRAD_CLIP}_ResidualConnection=${RESIDUAL_CONNECTION}_TaskID=${SLURM_ARRAY_TASK_ID}"
-TAGS=(bench_sweep sweep)
+TAGS=(bench_sweep sweep long_sweep)
 
 # ======================== Fixed Parameters (Not Swept) - Based on whole_run.sh ========================
 INPUT_MODE='last_one'        # From whole_run.sh
-LEARNING_RATE=1e-4           # From whole_run.sh
+LEARNING_RATE=1e-3           # From whole_run.sh
 PLAST_LEARNING_RATE=1e-10    # From whole_run.sh
 IMPRINT_RATE=0.3             # From whole_run.sh
 FORGET_RATE=0.01             # From whole_run.sh (0.01 instead of variable)
@@ -106,7 +106,7 @@ NUM_LAYERS=3                 # From whole_run.sh
 POS_ENCODING=0             # From whole_run.sh
 DATASET='2_small_palindrome_dataset_vary_length' # From whole_run.sh
 BATCH_SIZE=16                # From whole_run.sh (16 instead of 4)
-N_ITERS=2000000           # From whole_run.sh
+N_ITERS=8000000           # From whole_run.sh
 PRINT_FREQ=5000              # From whole_run.sh (5000 instead of 2500)
 CHECKPOINT_SAVE_FREQ=500000  # From whole_run.sh
 PLAST_PROPORTION=0.2         # From whole_run.sh
