@@ -49,9 +49,9 @@ UPDATER='dfa'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-4           # Base learning rate
+LEARNING_RATE=1e-3           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e5               # Plasticity max value (for specific rules)
+PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
@@ -63,7 +63,7 @@ ENABLE_RECURRENCE=false       # Whether to enable recurrent hidden state connect
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=0               # Max absolute weight value (0=off)
+CLIP_WEIGHTS=1               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
 HIDDEN_SIZE=256              # RNN hidden state units
@@ -73,7 +73,7 @@ POS_ENCODING=0             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='2_small_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
+DATASET='2_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
 BATCH_SIZE=16                 # Sequences per batch
 
 # --- Loop Control & Logging ---
