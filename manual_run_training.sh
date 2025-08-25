@@ -13,7 +13,7 @@ export WANDB_MODE=online # online | offline | disabled
 # Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
 # the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
 # Let's assume you have a base experiment name.
-EXPERIMENT_NAME="newbpbench"
+EXPERIMENT_NAME="bosw"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # --- Experiment Identification (W&B) ---
@@ -27,7 +27,7 @@ CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for thi
 # For simplicity with --requeue, you might let WandB create new runs and correlate them manually by group/notes.
 
 GROUP=$EXPERIMENT_NAME
-NOTES="bp with the new, fixed? rules"
+NOTES="trying the best of the sweep"
 # TAGS=(bptt)
 
 
@@ -51,29 +51,29 @@ INPUT_MODE='last_one'        # last_one | last_two
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-3           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e4               # Plasticity max value (for specific rules)
+PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
 IMPRINT_RATE=0.3             # Hebbian imprint strength
 FORGET_RATE=0.01             # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
-PLAST_PROPORTION=0.2         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
+PLAST_PROPORTION=0.1         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
 ENABLE_RECURRENCE=false       # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=1               # Max absolute weight value (0=off)
+CLIP_WEIGHTS=10               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
-HIDDEN_SIZE=256              # RNN hidden state units
+HIDDEN_SIZE=1024              # RNN hidden state units
 NUM_LAYERS=3                 # Number of RNN layers
-RESIDUAL_CONNECTION=true     # Use skip connections (true/false)
+RESIDUAL_CONNECTION=false     # Use skip connections (true/false)
 POS_ENCODING=0             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='2_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
+DATASET='4_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
 BATCH_SIZE=16                 # Sequences per batch
 
 # --- Loop Control & Logging ---

@@ -5,7 +5,7 @@
 # ==============================================================================
 
 # --- SLURM Directives (MUST NEAR AT THE TOP) ---
-#SBATCH --time=48:00:00        # Max walltime per task
+#SBATCH --time=12:00:00        # Max walltime per task
 #SBATCH --nodes=1              # Request 1 node per task
 #SBATCH --ntasks=10             # Request 1 task per job array instance
 #SBATCH --cpus-per-task=1      # Explicitly request 1 CPU core for that task
@@ -13,7 +13,7 @@
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
 #SBATCH --job-name=bench_sweep # Base job name
-#SBATCH --array=0-1295%20      # 1296 total jobs (1*2*1*3*3*4*1*2*3*3), max 20 concurrent
+#SBATCH --array=0-215%20      # 1296 total jobs (1*2*1*3*3*4*1*2*3*3), max 20 concurrent
 #SBATCH --output=slurm_logs/bench_sweep_%A_%a.out # Ensure slurm_logs directory exists! %A=jobID, %a=taskID
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
@@ -25,11 +25,11 @@ declare -a model_types=('ethereal')
 declare -a updaters=('backprop' 'dfa')
 declare -a enable_recurrence=('false')
 declare -a clip_weights=('0' '1' '10')
-declare -a plast_clip=('1e5' '1e4' '1e3')
+declare -a plast_clip=('1e4' '1e3' '1e2')
 declare -a grad_clip=('0')
 declare -a residual_connections=('false')
-declare -a learning_rates=('1e-3' '1e-4')
-declare -a datasets=('2_palindrome_dataset_vary_length' '3_palindrome_dataset_vary_length' '4_palindrome_dataset_vary_length')
+declare -a learning_rates=('1e-3')
+declare -a datasets=('4_palindrome_dataset_vary_length')
 declare -a hidden_sizes=('512' '1024')
 
 # --- Calculate Total Number of Jobs ---
@@ -121,7 +121,7 @@ BATCH_SIZE=16                # From whole_run.sh (16 instead of 4)
 N_ITERS=2000000              # From whole_run.sh
 PRINT_FREQ=5000              # From whole_run.sh (5000 instead of 2500)
 CHECKPOINT_SAVE_FREQ=500000  # From whole_run.sh
-PLAST_PROPORTION=0.2         # From whole_run.sh
+PLAST_PROPORTION=0.1         # From whole_run.sh
 
 # ======================== Execution ===========================================
 echo "--- Starting Bench Sweep Training Task $SLURM_ARRAY_TASK_ID ---"
