@@ -5,7 +5,7 @@
 # ==============================================================================
 
 # --- SLURM Directives (MUST NEAR AT THE TOP) ---
-#SBATCH --time=12:00:00        # Max walltime per task
+#SBATCH --time=24:00:00        # Max walltime per task
 #SBATCH --nodes=1              # Request 1 node per task
 #SBATCH --ntasks=10             # Request 1 task per job array instance
 #SBATCH --cpus-per-task=1      # Explicitly request 1 CPU core for that task
@@ -13,7 +13,7 @@
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
 #SBATCH --job-name=bench_sweep # Base job name
-#SBATCH --array=0-215%20      # 1296 total jobs (1*2*1*3*3*4*1*2*3*3), max 20 concurrent
+#SBATCH --array=0-35%20  # 36 jobs total
 #SBATCH --output=slurm_logs/bench_sweep_%A_%a.out # Ensure slurm_logs directory exists! %A=jobID, %a=taskID
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
@@ -22,7 +22,7 @@
 echo "--- Preparing Bench Sweep Parameters ---"
 # --- Define Hyperparameter Options for Bench Sweep ---
 declare -a model_types=('ethereal')
-declare -a updaters=('backprop' 'dfa')
+declare -a updaters=('dfa')
 declare -a enable_recurrence=('false')
 declare -a clip_weights=('0' '1' '10')
 declare -a plast_clip=('1e4' '1e3' '1e2')
@@ -31,6 +31,7 @@ declare -a residual_connections=('false')
 declare -a learning_rates=('1e-3')
 declare -a datasets=('4_palindrome_dataset_vary_length')
 declare -a hidden_sizes=('512' '1024')
+declare -a plast_proportions=('0.1' '0.2')
 
 # --- Calculate Total Number of Jobs ---
 num_model_types=${#model_types[@]}
@@ -43,7 +44,8 @@ num_residual_connections=${#residual_connections[@]}
 num_learning_rates=${#learning_rates[@]}
 num_datasets=${#datasets[@]}
 num_hidden_sizes=${#hidden_sizes[@]}
-total_jobs=$((num_model_types * num_updaters * num_enable_recurrence * num_clip_weights * num_plast_clip * num_grad_clip * num_residual_connections * num_learning_rates * num_datasets * num_hidden_sizes))
+num_plast_proportions=${#plast_proportions[@]}
+total_jobs=$((num_model_types * num_updaters * num_enable_recurrence * num_clip_weights * num_plast_clip * num_grad_clip * num_residual_connections * num_learning_rates * num_datasets * num_hidden_sizes * num_plast_proportions))
 last_job_index=$((total_jobs - 1)) # SLURM array indices are 0-based
 
 echo "Bench Sweep Info: Total Jobs = $total_jobs (Indices 0-$last_job_index)"
@@ -58,6 +60,7 @@ echo "  residual_connections: ${num_residual_connections} (${residual_connection
 echo "  learning_rates: ${num_learning_rates} (${learning_rates[@]})"
 echo "  datasets: ${num_datasets} (${datasets[@]})"
 echo "  hidden_sizes: ${num_hidden_sizes} (${hidden_sizes[@]})"
+echo "  plast_proportions: ${num_plast_proportions} (${plast_proportions[@]})"
 
 
 # ======================== Environment Setup ===================================
@@ -79,7 +82,7 @@ echo "--- Environment Setup Complete ---"
 
 # ======================== Parameter Calculation for this Task =================
 # Map the SLURM_ARRAY_TASK_ID to specific hyperparameter indices
-# Order: grad_clip -> plast_clip -> clip_weights -> enable_recurrence -> updater -> model_type -> residual_connection -> learning_rate -> dataset -> hidden_size
+# Order: grad_clip -> plast_clip -> clip_weights -> enable_recurrence -> updater -> model_type -> residual_connection -> learning_rate -> dataset -> hidden_size -> plast_proportion
 idx_gc=$((SLURM_ARRAY_TASK_ID % num_grad_clip))
 idx_pc=$(((SLURM_ARRAY_TASK_ID / num_grad_clip) % num_plast_clip))
 idx_cw=$(((SLURM_ARRAY_TASK_ID / (num_grad_clip * num_plast_clip)) % num_clip_weights))
@@ -90,6 +93,7 @@ idx_rc=$(((SLURM_ARRAY_TASK_ID / (num_grad_clip * num_plast_clip * num_clip_weig
 idx_lr=$(((SLURM_ARRAY_TASK_ID / (num_grad_clip * num_plast_clip * num_clip_weights * num_enable_recurrence * num_updaters * num_model_types * num_residual_connections)) % num_learning_rates))
 idx_ds=$(((SLURM_ARRAY_TASK_ID / (num_grad_clip * num_plast_clip * num_clip_weights * num_enable_recurrence * num_updaters * num_model_types * num_residual_connections * num_learning_rates)) % num_datasets))
 idx_hs=$(((SLURM_ARRAY_TASK_ID / (num_grad_clip * num_plast_clip * num_clip_weights * num_enable_recurrence * num_updaters * num_model_types * num_residual_connections * num_learning_rates * num_datasets)) % num_hidden_sizes))
+idx_pp=$(((SLURM_ARRAY_TASK_ID / (num_grad_clip * num_plast_clip * num_clip_weights * num_enable_recurrence * num_updaters * num_model_types * num_residual_connections * num_learning_rates * num_datasets * num_hidden_sizes)) % num_plast_proportions))
 
 # Get the actual parameter values
 MODEL_TYPE=${model_types[$idx_mt]}
@@ -102,10 +106,11 @@ RESIDUAL_CONNECTION=${residual_connections[$idx_rc]}
 LEARNING_RATE=${learning_rates[$idx_lr]}
 DATASET=${datasets[$idx_ds]}
 HIDDEN_SIZE=${hidden_sizes[$idx_hs]}
+PLAST_PROPORTION=${plast_proportions[$idx_pp]}
 
 # ======================== Experiment Identification (Dynamic) =================
 GROUP='comprehensive_sweep'
-RUN_NOTES="Model=${MODEL_TYPE}_Updater=${UPDATER}_Recurrence=${ENABLE_RECURRENCE}_ClipWeights=${CLIP_WEIGHTS}_PlastClip=${PLAST_CLIP}_GradClip=${GRAD_CLIP}_ResidualConnection=${RESIDUAL_CONNECTION}_LR=${LEARNING_RATE}_Dataset=${DATASET}_HiddenSize=${HIDDEN_SIZE}_TaskID=${SLURM_ARRAY_TASK_ID}"
+RUN_NOTES="Model=${MODEL_TYPE}_Updater=${UPDATER}_Recurrence=${ENABLE_RECURRENCE}_ClipWeights=${CLIP_WEIGHTS}_PlastClip=${PLAST_CLIP}_GradClip=${GRAD_CLIP}_ResidualConnection=${RESIDUAL_CONNECTION}_LR=${LEARNING_RATE}_Dataset=${DATASET}_HiddenSize=${HIDDEN_SIZE}_PlastProportion=${PLAST_PROPORTION}_TaskID=${SLURM_ARRAY_TASK_ID}"
 TAGS=(bench_sweep comprehensive_sweep sweep)
 
 # ======================== Fixed Parameters (Not Swept) - Based on whole_run.sh ========================
@@ -121,7 +126,6 @@ BATCH_SIZE=16                # From whole_run.sh (16 instead of 4)
 N_ITERS=2000000              # From whole_run.sh
 PRINT_FREQ=5000              # From whole_run.sh (5000 instead of 2500)
 CHECKPOINT_SAVE_FREQ=500000  # From whole_run.sh
-PLAST_PROPORTION=0.1         # From whole_run.sh
 
 # ======================== Execution ===========================================
 echo "--- Starting Bench Sweep Training Task $SLURM_ARRAY_TASK_ID ---"
