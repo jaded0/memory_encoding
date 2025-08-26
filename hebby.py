@@ -320,14 +320,22 @@ def main():
                         help='Path to checkpoint to resume training from (e.g., checkpoints/latest_checkpoint.pth).')
     parser.add_argument('--plast_proportion', type=float, default=0.2, help='Proportion of weights that are plastic in Hebbian layers.')  # <-- Add this line
     parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=True, help='Whether to enable recurrent hidden state connections')
+    parser.add_argument('--log_freq', type=int, default=None, help='Frequency for W&B sync triggers (overrides LOG_FREQ environment variable)')
 
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
     print("SLURM Job ID:", job_id)
-    log_freq = int(os.getenv("LOG_FREQ", "5000"))
-    print("Log frequency set to:", log_freq)
-
+    
     args = parser.parse_args()
+    
+    # Set log_freq: command line arg takes precedence over environment variable
+    if args.log_freq is not None:
+        log_freq = args.log_freq
+        print(f"Log frequency set from command line: {log_freq}")
+    else:
+        log_freq = int(os.getenv("LOG_FREQ", "5000"))
+        print(f"Log frequency set from environment (LOG_FREQ): {log_freq}")
+
     config = {
         "learning_rate": args.learning_rate,
         "plast_learning_rate": args.plast_learning_rate,

@@ -73,7 +73,7 @@ TAGS=(mega big_scale)
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
-CHECKPOINT_SAVE_FREQ=1000000
+CHECKPOINT_SAVE_FREQ=500
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
@@ -118,7 +118,8 @@ BATCH_SIZE=16                 # Sequences per batch
 
 # --- Loop Control & Logging ---
 N_ITERS=10000000           # Total training steps (iterations)
-PRINT_FREQ=5000                # Console print basic avg loss/acc frequency
+PRINT_FREQ=50                # Console print basic avg loss/acc frequency
+LOG_FREQ=500              # W&B sync frequency for offline mode
 
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"
@@ -157,6 +158,7 @@ python -u hebby.py \
     --batch_size $BATCH_SIZE \
     --n_iters $N_ITERS \
     --print_freq $PRINT_FREQ \
+    --log_freq $LOG_FREQ \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --track true \
