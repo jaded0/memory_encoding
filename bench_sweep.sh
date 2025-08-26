@@ -113,19 +113,19 @@ GROUP='comprehensive_sweep'
 RUN_NOTES="Model=${MODEL_TYPE}_Updater=${UPDATER}_Recurrence=${ENABLE_RECURRENCE}_ClipWeights=${CLIP_WEIGHTS}_PlastClip=${PLAST_CLIP}_GradClip=${GRAD_CLIP}_ResidualConnection=${RESIDUAL_CONNECTION}_LR=${LEARNING_RATE}_Dataset=${DATASET}_HiddenSize=${HIDDEN_SIZE}_PlastProportion=${PLAST_PROPORTION}_TaskID=${SLURM_ARRAY_TASK_ID}"
 TAGS=(bench_sweep comprehensive_sweep sweep)
 
-# ======================== Fixed Parameters (Not Swept) - Based on whole_run.sh ========================
-INPUT_MODE='last_one'        # From whole_run.sh
-PLAST_LEARNING_RATE=1e-10    # From whole_run.sh
-IMPRINT_RATE=0.3             # From whole_run.sh
-FORGET_RATE=0.01             # From whole_run.sh (0.01 instead of variable)
-SELF_GRAD=0                  # From whole_run.sh
-NORMALIZE=false              # From whole_run.sh
-NUM_LAYERS=3                 # From whole_run.sh
-POS_ENCODING=0               # From whole_run.sh
-BATCH_SIZE=16                # From whole_run.sh (16 instead of 4)
-N_ITERS=2000000              # From whole_run.sh
-PRINT_FREQ=5000              # From whole_run.sh (5000 instead of 2500)
-CHECKPOINT_SAVE_FREQ=500000  # From whole_run.sh
+# ======================== Fixed Parameters (Not Swept) ========================
+INPUT_MODE='last_one'
+PLAST_LEARNING_RATE=1e-10
+IMPRINT_RATE=0.3
+FORGET_RATE=0.01
+SELF_GRAD=0
+NORMALIZE=false
+NUM_LAYERS=3
+POS_ENCODING=0
+BATCH_SIZE=16
+N_ITERS=2000000
+PRINT_FREQ=5000
+CHECKPOINT_SAVE_FREQ=500000
 
 # ======================== Execution ===========================================
 echo "--- Starting Bench Sweep Training Task $SLURM_ARRAY_TASK_ID ---"

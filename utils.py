@@ -138,7 +138,7 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
 
     if loaded_config.get('n_hidden') != config['n_hidden'] or \
         loaded_config.get('n_layers') != config['n_layers'] or \
-        loaded_config.get('update_rule') != config['update_rule'] or \
+        loaded_config.get('updater') != config['updater'] or \
         loaded_config.get('charset_size') != config['charset_size']:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint loaded with potentially incompatible configuration!")

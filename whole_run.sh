@@ -10,7 +10,7 @@
 #SBATCH --gpus=1               # Number of GPUs requested
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
-#SBATCH --job-name=nocycles_small_plast # Job name in queue
+#SBATCH --job-name=text_scale # Job name in queue
 #SBATCH --output=hebby_train_%j.out # Standard output file (%j = job ID)
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 #SBATCH --qos=standby      # Make it preemptable
@@ -68,47 +68,56 @@ fi
 # For simplicity with --requeue, you might let WandB create new runs and correlate them manually by group/notes.
 
 GROUP=$EXPERIMENT_NAME
-NOTES="tryna get tags working"
-TAGS=(mega cycle_test)
+NOTES="an attempt to scale prematurely"
+TAGS=(mega big_scale)
 
 # RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
 # RESUME_FROM=""
-CHECKPOINT_SAVE_FREQ=500000
+CHECKPOINT_SAVE_FREQ=1000000
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
-UPDATE_RULE='nocycle'       # backprop | static_plastic_candidate | dfa | etc.
+# MODEL_TYPE: 'ethereal' for the plastic model, 'rnn' for a standard SimpleRNN.
+# UPDATER: 'dfa' for Direct Feedback Alignment, 'backprop' for standard backpropagation, 'bptt' for backpropagation through time.
+#
+# To run EtherealRNN with backprop: MODEL_TYPE='ethereal', UPDATER='backprop', LEARNING_RATE=1e-5 (example)
+# To run SimpleRNN with backprop: MODEL_TYPE='rnn', UPDATER='backprop', LEARNING_RATE=1e-3 (example)
+# To run EtherealRNN with BPTT: MODEL_TYPE='ethereal', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
+#
+MODEL_TYPE='ethereal'           # ethereal | rnn
+UPDATER='dfa'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-4           # Base learning rate
+LEARNING_RATE=1e-3           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=5e3               # Plasticity max value (for specific rules)
-GRAD_CLIP=0                  # Max gradient norm
+PLAST_CLIP=1e2               # Plasticity max value (for specific rules)
+GRAD_CLIP=0                  # Max gradient
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
 IMPRINT_RATE=0.3             # Hebbian imprint strength
-FORGET_RATE=0.01              # Weight decay/forgetting factor
+FORGET_RATE=0.1             # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
-PLAST_PROPORTION=0.2          # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
+PLAST_PROPORTION=0.1         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
+ENABLE_RECURRENCE=false       # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=0               # Max absolute weight value (0=off)
+CLIP_WEIGHTS=10               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
-HIDDEN_SIZE=256              # RNN hidden state units
+HIDDEN_SIZE=1024              # RNN hidden state units
 NUM_LAYERS=3                 # Number of RNN layers
-RESIDUAL_CONNECTION=false    # Use skip connections (true/false)
-POS_ENCODING=128             # Positional encoding dimension (0=off)
+RESIDUAL_CONNECTION=false     # Use skip connections (true/false)
+POS_ENCODING=0             # Positional encoding dimension (0=off)
 
 # ======================== Data & Training Loop ================================
 # --- Dataset ---
-DATASET='2_small_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tinystories | palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
+DATASET='roneneldan/tinystories' # palindrome_dataset | roneneldan/tinystories | 4_palindrome_dataset_vary_length | 2_resequence | long_range_memory_dataset
 BATCH_SIZE=16                 # Sequences per batch
 
 # --- Loop Control & Logging ---
-N_ITERS=1000000000           # Total training steps (iterations)
+N_ITERS=10000000           # Total training steps (iterations)
 PRINT_FREQ=5000                # Console print basic avg loss/acc frequency
 
 # ======================== Execution ===========================================
@@ -128,7 +137,8 @@ cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
 # The Python script will now automatically look for $CHECKPOINT_DIR/latest_checkpoint.pth
 python -u hebby.py \
-    --update_rule $UPDATE_RULE \
+    --model_type $MODEL_TYPE \
+    --updater $UPDATER \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
     --plast_learning_rate $PLAST_LEARNING_RATE \
@@ -153,7 +163,8 @@ python -u hebby.py \
     --group "$GROUP" \
     --tags "${TAGS[@]}" \
     --notes "$NOTES" \
-    --plast_proportion $PLAST_PROPORTION   # <-- Pass plast_proportion
+    --plast_proportion $PLAST_PROPORTION \
+    --enable_recurrence $ENABLE_RECURRENCE
 
 echo "--- Training Finished ---"
 
