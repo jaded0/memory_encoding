@@ -296,6 +296,13 @@ class HebbianLinear(nn.Linear):
             low_norm = torch.norm(low_plast_grad).item() if low_plast_grad.numel() > 0 else 0.0
             self.last_low_plast_update_norm.data.fill_(low_norm)
 
+    def update_plasticity_clip(self, new_plast_clip):
+        """Updates plasticity values for high-plasticity weights only."""
+        with torch.no_grad():
+            # Only update plasticity values where the mask is True (high-plasticity weights)
+            self.plasticity.data[self.mask] = new_plast_clip
+            print(f"Updated plasticity clip to {new_plast_clip} for {torch.sum(self.mask).item()} high-plasticity weights")
+
 class EtherealRNN(torch.nn.Module):
     def __init__(
         self, input_size, hidden_size, output_size, num_layers, charset,
@@ -448,6 +455,27 @@ class EtherealRNN(torch.nn.Module):
         self.i2h.wipe()
         self.i2o.wipe()
         self.self_grad.wipe()
+
+    def update_plasticity_clip(self, new_plast_clip):
+        """Updates plasticity clip values for all HebbianLinear layers."""
+        print(f"Updating plasticity clip from checkpoint resume: {new_plast_clip}")
+        
+        # Update all linear layers
+        for i, layer in enumerate(self.linear_layers):
+            if isinstance(layer, HebbianLinear):
+                layer.update_plasticity_clip(new_plast_clip)
+        
+        # Update i2h layer
+        if isinstance(self.i2h, HebbianLinear):
+            self.i2h.update_plasticity_clip(new_plast_clip)
+        
+        # Note: i2o and self_grad are last layers, so they don't use plasticity scaling
+        # in the same way, but we'll update them for consistency
+        if isinstance(self.i2o, HebbianLinear) and not self.i2o.is_last_layer:
+            self.i2o.update_plasticity_clip(new_plast_clip)
+        
+        if isinstance(self.self_grad, HebbianLinear) and not self.self_grad.is_last_layer:
+            self.self_grad.update_plasticity_clip(new_plast_clip)
 
 
 class SimpleRNN(nn.Module):

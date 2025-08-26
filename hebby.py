@@ -509,8 +509,18 @@ def main():
             state.update(loaded_main_state) # Update your main program state
             print(f"resumed, starting from iter: {start_iter}")
 
-
-
+            # Check if plast_clip has changed and update plasticity parameters if needed
+            if isinstance(rnn, EtherealRNN):
+                loaded_plast_clip = loaded_config.get('plast_clip', 1.0)
+                current_plast_clip = config.get('plast_clip', 1.0)
+                
+                if loaded_plast_clip != current_plast_clip:
+                    print(f"Plasticity clip changed from {loaded_plast_clip} to {current_plast_clip}")
+                    print("Updating plasticity parameters in all layers...")
+                    rnn.update_plasticity_clip(current_plast_clip)
+                    print("Plasticity parameters updated successfully!")
+                else:
+                    print(f"Plasticity clip unchanged: {current_plast_clip}")
 
         except FileNotFoundError: # Should be rare due to os.path.isfile checks, but good for safety
             print(f"Warning: Checkpoint file {checkpoint_to_load} not found during load attempt. Starting from scratch.")
