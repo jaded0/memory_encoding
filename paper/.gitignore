@@ -1,0 +1,3 @@
+*.aux *.bbl *.blg *.bcf *.fdb_latexmk *.fls *.log *.out *.run.xml *.synctex.gz *.toc
+*.nav *.snm *.vrb
+_minted-* tikz-cache/ build/

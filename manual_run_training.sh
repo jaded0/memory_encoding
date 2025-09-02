@@ -13,7 +13,7 @@ export WANDB_MODE=online # online | offline | disabled
 # Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
 # the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
 # Let's assume you have a base experiment name.
-EXPERIMENT_NAME="bosw"
+EXPERIMENT_NAME="botb"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 
 # --- Experiment Identification (W&B) ---
@@ -58,12 +58,12 @@ GRAD_CLIP=0                  # Max gradient
 IMPRINT_RATE=0.3             # Hebbian imprint strength
 FORGET_RATE=0.01             # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
-PLAST_PROPORTION=0.1         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
+PLAST_PROPORTION=0.2         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
 ENABLE_RECURRENCE=false       # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=10               # Max absolute weight value (0=off)
+CLIP_WEIGHTS=1               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
 HIDDEN_SIZE=1024              # RNN hidden state units
@@ -77,7 +77,7 @@ DATASET='4_palindrome_dataset_vary_length' # palindrome_dataset | roneneldan/tin
 BATCH_SIZE=16                 # Sequences per batch
 
 # --- Loop Control & Logging ---
-N_ITERS=4000000           # Total training steps (iterations)
+N_ITERS=12000000           # Total training steps (iterations)
 PRINT_FREQ=5000                # Console print basic avg loss/acc frequency
 
 # ======================== Execution ===========================================

@@ -1,0 +1,5 @@
+MAIN=main
+all: ; latexmk -pdf $(MAIN).tex
+watch: ; latexmk -pvc -pdf $(MAIN).tex
+clean: ; latexmk -C && rm -rf build tikz-cache _minted-$(MAIN)
+.PHONY: all watch clean

@@ -1,0 +1,16 @@
+# Build to PDF with latexmk; quiet + useful errors
+$pdf_mode = 1;
+$silent   = 1;
+$interaction = 'nonstopmode';
+
+# Engines
+$pdflatex = 'pdflatex -file-line-error -synctex=1 %O %S';
+# If you later switch engines, uncomment one of these and set it in latexmkrc:
+# $lualatex = 'lualatex -file-line-error -synctex=1 %O %S';
+# $xelatex  = 'xelatex  -file-line-error -synctex=1 %O %S';
+
+# Bibtex (COLLAs style typically uses natbib+bibtex)
+$bibtex = 'bibtex %O %B';
+
+# Default entry file (change if your main file isn’t main.tex)
+@default_files = ('main.tex');
