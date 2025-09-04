@@ -13,7 +13,7 @@
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
 #SBATCH --job-name=bench_sweep # Base job name
-#SBATCH --array=0-35%20  # 36 jobs total
+#SBATCH --array=0-23%20
 #SBATCH --output=slurm_logs/bench_sweep_%A_%a.out # Ensure slurm_logs directory exists! %A=jobID, %a=taskID
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
@@ -24,14 +24,14 @@ echo "--- Preparing Bench Sweep Parameters ---"
 declare -a model_types=('ethereal')
 declare -a updaters=('dfa')
 declare -a enable_recurrence=('false')
-declare -a clip_weights=('0' '1' '10')
-declare -a plast_clip=('1e4' '1e3' '1e2')
+declare -a clip_weights=('0' '1e1' '1e-1')
+declare -a plast_clip=('1e4' '1e3' '1e2' '1e5')
 declare -a grad_clip=('0')
 declare -a residual_connections=('false')
-declare -a learning_rates=('1e-3')
-declare -a datasets=('4_palindrome_dataset_vary_length')
-declare -a hidden_sizes=('512' '1024')
-declare -a plast_proportions=('0.1' '0.2')
+declare -a learning_rates=('1e-3' '1e-4')
+declare -a datasets=('3_palindrome_dataset_vary_length')
+declare -a hidden_sizes=('1024')
+declare -a plast_proportions=('0.1')
 
 # --- Calculate Total Number of Jobs ---
 num_model_types=${#model_types[@]}
@@ -111,7 +111,7 @@ PLAST_PROPORTION=${plast_proportions[$idx_pp]}
 # ======================== Experiment Identification (Dynamic) =================
 GROUP='comprehensive_sweep'
 RUN_NOTES="Model=${MODEL_TYPE}_Updater=${UPDATER}_Recurrence=${ENABLE_RECURRENCE}_ClipWeights=${CLIP_WEIGHTS}_PlastClip=${PLAST_CLIP}_GradClip=${GRAD_CLIP}_ResidualConnection=${RESIDUAL_CONNECTION}_LR=${LEARNING_RATE}_Dataset=${DATASET}_HiddenSize=${HIDDEN_SIZE}_PlastProportion=${PLAST_PROPORTION}_TaskID=${SLURM_ARRAY_TASK_ID}"
-TAGS=(bench_sweep comprehensive_sweep sweep)
+TAGS=(bench_sweep comprehensive_sweep sweep_longer)
 
 # ======================== Fixed Parameters (Not Swept) ========================
 INPUT_MODE='last_one'
@@ -123,9 +123,9 @@ NORMALIZE=false
 NUM_LAYERS=3
 POS_ENCODING=0
 BATCH_SIZE=16
-N_ITERS=2000000
+N_ITERS=5000000
 PRINT_FREQ=5000
-CHECKPOINT_SAVE_FREQ=500000
+CHECKPOINT_SAVE_FREQ=0
 
 # ======================== Execution ===========================================
 echo "--- Starting Bench Sweep Training Task $SLURM_ARRAY_TASK_ID ---"
@@ -176,7 +176,8 @@ python -u hebby.py \
     --tags "${TAGS[@]}" \
     --notes "$RUN_NOTES" \
     --plast_proportion $PLAST_PROPORTION \
-    --enable_recurrence $ENABLE_RECURRENCE
+    --enable_recurrence $ENABLE_RECURRENCE \
+    --no_resume true
 
 echo "--- Bench Sweep Task $SLURM_ARRAY_TASK_ID Finished ---"
 

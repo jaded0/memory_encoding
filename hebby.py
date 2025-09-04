@@ -321,6 +321,7 @@ def main():
     parser.add_argument('--plast_proportion', type=float, default=0.2, help='Proportion of weights that are plastic in Hebbian layers.')  # <-- Add this line
     parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=True, help='Whether to enable recurrent hidden state connections')
     parser.add_argument('--log_freq', type=int, default=None, help='Frequency for W&B sync triggers (overrides LOG_FREQ environment variable)')
+    parser.add_argument('--no_resume', type=str2bool, nargs='?', const=True, default=True, help='Disable automatic checkpoint resumption (default: True)')
 
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
@@ -486,26 +487,29 @@ def main():
     # --- Resume from Checkpoint ---
 
     # Attempt to resume if --resume_checkpoint is given OR if latest_checkpoint.pth exists
-    # Prioritize explicit --resume_checkpoint if provided
+    # But only if --no_resume is False
     checkpoint_to_load = None
-    if args.resume_checkpoint:
-        if os.path.isfile(args.resume_checkpoint):
-            checkpoint_to_load = args.resume_checkpoint
-            print(f"Attempting to resume from explicit checkpoint: {checkpoint_to_load}")
-        else:
-            print(f"Warning: Explicit resume checkpoint {args.resume_checkpoint} not found.")
-            # Fallback to latest if explicit one is missing but latest exists
-            if os.path.isfile(latest_checkpoint_path):
-                print(f"Falling back to latest checkpoint: {latest_checkpoint_path}")
-                checkpoint_to_load = latest_checkpoint_path
+    if not args.no_resume:
+        if args.resume_checkpoint:
+            if os.path.isfile(args.resume_checkpoint):
+                checkpoint_to_load = args.resume_checkpoint
+                print(f"Attempting to resume from explicit checkpoint: {checkpoint_to_load}")
             else:
-                print("No checkpoint found to resume from. Starting from scratch.")
+                print(f"Warning: Explicit resume checkpoint {args.resume_checkpoint} not found.")
+                # Fallback to latest if explicit one is missing but latest exists
+                if os.path.isfile(latest_checkpoint_path):
+                    print(f"Falling back to latest checkpoint: {latest_checkpoint_path}")
+                    checkpoint_to_load = latest_checkpoint_path
+                else:
+                    print("No checkpoint found to resume from. Starting from scratch.")
 
-    elif os.path.isfile(latest_checkpoint_path): # No explicit resume, but latest exists
-        checkpoint_to_load = latest_checkpoint_path
-        print(f"Found latest checkpoint. Attempting to resume from: {checkpoint_to_load}")
+        elif os.path.isfile(latest_checkpoint_path): # No explicit resume, but latest exists
+            checkpoint_to_load = latest_checkpoint_path
+            print(f"Found latest checkpoint. Attempting to resume from: {checkpoint_to_load}")
+        else:
+            print("No checkpoint specified and no latest_checkpoint.pth found. Starting from scratch.")
     else:
-        print("No checkpoint specified and no latest_checkpoint.pth found. Starting from scratch.")
+        print("Checkpoint resumption disabled by --no_resume flag. Starting from scratch.")
 
 
     if checkpoint_to_load:
@@ -907,7 +911,7 @@ def main():
             # ==============================================================
             # --- Checkpointing ---
             # ==============================================================
-            if iter % args.checkpoint_save_freq == 0:
+            if args.checkpoint_save_freq > 0 and iter % args.checkpoint_save_freq == 0:
                 checkpoint_state = {
                     'iter': iter + 1,
                     'model_state_dict': rnn.state_dict(),
@@ -934,7 +938,7 @@ def main():
     except KeyboardInterrupt:
         print("\nTraining interrupted by user. Attempting to save final checkpoint...")
         # Optionally save a final checkpoint on interrupt
-        if args.checkpoint_dir: # Ensure dir is specified
+        if args.checkpoint_dir and args.checkpoint_save_freq > 0: # Ensure dir is specified and checkpointing is enabled
             final_checkpoint_state = {
                 'iter': iter + 1 if 'iter' in locals() else start_iter,
                 'model_state_dict': rnn.state_dict(),
@@ -946,6 +950,8 @@ def main():
             }
             save_checkpoint(final_checkpoint_state, args.checkpoint_dir, "interrupt_checkpoint.pth")
             save_checkpoint(final_checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth") # also update latest
+        elif args.checkpoint_save_freq == 0:
+            print("Checkpointing disabled (checkpoint_save_freq=0). No checkpoint saved on interrupt.")
         print("Finishing up...")
     except Exception as e:
         print(f"\nAn error occurred during training: {e}")

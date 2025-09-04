@@ -10,7 +10,7 @@
 #SBATCH --gpus=1               # Number of GPUs requested
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
-#SBATCH --job-name=text_scale # Job name in queue
+#SBATCH --job-name=text_scale_5_3 # Job name in queue
 #SBATCH --output=hebby_train_%j.out # Standard output file (%j = job ID)
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 #SBATCH --qos=standby      # Make it preemptable
@@ -89,9 +89,9 @@ UPDATER='dfa'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
-LEARNING_RATE=1e-3           # Base learning rate
+LEARNING_RATE=1e-5           # Base learning rate
 PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e2               # Plasticity max value (for specific rules)
+PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient
 
 # --- Hebbian / Plasticity Specifics (ignored by backprop) ---
@@ -103,7 +103,7 @@ ENABLE_RECURRENCE=false       # Whether to enable recurrent hidden state connect
 
 # --- Regularization & Stability ---
 NORMALIZE=false              # Normalize weights post-update (true/false)
-CLIP_WEIGHTS=10               # Max absolute weight value (0=off)
+CLIP_WEIGHTS=0               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
 HIDDEN_SIZE=1024              # RNN hidden state units
