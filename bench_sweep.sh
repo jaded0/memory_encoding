@@ -5,15 +5,16 @@
 # ==============================================================================
 
 # --- SLURM Directives (MUST NEAR AT THE TOP) ---
-#SBATCH --time=24:00:00        # Max walltime per task
+#SBATCH --time=72:00:00        # Max walltime per task
 #SBATCH --nodes=1              # Request 1 node per task
 #SBATCH --ntasks=10             # Request 1 task per job array instance
 #SBATCH --cpus-per-task=1      # Explicitly request 1 CPU core for that task
 #SBATCH --gpus=1               # Request 1 GPU per task
+#SBATCH --partition=m13l,m13h # bc m9g is way too slow
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
 #SBATCH --job-name=bench_sweep # Base job name
-#SBATCH --array=0-23%20
+#SBATCH --array=0-8%20
 #SBATCH --output=slurm_logs/bench_sweep_%A_%a.out # Ensure slurm_logs directory exists! %A=jobID, %a=taskID
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
@@ -24,11 +25,11 @@ echo "--- Preparing Bench Sweep Parameters ---"
 declare -a model_types=('ethereal')
 declare -a updaters=('dfa')
 declare -a enable_recurrence=('false')
-declare -a clip_weights=('0' '1e1' '1e-1')
-declare -a plast_clip=('1e4' '1e3' '1e2' '1e5')
+declare -a clip_weights=('0' '1e0' '1e1')
+declare -a plast_clip=('1e4' '1e5' '1e6')
 declare -a grad_clip=('0')
 declare -a residual_connections=('false')
-declare -a learning_rates=('1e-3' '1e-4')
+declare -a learning_rates=('5e-4')
 declare -a datasets=('3_palindrome_dataset_vary_length')
 declare -a hidden_sizes=('1024')
 declare -a plast_proportions=('0.1')
@@ -123,7 +124,7 @@ NORMALIZE=false
 NUM_LAYERS=3
 POS_ENCODING=0
 BATCH_SIZE=16
-N_ITERS=5000000
+N_ITERS=10000000
 PRINT_FREQ=5000
 CHECKPOINT_SAVE_FREQ=0
 

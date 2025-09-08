@@ -50,6 +50,22 @@ def plot_ascii_bar_graph(data, title, max_width=40):
 
 trigger_sync = TriggerWandbSyncHook() if TriggerWandbSyncHook else None  # <--- New!
 
+# --- W&B end-of-run markers ---
+def wb_mark_end(reason: str, tags=None, exit_code: int | None = None):
+    """Record an end reason in both tags and summary. Safe if tracking is off."""
+    if not (wandb.run and getattr(wandb.run, "summary", None) is not None):
+        return
+    # structured summary
+    wandb.run.summary["end_reason"] = reason
+    wandb.run.summary[f"end_is_{reason}"] = True
+    if exit_code is not None:
+        wandb.run.summary["end_exit_code_suggested"] = int(exit_code)  # read later at finish()
+
+    # tags (filter-friendly)
+    if tags:
+        current = set(getattr(wandb.run, "tags", []))
+        wandb.run.tags = list(current.union(set(tags)))
+
 def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
     """Unified training function for DFA, backprop, and BPTT."""
     updater = config['updater']
@@ -642,6 +658,13 @@ def main():
     
     # Flag to track if NaN has been detected
     nan_detected = False
+    
+    # Early stopping for high loss values - sliding window tracking
+    EARLY_STOP_LOSS_THRESHOLD = 5.0
+    EARLY_STOP_WINDOW_SIZE = 10
+    loss_window = []  # Sliding window of average losses from print_freq intervals
+    high_loss_count = 0  # Count of consecutive intervals with loss > threshold
+    early_stopped = False
 
     def infinite_dataloader(dataloader):
         while True:
@@ -694,12 +717,7 @@ def main():
             if torch.isnan(torch.tensor(loss)).any():
                 print("NaN detected in loss. Terminating training.")
                 nan_detected = True
-                if args.track and wandb.run:
-                    # Add "NaN" tag to the run
-                    current_tags = list(wandb.run.tags)
-                    if "NaN" not in current_tags:
-                        wandb.run.tags = current_tags + ["NaN"]
-                    print("Added 'NaN' tag to WandB run.")
+                wb_mark_end("nan_detected", tags=["end:nan", "NaN"], exit_code=1)
                 break  # Exit the training loop
             
             # Store detailed outputs if they were generated FOR THIS ITERATION for print_freq
@@ -884,6 +902,25 @@ def main():
                     print(f'  Avg Weight Norm: {avg_weight_norm:.4f}')
                     print(f'  Avg Grad/Update Norm: {avg_grad_norm:.4f}')
                 
+                # Early stopping logic - check loss after logging to WandB
+                loss_window.append(avg_loss_plot)
+                if len(loss_window) > EARLY_STOP_WINDOW_SIZE:
+                    loss_window.pop(0)  # Keep only the last EARLY_STOP_WINDOW_SIZE values
+                
+                # Check if current loss exceeds threshold
+                if avg_loss_plot > EARLY_STOP_LOSS_THRESHOLD:
+                    high_loss_count += 1
+                    print(f"  High loss detected ({avg_loss_plot:.4f} > {EARLY_STOP_LOSS_THRESHOLD}). Count: {high_loss_count}/{EARLY_STOP_WINDOW_SIZE}")
+                else:
+                    high_loss_count = 0  # Reset counter if loss drops below threshold
+                
+                # Early stop if we've had high loss for the required number of intervals
+                if high_loss_count >= EARLY_STOP_WINDOW_SIZE:
+                    print(f"Early stopping: Loss has been > {EARLY_STOP_LOSS_THRESHOLD} for {EARLY_STOP_WINDOW_SIZE} consecutive intervals.")
+                    early_stopped = True
+                    wb_mark_end("high_loss_early_stop", tags=["end:high_loss", "early_stop"], exit_code=1)
+                    break  # Exit the training loop
+                
                 state["wandb_step"] += 1
                 current_loss_plot_interval = 0.0
                 current_correct_plot_interval = 0
@@ -923,20 +960,22 @@ def main():
                 }
                 save_checkpoint(checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
 
-        # End of training loop
-        if args.track and wandb.run:
-            print("Final W&B sync and finish run...")
-            trigger_sync() 
-            wandb.finish()
-            
+        # End of training loop - mark normal completion if no early stopping occurred
+        if args.track and wandb.run and not nan_detected and not early_stopped:
+            wb_mark_end("completed", tags=["end:completed"], exit_code=0)
+
         # If NaN was detected, we should not log the normal completion
         if nan_detected:
-            print("Training terminated due to NaN loss. Run has been tagged with 'NaN'.")
+            print("Training terminated due to NaN loss.")
+            sys.exit(1)
+        elif early_stopped:
+            print("Training terminated due to high loss early stopping.")
             sys.exit(1)
 
 
     except KeyboardInterrupt:
         print("\nTraining interrupted by user. Attempting to save final checkpoint...")
+        wb_mark_end("user_interrupt", tags=["end:user_interrupt"], exit_code=0)
         # Optionally save a final checkpoint on interrupt
         if args.checkpoint_dir and args.checkpoint_save_freq > 0: # Ensure dir is specified and checkpointing is enabled
             final_checkpoint_state = {
