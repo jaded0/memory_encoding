@@ -600,6 +600,7 @@ def main():
             "plast_learning_rate": args.plast_learning_rate,
             "plast_clip": args.plast_clip,
             "effective_lr": args.learning_rate * (1-args.plast_proportion + args.plast_proportion * args.plast_clip),
+            "high_lr": args.learning_rate * args.plast_clip,
             "architecture": args.model_type,
             "updater": args.updater,
             "residual_connection": args.residual_connection,

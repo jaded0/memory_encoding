@@ -14,7 +14,7 @@
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
 #SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
 #SBATCH --job-name=bench_sweep # Base job name
-#SBATCH --array=0-8%20
+#SBATCH --array=0-9%20
 #SBATCH --output=slurm_logs/bench_sweep_%A_%a.out # Ensure slurm_logs directory exists! %A=jobID, %a=taskID
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
@@ -25,11 +25,11 @@ echo "--- Preparing Bench Sweep Parameters ---"
 declare -a model_types=('ethereal')
 declare -a updaters=('dfa')
 declare -a enable_recurrence=('false')
-declare -a clip_weights=('0' '1e0' '1e1')
-declare -a plast_clip=('1e4' '1e5' '1e6')
+declare -a clip_weights=('0' '1e-2' '1e-1' '5e-1' '1e0' '2' '5' '7' '1e1' '1e2')
+declare -a plast_clip=('1e5')
 declare -a grad_clip=('0')
 declare -a residual_connections=('false')
-declare -a learning_rates=('5e-4')
+declare -a learning_rates=('1e-4')
 declare -a datasets=('3_palindrome_dataset_vary_length')
 declare -a hidden_sizes=('1024')
 declare -a plast_proportions=('0.1')
@@ -112,7 +112,7 @@ PLAST_PROPORTION=${plast_proportions[$idx_pp]}
 # ======================== Experiment Identification (Dynamic) =================
 GROUP='comprehensive_sweep'
 RUN_NOTES="Model=${MODEL_TYPE}_Updater=${UPDATER}_Recurrence=${ENABLE_RECURRENCE}_ClipWeights=${CLIP_WEIGHTS}_PlastClip=${PLAST_CLIP}_GradClip=${GRAD_CLIP}_ResidualConnection=${RESIDUAL_CONNECTION}_LR=${LEARNING_RATE}_Dataset=${DATASET}_HiddenSize=${HIDDEN_SIZE}_PlastProportion=${PLAST_PROPORTION}_TaskID=${SLURM_ARRAY_TASK_ID}"
-TAGS=(bench_sweep comprehensive_sweep sweep_longer)
+TAGS=(bench_sweep comprehensive_sweep sweep_longer sweep_weight_clips)
 
 # ======================== Fixed Parameters (Not Swept) ========================
 INPUT_MODE='last_one'
