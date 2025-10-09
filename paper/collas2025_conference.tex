@@ -319,6 +319,17 @@ The stability of the system depends on a delicate balance between multiple facto
 
 A critical challenge is that appropriate values for these hyperparameters appear highly task-dependent, influenced by factors such as the required memory persistence duration, the density of information that must be stored in working memory, and the natural volatility of the dataset itself. This dependency on intensive hyperparameter tuning represents a significant limitation for practical applications.
 
+A Hyperparameter sweep on the 3-character reversed sequence task indicated that the linear interaction of the base learning rate and the high-plasticity learning rate determnie the stability outcomes. It also indicated, in the same sweep, that of the two hyperparameters, high-plasticity learning rate is far more dominant in determining the accuracy of the model in the time-constrained training regime. Therefore, a balance must be struck, when choosing hyperparameters, setting the high-plasticity as high enough to enable effective memory encoding, but low enough to avoid instability.
+
+\begin{figure}[h]
+\begin{center}
+\includegraphics[width=0.8\linewidth]{figure_5.png}
+\caption{Hyperparameter sweep results on the 3-character reversed sequence task showing the interaction between base learning rate and high-plasticity learning rate. The visualization demonstrates the linear relationship between these hyperparameters in determining stability outcomes, with the high-plasticity learning rate showing dominant influence over model accuracy in time-constrained training regimes.}
+\label{fig:hyperparameter_sweep}
+\end{center}
+\end{figure}
+
+
 \subsection{Volatility and Stability Analysis}
 
 The ethereal weights mechanism exhibits characteristic volatility patterns that closely resemble exploding gradient phenomena. Understanding these dynamics is crucial for practical implementation and reveals fundamental constraints of the approach.
@@ -329,6 +340,7 @@ The volatility manifests as a cascading failure where gradient norms and weight 
 
 A key early warning indicator emerges from monitoring the ratio of gradient norms between high-plasticity and low-plasticity weights. Stability correlates with this ratio shrinking over time, while plateauing or growth of the ratio precedes explosive behavior. This observation aligns with the intuitive understanding that high-plasticity weights, when left unchecked by slower stabilizing weights, can enter a positive feedback loop where rapid changes amplify subsequent gradient signals.
 (put a figure here showing gradient ratio over time for stable vs unstable runs)
+
 
 \subsubsection{Forgetting Rate Dynamics}
 
