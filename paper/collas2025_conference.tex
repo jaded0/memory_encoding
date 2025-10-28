@@ -188,6 +188,14 @@ The core innovation is introducing variable learning rates across the network's 
 \item \textbf{Ephemeral weights} ($\alpha_k = 10^4$ or $10^5$): Highly plastic parameters that rapidly encode recent information
 \end{enumerate}
 
+\begin{figure}[h]
+\begin{center}
+\includegraphics[width=0.8\linewidth]{model_diagram.png}
+\caption{In a traditional RNN, the hidden state $h_{t-1}$ carries information forward through time. In the Ephemeral Weights model, this recurrent connection is removed, and short-term memory is instead stored in rapidly updating parameters (ephemeral weights) that adjust based on recent inputs. This allows the model to retain context without explicit recurrence.}
+\label{fig:model_diagram}
+\end{center}
+\end{figure}
+
 We randomly designate approximately 10\% of the total parameters as ephemeral weights, excluding the final output layer. The weight update rule follows:
 
 \begin{equation}
