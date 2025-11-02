@@ -188,14 +188,6 @@ The core innovation is introducing variable learning rates across the network's 
 \item \textbf{Ephemeral weights} ($\alpha_k = 10^4$ or $10^5$): Highly plastic parameters that rapidly encode recent information
 \end{enumerate}
 
-\begin{figure}[h]
-\begin{center}
-\includegraphics[width=0.8\linewidth]{model_diagram.png}
-\caption{In a traditional RNN, the hidden state $h_{t-1}$ carries information forward through time. In the Ephemeral Weights model, this recurrent connection is removed, and short-term memory is instead stored in rapidly updating parameters (ephemeral weights) that adjust based on recent inputs. This allows the model to retain context without explicit recurrence.}
-\label{fig:model_diagram}
-\end{center}
-\end{figure}
-
 We randomly designate approximately 10\% of the total parameters as ephemeral weights, excluding the final output layer. The weight update rule follows:
 
 \begin{equation}
@@ -204,6 +196,13 @@ w_k(t+1) = w_k(t) - \alpha_k \cdot \nabla_k L(t)
 
 Where $\nabla_k L(t)$ is the gradient of the loss function with respect to weight $w_k$ at time step $t$.
 
+\begin{figure}[h]
+\begin{center}
+\includegraphics[width=0.8\linewidth]{model_diagram.png}
+\caption{In a traditional RNN, the hidden state $h_{t-1}$ carries information forward through time. In the Ephemeral Weights model, this recurrent connection is removed, and short-term memory is instead stored in rapidly updating parameters (ephemeral weights) that adjust based on recent inputs. This allows the model to retain context without explicit recurrence.}
+\label{fig:model_diagram}
+\end{center}
+\end{figure}
 \subsection{Forgetting Rate Mechanism}
 
 To prevent gradient instability from the rapid weight changes, we implement a controlled decay of ephemeral weights:
@@ -320,7 +319,7 @@ The stability of the system depends on a delicate balance between multiple facto
 
 A critical challenge is that appropriate values for these hyperparameters appear highly task-dependent, influenced by factors such as the required memory persistence duration, the density of information that must be stored in working memory, and the natural volatility of the dataset itself. This dependency on intensive hyperparameter tuning represents a significant limitation for practical applications.
 
-A Hyperparameter sweep on the 3-character reversed sequence task indicated that the linear interaction of the base learning rate and the high-plasticity learning rate determnie the stability outcomes. It also indicated, in the same sweep, that of the two hyperparameters, high-plasticity learning rate is far more dominant in determining the accuracy of the model in the time-constrained training regime. Therefore, a balance must be struck, when choosing hyperparameters, setting the high-plasticity as high enough to enable effective memory encoding, but low enough to avoid instability (Figure 4).
+A Hyperparameter sweep on the 3-character reversed sequence task indicated that the linear interaction of the base learning rate and the high-plasticity learning rate determines the stability outcomes. It also indicated, in the same sweep, that of the two hyperparameters, high-plasticity learning rate is far more dominant in determining the accuracy of the model in the time-constrained training regime. Therefore, a balance must be struck, when choosing hyperparameters, setting the high-plasticity as high enough to enable effective memory encoding, but low enough to avoid instability (Figure 4).
 
 \begin{figure}[h]
 \begin{center}
@@ -339,10 +338,16 @@ The ethereal weights mechanism exhibits characteristic volatility patterns that 
 
 The volatility manifests as a cascading failure where gradient norms and weight magnitudes accelerate simultaneously, leading to rapid increases in loss and corresponding drops in accuracy, as seen in Figure 3. This behavior appears intrinsic to the mechanism rather than a mere implementation artifact—the aggressive gradient amplification required for effective memory encoding creates inherent instability.
 
-A key early warning indicator emerges from monitoring the ratio of gradient norms between high-plasticity and low-plasticity weights. Stability correlates with this ratio shrinking over time, while plateauing or growth of the ratio precedes explosive behavior. This observation aligns with the intuitive understanding that high-plasticity weights, when left unchecked by slower stabilizing weights, can enter a positive feedback loop where rapid changes amplify subsequent gradient signals.
-(put a figure here showing gradient ratio over time for stable vs unstable runs)
+A key early warning indicator emerges from monitoring the gradient norms of high-plasticity and low-plasticity weights. Stability correlates with this value shrinking and stabilizing over time, while growth of the gradient norm precedes explosive behavior (Figure 6). This observation aligns with the intuitive understanding that high-plasticity weights, when left unchecked by slower stabilizing weights, can enter a positive feedback loop where rapid changes amplify subsequent gradient signals.
+\begin{figure}[h]
+\begin{center}
+\includegraphics[width=0.8\linewidth]{compare_norms.png}
+\caption{A learning rate of 0.0001 is used for the stable run, and the exploding run uses a learning rate of 0.0002. The gradient norms of the exploding run (brown) grow jointly, while the stable run's (blue) gradient norms stabilize. The ratio of high-plasticity to low-plasticity gradient norms shrink, slightly, in the exploding run, but remain stable in the stable run.}
+\label{fig:compare_norms}
+\end{center}
+\end{figure}
 
-Holding other hyperparameters constant, varying the base learning rate and the plasticity modifier reveals a linear boundary between stable and unstable regimes. Lower base learning rates allow for higher plasticity modifiers before instability arises, while higher base learning rates necessitate more conservative plasticity settings (Figure 6). A limitation of this experiment is that some runs that initially appear stable within the training timeframe still exhibit climbing loss numbers at the tail end, suggesting eventual instability if training were extended further. 
+Holding other hyperparameters constant, varying the base learning rate and the plasticity modifier reveals a linear boundary between stable and unstable regimes. Lower base learning rates allow for higher plasticity modifiers before instability arises, while higher base learning rates necessitate more conservative plasticity settings (Figure 7). A limitation of this experiment is that some runs that initially appear stable within the training timeframe still exhibit climbing loss numbers at the tail end, suggesting eventual instability if training were extended further. 
 \begin{figure}[h]
 \begin{center}
 \includegraphics[width=0.8\linewidth]{figure_6.png}
