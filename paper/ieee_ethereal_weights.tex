@@ -1,83 +1,40 @@
-% This file was adapted from ICLR2022_conference.tex example provided for the ICLR conference
-\documentclass{article} % For LaTeX2e
-\usepackage{collas2025_conference,times}
-\usepackage{easyReview}
+\documentclass[conference]{IEEEtran}
+% \IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
 
-% Optional math commands from https://github.com/goodfeli/dlbook_notation.
-\input{math_commands.tex}
-
-% Please leave these options as they are
-\usepackage{hyperref}
-\hypersetup{
-    colorlinks=true,
-    linkcolor=red,
-    filecolor=magenta,
-    urlcolor=blue,
-    citecolor=purple,
-    pdftitle={Overleaf Example},
-    pdfpagemode=FullScreen,
-    }
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{url}
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
 
 
 
 
-\title{Ephemeral Memory: \\ Successful retention of short-term information using variable plasticity and decaying weight values}
+\title{Ephemeral Memory: Successful Retention of Short-Term Information Using Variable Plasticity and Decaying Weight Values}
 
-% Authors must not appear in the submitted version. They should be hidden
-% as long as the \collasfinalcopy macro remains commented out below.
-% Non-anonymous submissions will be rejected without review.
-
-\author{
-  Jaden Lorenc \\
-  Computer Science Department \\
-  Brigham Young University \\
-  \texttt{jaden.lorenc@byu.edu}
+\author{\IEEEauthorblockN{Jaden Lorenc}
+\IEEEauthorblockA{\textit{Computer Science Department} \\
+\textit{Brigham Young University}\\
+Provo, USA \\
+jaden.lorenc@byu.edu}
 }
 
-
-% The \author macro works with any number of authors. There are two commands
-% used to separate the names and addresses of multiple authors: \And and \AND.
-%
-% Using \And between authors leaves it to \LaTeX{} to determine where to break
-% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
-% puts 3 of 4 authors names on the first line, and the last on the second
-% line, try using \AND instead of \And before the third author name.
-
-\newcommand{\fix}{\marginpar{FIX}}
-\newcommand{\new}{\marginpar{NEW}}
-
-%\collasfinalcopy % Uncomment for camera-ready version, but NOT for submission.
-
-%\preprintcopy % Uncomment for the preprint version, but NOT for submission.
-
 \begin{document}
-
-
-\maketitle
-
-% \documentclass{article}
-% \usepackage{collas2025_conference}
-% \usepackage{times}
-% \usepackage{amsmath}
-% \usepackage{amssymb}
-% \usepackage{graphicx}
-% \usepackage{hyperref}
-
-% \title{Ephemeral Weights: Storing Short-Term Memory in Neural Network Parameters}
-
-% \author{
-%   \textbf{Author Names}\\
-%   Institution\\
-%   \texttt{email@example.com}
-% }
-
-% \begin{document}
 
 \maketitle
 
 \begin{abstract}
 A few weights with quickly decaying values and high learning rates can replace the hidden, recurrent connection in an RNN, storing short-term memory in the parameters themselves via a standard loss calculation and backpropagation gradient calculation. In most artificial neural network (ANN) designs, the gradient update mechanism (loss function and backpropagation) is viewed as a process distinct from the forward pass, with one generating predictions and the other computing and applying parameter updates. However, error computation and backpropagation can be repurposed for use as short-term memory. This is done by designating a fraction of the model’s weights as “fast weights,” endowed with larger learning rates to enable swift adaptation and decay to prevent gradient instability. The result is a constantly updating record of recent gradient updates directly accessible to the network’s weights, negating the need for rolling context windows or recurrent connections. This approach enables short-term context to be stored purely in ephemeral, rapidly updated parameters, offering a more direct route from manually stored memory to parameter-based memory. We demonstrate this approach on character-level sequence prediction tasks, showing that our ephemeral weights model can successfully solve key-recall, repeated sequence, and reversed sequence tasks without any recurrent connections, achieving comparable accuracy to traditional RNNs. The approach establishes that continuous state information can be propagated solely through parameter updates; hence the use of static plasticity and the removal of recurrent connections, allowing the existing weight update mechanism to encode both long and short-term information.
 \end{abstract}
+
+\begin{IEEEkeywords}
+neural networks, memory mechanisms, synaptic plasticity, recurrent networks, parameter adaptation, fast weights
+\end{IEEEkeywords}
 
 \section{Introduction}
 
@@ -101,19 +58,19 @@ A variety of approaches modify neural networks to maintain information beyond th
 
 \subsubsection{Parameter-Based Adaptation}
 
-Meta-learning research focuses on creating models that can quickly adapt themselves to novel circumstances. These approaches typically involve an inner and outer training loop structure. As \citet{finnModelagnosticMetalearningFast2017} demonstrated with MAML, the outer loop optimizes for initial parameters that can rapidly adapt to new tasks in the inner loop. However, the computational challenges are significant—the outer training loop is often not well-suited for backpropagation-based gradient calculations since it would require storing activations for an infeasible number of parameters. Thus, evolutionary learning or other alternatives are commonly used, with traditional backpropagation typically limited to very small inner loop models.
+Meta-learning research focuses on creating models that can quickly adapt themselves to novel circumstances. These approaches typically involve an inner and outer training loop structure. As \cite{finnModelagnosticMetalearningFast2017} demonstrated with MAML, the outer loop optimizes for initial parameters that can rapidly adapt to new tasks in the inner loop. However, the computational challenges are significant—the outer training loop is often not well-suited for backpropagation-based gradient calculations since it would require storing activations for an infeasible number of parameters. Thus, evolutionary learning or other alternatives are commonly used, with traditional backpropagation typically limited to very small inner loop models.
 
-In continual and online learning, models must adapt to new data without forgetting previous knowledge—a capability that standard neural networks struggle with due to the rigid training/inference paradigm. A common approach is experience replay, where past experiences are stored and periodically revisited. Popularized in deep Q-networks by \citet{mnihHumanlevelControlDeep2015}, replay buffers stabilize training and improve data efficiency by breaking temporal correlations in online data. However, this solution adds complexity through buffer management and sampling strategies.
+In continual and online learning, models must adapt to new data without forgetting previous knowledge—a capability that standard neural networks struggle with due to the rigid training/inference paradigm. A common approach is experience replay, where past experiences are stored and periodically revisited. Popularized in deep Q-networks by \cite{mnihHumanlevelControlDeep2015}, replay buffers stabilize training and improve data efficiency by breaking temporal correlations in online data. However, this solution adds complexity through buffer management and sampling strategies.
 
-As recent works confirm \citet{Forgetting_Survey_2024}, memory-based rehearsal provides a strong baseline in lifelong learning but requires extra storage and training iterations that simpler online learners would avoid. More sophisticated replay variants (selective storing, compressed activation replay, or generative replay) further increase system complexity by introducing components solely to manage past knowledge. This represents a fundamental trade-off: simplicity versus the ability to retain information across learning episodes.
+As recent works confirm \cite{Forgetting_Survey_2024}, memory-based rehearsal provides a strong baseline in lifelong learning but requires extra storage and training iterations that simpler online learners would avoid. More sophisticated replay variants (selective storing, compressed activation replay, or generative replay) further increase system complexity by introducing components solely to manage past knowledge. This represents a fundamental trade-off: simplicity versus the ability to retain information across learning episodes.
 
 \subsubsection{External Memory Architectures}
 
-Rather than modifying learning algorithms, some approaches augment neural networks with explicit memory structures. Neural Turing Machines (NTM), introduced by \citet{Graves2014NeuralTM}, pair a neural controller with a read-write memory matrix, allowing networks to store and retrieve information over extended sequences. This design enables algorithmic tasks like copying or sorting that standard RNNs cannot perform. However, the controller must learn where to write or read, making training more resource-intensive and complex. While subsequent variants like the Differentiable Neural Computer refined these mechanisms, they still struggled with consistency and scalability over very long sequences.
+Rather than modifying learning algorithms, some approaches augment neural networks with explicit memory structures. Neural Turing Machines (NTM), introduced by \cite{Graves2014NeuralTM}, pair a neural controller with a read-write memory matrix, allowing networks to store and retrieve information over extended sequences. This design enables algorithmic tasks like copying or sorting that standard RNNs cannot perform. However, the controller must learn where to write or read, making training more resource-intensive and complex. While subsequent variants like the Differentiable Neural Computer refined these mechanisms, they still struggled with consistency and scalability over very long sequences.
 
-Building on these foundations, \citet{westonMemoryNetworks2014} introduced Memory Networks for question-answering tasks, using a separate memory to store facts with an iterative attention process for retrieval. Similarly, \citet{santoroMetaLearningMemoryAugmentedNeural2016} showed that Memory-Augmented Neural Networks (MANN) can rapidly encode new samples into external memory, achieving one-shot learning without extensive retraining. The trade-off is an extra memory module and controller logic that simpler feed-forward networks don't require.
+Building on these foundations, \cite{westonMemoryNetworks2014} introduced Memory Networks for question-answering tasks, using a separate memory to store facts with an iterative attention process for retrieval. Similarly, \cite{santoroMetaLearningMemoryAugmentedNeural2016} showed that Memory-Augmented Neural Networks (MANN) can rapidly encode new samples into external memory, achieving one-shot learning without extensive retraining. The trade-off is an extra memory module and controller logic that simpler feed-forward networks don't require.
 
-In recent years, transformer-based models have also incorporated external memory systems. \citet{wuMemorizingTransformers2022} proposed Memorizing Transformers that maintain a key-value store of past activations, extending the effective context window beyond fixed self-attention limits. Similarly, \citet{wangAugmentingLanguageModels2023} augmented language models with dedicated long-term memory modules that require learning separate read/write operations. These approaches improve knowledge retention but add complexity through additional networks and procedures.
+In recent years, transformer-based models have also incorporated external memory systems. \cite{wuMemorizingTransformers2022} proposed Memorizing Transformers that maintain a key-value store of past activations, extending the effective context window beyond fixed self-attention limits. Similarly, \cite{wangAugmentingLanguageModels2023} augmented language models with dedicated long-term memory modules that require learning separate read/write operations. These approaches improve knowledge retention but add complexity through additional networks and procedures.
 
 \subsubsection{Current Industry Approaches and Limitations}
 
@@ -127,19 +84,19 @@ We can view the attention mechanism itself as a form of meta-learning that dynam
 
 The concept of rapidly updated parameters in neural networks has been explored through various complementary approaches. These techniques enable online adaptation by making parameters dynamic, effectively treating short-term weight changes as a form of memory. While traditional neural networks maintain static weights after training, techniques like fast weights, hypernetworks, and differentiable plasticity allow certain parameters to update rapidly in response to new inputs or tasks, adding a form of in-network memory stored in temporary weight changes.
 
-Fast weights have a long history in neural network research, dating back to \citet{hintonUsingFastWeights1987}, who described a dual weight architecture where each weight is mirrored by one with a higher learning rate that decays toward zero. The `effective' weight for each forward pass is the sum of these fast and slow weights, with the original goal being to \emph{deblur} old associations rather than explicitly encode short-term information. \citet{schmidhuberLearningControlFastweight1992} further developed this concept, drawing inspiration from biological short-term synaptic plasticity to create secondary weights that update based on recent activity.
+Fast weights have a long history in neural network research, dating back to \cite{hintonUsingFastWeights1987}, who described a dual weight architecture where each weight is mirrored by one with a higher learning rate that decays toward zero. The `effective' weight for each forward pass is the sum of these fast and slow weights, with the original goal being to \emph{deblur} old associations rather than explicitly encode short-term information. \cite{schmidhuberLearningControlFastweight1992} further developed this concept, drawing inspiration from biological short-term synaptic plasticity to create secondary weights that update based on recent activity.
 
-Modern implementations of this idea take various forms. \citet{miconiDifferentiablePlasticityTraining2018a} implemented differentiable Hebbian plasticity, where each synapse has a plastic component adjusted with a Hebb rule during forward passes, with the \emph{degree} of plasticity learned through gradient descent. This enables the network to memorize recent patterns by temporarily modifying weights, allowing it to succeed at tasks like one-shot recall that static networks fail at. Their plastic recurrent networks demonstrated the ability to memorize high-dimensional images seen during testing, whereas non-plastic counterparts couldn't—highlighting the benefit of this added complexity.
+Modern implementations of this idea take various forms. \cite{miconiDifferentiablePlasticityTraining2018a} implemented differentiable Hebbian plasticity, where each synapse has a plastic component adjusted with a Hebb rule during forward passes, with the \emph{degree} of plasticity learned through gradient descent. This enables the network to memorize recent patterns by temporarily modifying weights, allowing it to succeed at tasks like one-shot recall that static networks fail at. Their plastic recurrent networks demonstrated the ability to memorize high-dimensional images seen during testing, whereas non-plastic counterparts couldn't—highlighting the benefit of this added complexity.
 
-Hypernetworks extend this idea by using one neural network to generate the weights of another. Fast Weight Programmers (FWP) apply this concept to compute weight changes at each step, with a meta network continually emitting rapid parameter updates for the main network. As  \citet{irieGoingLinearTransformers2021a} demonstrated, these rapid updates can serve as an alternative to recurrent connections, with current enhancements making FWPs competitive with modern architectures. \citet{baUsingFastWeights2016} took a different approach, generating fast weights based on both a hidden recurrent connection and decaying previous fast weights, replacing the hidden vector with one calculated through an iterative inner loop using a fast memory weight matrix.
+Hypernetworks extend this idea by using one neural network to generate the weights of another. Fast Weight Programmers (FWP) apply this concept to compute weight changes at each step, with a meta network continually emitting rapid parameter updates for the main network. As  \cite{irieGoingLinearTransformers2021a} demonstrated, these rapid updates can serve as an alternative to recurrent connections, with current enhancements making FWPs competitive with modern architectures. \cite{baUsingFastWeights2016} took a different approach, generating fast weights based on both a hidden recurrent connection and decaying previous fast weights, replacing the hidden vector with one calculated through an iterative inner loop using a fast memory weight matrix.
 
 While promising, hypernetworks introduce efficiency and learning challenges through their outer/inner loop structure. Each training iteration may require maintaining two sets of weights—the hypernetwork's and the generated network's—along with their respective gradients, significantly increasing memory usage and computational cost. The need to backpropagate through both loops can limit scalability, often necessitating specialized optimization strategies or approximations.
 
-Another approach is dynamic evaluation, introduced by \citet{mikolovRecurrentNeuralNetwork2010} and refined by \citet{pmlr-v80-krause18a} for language models. Here, the model performs extra gradient updates on recent data during inference to improve next-word predictions. This yields lower perplexity on sequences by continuously adapting model parameters to recent tokens, at the cost of 3× or more computational overhead during inference. Dynamic evaluation makes inference much more complex (almost like a mini-training) compared to static models, since each step requires on-the-fly backpropagation.
+Another approach is dynamic evaluation, introduced by \cite{mikolovRecurrentNeuralNetwork2010} and refined by \cite{pmlr-v80-krause18a} for language models. Here, the model performs extra gradient updates on recent data during inference to improve next-word predictions. This yields lower perplexity on sequences by continuously adapting model parameters to recent tokens, at the cost of 3× or more computational overhead during inference. Dynamic evaluation makes inference much more complex (almost like a mini-training) compared to static models, since each step requires on-the-fly backpropagation.
 
-\citet{finnModelagnosticMetalearningFast2017} formalized a meta-learning approach (MAML) to train models that can be quickly fine-tuned with a few gradient steps on a new task. While MAML doesn't add new network modules, it alters the training procedure to initialize the model in a state amenable to rapid parameter changes. This yields a form of short-term memory (the quick weight update) for new task information, though it requires second-order optimization during training and careful hyperparameter tuning.
+\cite{finnModelagnosticMetalearningFast2017} formalized a meta-learning approach (MAML) to train models that can be quickly fine-tuned with a few gradient steps on a new task. While MAML doesn't add new network modules, it alters the training procedure to initialize the model in a state amenable to rapid parameter changes. This yields a form of short-term memory (the quick weight update) for new task information, though it requires second-order optimization during training and careful hyperparameter tuning.
 
-A more recent innovation is Fast Weight Layers (FWL) by \citet{clark-etal-2022-meta}, which added to Transformers to emulate dynamic evaluation via learned linearized gradient updates. The FWL component learns to take the model's recent activations and "update" a set of fast weights through an attention mechanism that mirrors gradient descent, effectively giving the model a built-in one-step adaptation mechanism. This improves performance on language modeling, especially for rare or repeating tokens, but introduces an additional neural module atop the base model and a two-pass processing of each input.
+A more recent innovation is Fast Weight Layers (FWL) by \cite{clark-etal-2022-meta}, which added to Transformers to emulate dynamic evaluation via learned linearized gradient updates. The FWL component learns to take the model's recent activations and "update" a set of fast weights through an attention mechanism that mirrors gradient descent, effectively giving the model a built-in one-step adaptation mechanism. This improves performance on language modeling, especially for rare or repeating tokens, but introduces an additional neural module atop the base model and a two-pass processing of each input.
 
 Interestingly, multi-head attention can itself be viewed as a special case of fast weight programming. In attention, the ``fast weights// are effectively the key-value associations—an ephemeral weight matrix computed on the fly for each sequence of queries, then used immediately to transform them. This mirrors the fast-weight concept: a separate mechanism rapidly produces a parameter-like matrix to be used in the next computation step.
 
@@ -196,12 +153,10 @@ w_k(t+1) = w_k(t) - \alpha_k \cdot \nabla_k L(t)
 
 Where $\nabla_k L(t)$ is the gradient of the loss function with respect to weight $w_k$ at time step $t$.
 
-\begin{figure}[h]
-\begin{center}
-\includegraphics[width=0.8\linewidth]{model_diagram.png}
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{model_diagram.png}}
 \caption{In a traditional RNN, the hidden state $h_{t-1}$ carries information forward through time. In the Ephemeral Weights model, this recurrent connection is removed, and short-term memory is instead stored in rapidly updating parameters (ephemeral weights) that adjust based on recent inputs. This allows the model to retain context without explicit recurrence.}
 \label{fig:model_diagram}
-\end{center}
 \end{figure}
 \subsection{Forgetting Rate Mechanism}
 
@@ -251,12 +206,12 @@ Models using ethereal weights often maintain higher loss values than traditional
 
 Following extensive experimentation with different model configurations, we present a high-level comparison of performance across various combinations of model type, updater mechanism, and recurrence settings. 
 
-\begin{table}[h]
-\centering
+\begin{table*}[htbp]
+\caption{Performance Comparison Across Model Configurations}
+\begin{center}
 \begin{tabular}{|l|l|c|c|l|l|}
 \hline
 \textbf{Model} & \textbf{Updater} & \textbf{Recur.} & \textbf{Perf.} & \textbf{Key Reason} & \textbf{Mechanism} \\
-\hline
 \hline
 RNN & DFA & Any & Fail & Poor performance & DFA an imprecise approximation of Backprop \\
 RNN & Backprop & True & Good & Standard NN training & Hidden state carries temporal info \\
@@ -270,10 +225,13 @@ Ethereal & Backprop & Any & Poor & Rapid gradient explosion & High-plast weights
 Ethereal & BPTT & True & Mixed & Rapid gradient explosion & High-plast weights used in backward pass \\
 Ethereal & BPTT & False & Fail & No within-sequence adaptation & BPTT delays updates, negating ethereal benefit \\
 \hline
+\multicolumn{6}{l}{$^{\mathrm{a}}$Ethereal models maintain per-batch-item weight sets, enabling memory storage without recurrence.} \\
+\multicolumn{6}{l}{The success of ethereal weights with DFA stems from the stability provided by fixed random feedback} \\
+\multicolumn{6}{l}{weights, while backpropagation configurations work but with higher volatility.}
 \end{tabular}
-\caption{Performance comparison across model configurations. Ethereal models maintain per-batch-item weight sets, enabling memory storage without recurrence. The success of ethereal weights with DFA stems from the stability provided by fixed random feedback weights, while backpropagation configurations work but with higher volatility due to the high-plasticity weights being used in gradient calculations.}
 \label{tab:configuration_comparison}
-\end{table}
+\end{center}
+\end{table*}
 
 The key differentiator between RNN and Ethereal implementations is the per-batch-item versus shared weights architecture. While standard RNNs maintain synchronized weights across all batch items, the Ethereal implementation maintains separate weight instances for each sequence in the batch. This architectural difference allows ethereal weights to store sequence-specific information directly in the parameters, effectively replacing the need for recurrent connections.
 
@@ -291,23 +249,19 @@ A synthetic dataset is constructed for simple, single character retrieval. The s
 00?.0!.
 \end{verbatim}
 
-\begin{figure}[h]
-\begin{center}
-\includegraphics[width=0.8\linewidth]{figure_1.png}
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{figure_1.png}}
 \caption{Baseline runs display the learning rate beside them, and ephemeral runs include the forget rate, as well. The first graph shows the loss, and the bottom graph displays the model's prediction accuracy. The baseline RNN achieves a lower loss value, and remains stable enough for a higher learning rate to be used, but Ephemeral Weights converges to a high accuracy before the baseline does, when the same learning rate is used and its forget rate is tuned well. Under experimental implementations, Ephemeral Weights does not compute as many steps in the same amount of time, but remains remarkably stable.}
 \label{fig:key_recall}
-\end{center}
 \end{figure}
 
 \subsection{Repeated Sequences}
 A synthetic dataset of one to four randomly chosen characters repeated until the character limit. The ability to train this task indicates that the memory storage mechanism is capable of storing several input-output associations. 
 
-\begin{figure}[h]
-\begin{center}
-\includegraphics[width=0.8\linewidth]{figure_2.png}
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{figure_2.png}}
 \caption{The baseline, traditional RNN with backprop is used as a benchmark, converging quickly on the loss values and accuracy. Ephemeral weights converge more slowly, but do so without any recurrent connection.}
 \label{fig:repeated_sequences}
-\end{center}
 \end{figure}
 
 \subsection{Palindromes}
@@ -321,17 +275,15 @@ qwerttrewq
 
 This task goes beyond simple associative retrieval, requiring the network to not only store character associations but also retrieve them in inverted order. The reversal operation demands both memory storage and transformation capabilities, making it significantly more challenging than key-recall or repeated sequences.
 
-\begin{figure}[h]
-\begin{center}
-\includegraphics[width=0.8\linewidth]{figure_3.png}
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{figure_3.png}}
 \caption{Ephemeral weights demonstrate characteristic volatility on the palindromes task, reaching accuracy as high as 0.75 before experiencing gradient explosion and failure. This pattern illustrates the inherent instability that can emerge with synthetic datasets that create particularly steep loss landscapes.}
 \label{fig:palindromes}
-\end{center}
 \end{figure}
 
 \subsubsection{Volatility Emergence and Gradient Explosion}
 
-The palindromes task reveals a fundamental challenge with ethereal weights: their susceptibility to gradient explosion under certain conditions. As shown in Figure 3, the model can achieve promising accuracy (up to 0.75) before experiencing catastrophic failure characterized by rapidly increasing loss and plummeting accuracy. This volatility pattern is particularly pronounced with synthetic datasets, which tend to create non-smooth, "bumpy" loss landscapes that amplify the destabilizing effects of rapid weight changes.
+The palindromes task reveals a fundamental challenge with ethereal weights: their susceptibility to gradient explosion under certain conditions. As shown in Fig.~3, the model can achieve promising accuracy (up to 0.75) before experiencing catastrophic failure characterized by rapidly increasing loss and plummeting accuracy. This volatility pattern is particularly pronounced with synthetic datasets, which tend to create non-smooth, "bumpy" loss landscapes that amplify the destabilizing effects of rapid weight changes.
 
 Our analysis reveals that gradient explosion in ethereal weights follows a predictable pattern driven by the ratio of gradient norms between high-plasticity and low-plasticity weights. In stable training runs, this gradient ratio tends to shrink over time as the slower weights provide stabilizing influence. However, in models that eventually explode, the gradient ratio consistently grows from the start, indicating that high-plasticity weights are gaining disproportionate influence over the network's behavior.
 
@@ -351,14 +303,12 @@ The stability of the system depends on a delicate balance between multiple facto
 
 A critical challenge is that appropriate values for these hyperparameters appear highly task-dependent, influenced by factors such as the required memory persistence duration, the density of information that must be stored in working memory, and the natural volatility of the dataset itself. This dependency on intensive hyperparameter tuning represents a significant limitation for practical applications.
 
-A Hyperparameter sweep on the 3-character reversed sequence task indicated that the linear interaction of the base learning rate and the high-plasticity learning rate determines the stability outcomes. It also indicated, in the same sweep, that of the two hyperparameters, high-plasticity learning rate is far more dominant in determining the accuracy of the model in the time-constrained training regime. Therefore, a balance must be struck, when choosing hyperparameters, setting the high-plasticity as high enough to enable effective memory encoding, but low enough to avoid instability (Figure 4).
+A Hyperparameter sweep on the 3-character reversed sequence task indicated that the linear interaction of the base learning rate and the high-plasticity learning rate determines the stability outcomes. It also indicated, in the same sweep, that of the two hyperparameters, high-plasticity learning rate is far more dominant in determining the accuracy of the model in the time-constrained training regime. Therefore, a balance must be struck, when choosing hyperparameters, setting the high-plasticity as high enough to enable effective memory encoding, but low enough to avoid instability (Fig.~4).
 
-\begin{figure}[h]
-\begin{center}
-\includegraphics[width=0.8\linewidth]{figure_5.png}
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{figure_5.png}}
 \caption{Hyperparameter sweep results on the 3-character reversed sequence task showing the interaction between base learning rate and high-plasticity learning rate. The visualization demonstrates the linear relationship between these hyperparameters in determining stability outcomes, with the high-plasticity learning rate showing dominant influence over model accuracy in time-constrained training regimes.}
 \label{fig:hyperparameter_sweep}
-\end{center}
 \end{figure}
 
 
@@ -368,24 +318,20 @@ The ethereal weights mechanism exhibits characteristic volatility patterns that 
 
 \subsubsection{Gradient Explosion Dynamics}
 
-The volatility manifests as a cascading failure where gradient norms and weight magnitudes accelerate simultaneously, leading to rapid increases in loss and corresponding drops in accuracy, as seen in Figure 3. This behavior appears intrinsic to the mechanism rather than a mere implementation artifact—the aggressive gradient amplification required for effective memory encoding creates inherent instability.
+The volatility manifests as a cascading failure where gradient norms and weight magnitudes accelerate simultaneously, leading to rapid increases in loss and corresponding drops in accuracy, as seen in Fig.~3. This behavior appears intrinsic to the mechanism rather than a mere implementation artifact—the aggressive gradient amplification required for effective memory encoding creates inherent instability.
 
-A key early warning indicator emerges from monitoring the gradient norms of high-plasticity and low-plasticity weights. Stability correlates with this value shrinking and stabilizing over time, while growth of the gradient norm precedes explosive behavior (Figure 6). This observation aligns with the intuitive understanding that high-plasticity weights, when left unchecked by slower stabilizing weights, can enter a positive feedback loop where rapid changes amplify subsequent gradient signals.
-\begin{figure}[h]
-\begin{center}
-\includegraphics[width=0.8\linewidth]{compare_norms.png}
+A key early warning indicator emerges from monitoring the gradient norms of high-plasticity and low-plasticity weights. Stability correlates with this value shrinking and stabilizing over time, while growth of the gradient norm precedes explosive behavior (Fig.~6). This observation aligns with the intuitive understanding that high-plasticity weights, when left unchecked by slower stabilizing weights, can enter a positive feedback loop where rapid changes amplify subsequent gradient signals.
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{compare_norms.png}}
 \caption{A learning rate of 0.0001 is used for the stable run, and the exploding run uses a learning rate of 0.0002. The gradient norms of the exploding run (brown) grow jointly, while the stable run's (blue) gradient norms stabilize. The ratio of high-plasticity to low-plasticity gradient norms shrink, slightly, in the exploding run, but remain stable in the stable run.}
 \label{fig:compare_norms}
-\end{center}
 \end{figure}
 
-Holding other hyperparameters constant, varying the base learning rate and the plasticity modifier reveals a linear boundary between stable and unstable regimes. Lower base learning rates allow for higher plasticity modifiers before instability arises, while higher base learning rates necessitate more conservative plasticity settings (Figure 7). A limitation of this experiment is that some runs that initially appear stable within the training timeframe still exhibit climbing loss numbers at the tail end, suggesting eventual instability if training were extended further. 
-\begin{figure}[h]
-\begin{center}
-\includegraphics[width=0.8\linewidth]{figure_6.png}
+Holding other hyperparameters constant, varying the base learning rate and the plasticity modifier reveals a linear boundary between stable and unstable regimes. Lower base learning rates allow for higher plasticity modifiers before instability arises, while higher base learning rates necessitate more conservative plasticity settings (Fig.~7). A limitation of this experiment is that some runs that initially appear stable within the training timeframe still exhibit climbing loss numbers at the tail end, suggesting eventual instability if training were extended further. 
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{figure_6.png}}
 \caption{Hyperparameter sweep results on the 3-character reversed sequence task showing the interaction between base learning rate and high-plasticity learning rate, 10 samples for each combination, on stability. A linear boundary separates runs that remained under a loss of 2 from those that underwent a runaway explosion of gradient values during a set number of training steps.}
 \label{fig:hyperparameter_sweep_6}
-\end{center}
 \end{figure}
 
 \subsubsection{Forgetting Rate Dynamics}
@@ -425,15 +371,13 @@ However, this effective learning rate metric fails to correlate strongly with ac
 
 A critical concern with the ethereal weights approach is whether the volatile behavior of high-plasticity weights interferes with the stable, long-term learning that should occur in the low-plasticity parameters. Our analysis demonstrates that these two learning processes can coexist effectively, with each operating at its designated timescale without mutual interference.
 
-\begin{figure}[h]
-\begin{center}
-\includegraphics[width=0.8\linewidth]{figure_4.png}
+\begin{figure}[htbp]
+\centerline{\includegraphics[width=\columnwidth]{figure_4.png}}
 \caption{Gradient norm evolution throughout training shows clear separation between high-plasticity and low-plasticity weight categories. The high-plasticity weights (red) exhibit characteristic volatility with occasional spikes corresponding to memory encoding events, while low-plasticity weights (blue) maintain steady, controlled gradient magnitudes. This separation demonstrates that the two learning processes operate independently, allowing stable long-term learning to proceed alongside volatile working memory encoding.}
 \label{fig:gradient_norms}
-\end{center}
 \end{figure}
 
-Figure 5 reveals that gradient norms for high-plasticity and low-plasticity weights remain highly distinct throughout training, indicating that the two categories of parameters operate in separate dynamic regimes. The high-plasticity weights exhibit the expected volatility with occasional large spikes corresponding to memory encoding events, while the low-plasticity weights maintain steady, controlled gradient magnitudes characteristic of stable optimization.
+Fig.~5 reveals that gradient norms for high-plasticity and low-plasticity weights remain highly distinct throughout training, indicating that the two categories of parameters operate in separate dynamic regimes. The high-plasticity weights exhibit the expected volatility with occasional large spikes corresponding to memory encoding events, while the low-plasticity weights maintain steady, controlled gradient magnitudes characteristic of stable optimization.
 
 This separation is crucial for the dual-timescale learning hypothesis underlying ethereal weights. The steady decrease in loss observed across our experiments suggests that the model continues to learn long-term patterns at the low-plasticity learning rate while simultaneously managing working memory at the high-plasticity rate. This dual-process behavior indicates that ethereal weights successfully implement a form of multi-timescale learning where different parameter subsets serve distinct functional roles.
 
@@ -485,7 +429,8 @@ Future work should explore dynamic plasticity parameters, variable forgetting ra
 
 The potential for this work extends to alignment and continual learning applications. A language model that is capable of continuous alignment in a more biologically plausible way has the potential to adapt more closely to individuals' needs in an ever-refining way. Smooth transitions from short to long-term memory, stored efficiently in model parameters will grant AI a new modality for computing problems over varying timescales, opening up larger and more complex projects to AI assistance. The possibilities include agents capable of coherently planning and orchestrating projects over the course of days and weeks, rather than minutes.
 
-\bibliography{collas2025_conference}
-\bibliographystyle{collas2025_conference}
+\bibliographystyle{IEEEtran}
+\bibliography{ieee_ethereal_weights}
+\vspace{12pt}
 
 \end{document}
