@@ -13,4 +13,4 @@ $pdflatex = 'pdflatex -file-line-error -synctex=1 %O %S';
 $bibtex = 'bibtex %O %B';
 
 # Default entry file (change if your main file isn’t main.tex)
-@default_files = ('main.tex');
+@default_files = ('ieee_ethereal_weights.tex');
