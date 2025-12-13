@@ -158,11 +158,11 @@ w_k(t+1) = w_k(t) - \alpha_k \cdot \nabla_k L(t)
 
 Where $\nabla_k L(t)$ is the gradient of the loss function with respect to weight $w_k$ at time step $t$. For ephemeral weights using Direct Feedback Alignment (DFA), $\nabla_k L(t)$ represents the feedback signal computed via fixed random projection matrices rather than the true backpropagated gradient.
 
-\begin{figure}[htbp]
-\centerline{\includegraphics[width=\columnwidth]{model_diagram.png}}
+\begin{figure*}[!t]
+\centerline{\includegraphics[width=\textwidth]{model_diagram.png}}
 \caption{In a traditional RNN, the hidden state $h_{t-1}$ carries information forward through time. In the Ephemeral Weights model, this recurrent connection is removed, and short-term memory is instead stored in rapidly updating parameters (ephemeral weights) that adjust based on recent inputs. This allows the model to retain context without explicit recurrence.}
 \label{fig:model_diagram}
-\end{figure}
+\end{figure*}
 \subsection{Forgetting Rate Mechanism}
 
 To prevent gradient instability from the rapid weight changes, we implement a controlled decay of ephemeral weights:
@@ -180,71 +180,11 @@ Networks are trained using cross-entropy loss, with targets being the next chara
 
 During both training and inference, the Ephemeral Weights model computes gradients and updates parameters after every character prediction, unlike traditional models where parameters remain fixed during inference. This continuous update cycle allows short-term contextual information to be encoded directly in the model parameters.
 
-However, I will establish that continuous state information can be propagated solely through parameter updates; hence the use of static plasticity and the removal of recurrent connections.
-
-\subsection{Implementation Details}
-
-Several critical implementation considerations emerged during our experiments that significantly impact the stability and effectiveness of ephemeral weights.
-
-\subsubsection{Gradient Propagation Methods}
-
-Direct Feedback Alignment (DFA) demonstrates superior stability compared to standard backpropagation when used with ethereal weights. In DFA, feedback weights are randomly initialized for each layer and remain fixed throughout training, rather than using the network's own plastic weights for gradient propagation. This approach proves more stable because the fixed random weights avoid the volatility introduced when highly plastic parameters are used for both forward computation and backward gradient flow. Standard backpropagation with ethereal weights creates a volatile feedback loop where rapid weight changes amplify gradient instability.
-
-\subsubsection{Character-Level Updates}
-
 For short-term information to be effectively encoded, a complete training step—including loss calculation and backward pass—must be performed after each character prediction. This character-by-character update cycle is essential for the memory encoding mechanism, as it allows recent inputs to be immediately incorporated into the high-plasticity weights before the next prediction.
-
-\subsubsection{Batching Constraints}
 
 Traditional batching approaches fail with ethereal weights because they cause working memory to be shared across different sequence instances, obfuscating the information that should be encoded in high-plasticity weights. Instead, batching must be implemented using separate weight instances for each sequence, with gradient accumulation occurring only after complete sequences are processed. This ensures that each sequence maintains its own isolated working memory state.
 
-\subsubsection{Stabilization Techniques}
-
-Weight clipping emerges as an effective stabilization method, particularly for models using standard backpropagation. By constraining weight magnitudes, clipping helps control the volatile behavior that can arise from the aggressive gradient amplification inherent in the ethereal weights mechanism. However, gradient clipping proves ineffective, as the memory mechanism depends on occasional large gradient magnitudes to encode temporary information effectively.
-
-Batch normalization and layer normalization are similarly counterproductive, as they normalize away the bimodal gradient distribution that is fundamental to the ethereal weights approach. The extreme gradient magnitudes that these normalization techniques suppress are precisely what enables effective memory encoding.
-
-\subsubsection{Loss Characteristics}
-
-Models using ethereal weights often maintain higher loss values than traditional methods, even when achieving superior accuracy. This apparent paradox occurs because the strength of memory encoding is directly related to the loss magnitude—the gradient signal that drives memory formation. This relationship suggests an inherent trade-off between memory encoding strength and loss minimization, potentially limiting how low the loss can decrease while maintaining effective working memory capabilities.
-
-\subsubsection{Configuration Performance Summary}
-
-Following extensive experimentation with different model configurations, we present a high-level comparison of performance across various combinations of model type, updater mechanism, and recurrence settings. 
-
-\begin{table*}[htbp]
-\caption{Performance Comparison Across Model Configurations}
-\begin{center}
-\begin{tabular}{|l|l|c|c|l|l|}
-\hline
-\textbf{Model} & \textbf{Updater} & \textbf{Recur.} & \textbf{Perf.} & \textbf{Key Reason} & \textbf{Mechanism} \\
-\hline
-RNN & DFA & Any & Fail & Poor performance & DFA an imprecise approximation of Backprop \\
-RNN & Backprop & True & Good & Standard NN training & Hidden state carries temporal info \\
-RNN & Backprop & False & Poor & No memory mechanism & No hidden state, no weight adaptation \\
-RNN & BPTT & True & Good & Traditional RNN with BPTT & Gradients flow through time \\
-RNN & BPTT & False & Poor & Delayed batch gradient descent & No temporal connection to exploit \\
-\hline
-Ethereal & DFA & True & Good & Immediate weight adaptation & Fixed feedback weights stabilize volatile updates \\
-Ethereal & DFA & False & Good & Per-batch adaptation & Each batch maintains separate weights \\
-Ethereal & Backprop & Any & Poor & Rapid gradient explosion & High-plast weights used in backward pass \\
-Ethereal & BPTT & True & Mixed & Rapid gradient explosion & High-plast weights used in backward pass \\
-Ethereal & BPTT & False & Fail & No within-sequence adaptation & BPTT delays updates, negating ethereal benefit \\
-\hline
-\multicolumn{6}{l}{$^{\mathrm{a}}$Ethereal models maintain per-batch-item weight sets, enabling memory storage without recurrence.} \\
-\multicolumn{6}{l}{The success of ethereal weights with DFA stems from the stability provided by fixed random feedback} \\
-\multicolumn{6}{l}{weights, while backpropagation configurations work but with higher volatility.}
-\end{tabular}
-\label{tab:configuration_comparison}
-\end{center}
-\end{table*}
-
-The key differentiator between RNN and Ethereal implementations is the per-batch-item versus shared weights architecture. While standard RNNs maintain synchronized weights across all batch items, the Ethereal implementation maintains separate weight instances for each sequence in the batch. This architectural difference allows ethereal weights to store sequence-specific information directly in the parameters, effectively replacing the need for recurrent connections.
-
-The stability advantage of DFA over backpropagation becomes particularly apparent in the Ethereal configurations. When using backpropagation, the high-plasticity weights (which have large values) are used to backpropagate gradients, introducing significant volatility into the learning dynamics. DFA avoids this issue by using fixed random feedback weights, providing a stable gradient signal regardless of the volatile state of the high-plasticity parameters.
-
 \section{Experiments}
-% Note: You'll need to include your image file with proper LaTeX syntax
 
 \subsection{Key-Recall}
 A synthetic dataset is constructed for simple, single character retrieval. The sequence contains a character, '?', indicating that the next input contains a value to be stored. Later in the sequence, another character, '!', requests the stored value. The gaps are filled with 0s. Some examples:
@@ -317,6 +257,40 @@ A Hyperparameter sweep on the 3-character reversed sequence task indicated that 
 \label{fig:hyperparameter_sweep}
 \end{figure}
 
+\subsection{Configuration Performance Summary}
+
+Following extensive experimentation with different model configurations, we present a high-level comparison of performance across various combinations of model type, updater mechanism, and recurrence settings. 
+
+\begin{table*}[htbp]
+\caption{Performance Comparison Across Model Configurations}
+\begin{center}
+\begin{tabular}{|l|l|c|c|l|l|}
+\hline
+\textbf{Model} & \textbf{Updater} & \textbf{Recur.} & \textbf{Perf.} & \textbf{Key Reason} & \textbf{Mechanism} \\
+\hline
+RNN & DFA & Any & Fail & Poor performance & DFA an imprecise approximation of Backprop \\
+RNN & Backprop & True & Good & Standard NN training & Hidden state carries temporal info \\
+RNN & Backprop & False & Poor & No memory mechanism & No hidden state, no weight adaptation \\
+RNN & BPTT & True & Good & Traditional RNN with BPTT & Gradients flow through time \\
+RNN & BPTT & False & Poor & Delayed batch gradient descent & No temporal connection to exploit \\
+\hline
+Ethereal & DFA & True & Good & Immediate weight adaptation & Fixed feedback weights stabilize volatile updates \\
+Ethereal & DFA & False & Good & Per-batch adaptation & Each batch maintains separate weights \\
+Ethereal & Backprop & Any & Poor & Rapid gradient explosion & High-plast weights used in backward pass \\
+Ethereal & BPTT & True & Mixed & Rapid gradient explosion & High-plast weights used in backward pass \\
+Ethereal & BPTT & False & Fail & No within-sequence adaptation & BPTT delays updates, negating ethereal benefit \\
+\hline
+\multicolumn{6}{l}{$^{\mathrm{a}}$Ethereal models maintain per-batch-item weight sets, enabling memory storage without recurrence.} \\
+\multicolumn{6}{l}{The success of ethereal weights with DFA stems from the stability provided by fixed random feedback} \\
+\multicolumn{6}{l}{weights, while backpropagation configurations work but with higher volatility.}
+\end{tabular}
+\label{tab:configuration_comparison}
+\end{center}
+\end{table*}
+
+The key differentiator between RNN and Ethereal implementations is the per-batch-item versus shared weights architecture. While standard RNNs maintain synchronized weights across all batch items, the Ethereal implementation maintains separate weight instances for each sequence in the batch. This architectural difference allows ethereal weights to store sequence-specific information directly in the parameters, effectively replacing the need for recurrent connections.
+
+The stability advantage of DFA over backpropagation becomes particularly apparent in the Ethereal configurations. When using backpropagation, the high-plasticity weights (which have large values) are used to backpropagate gradients, introducing significant volatility into the learning dynamics. DFA avoids this issue by using fixed random feedback weights, providing a stable gradient signal regardless of the volatile state of the high-plasticity parameters.
 
 \subsection{Volatility and Stability Analysis}
 
@@ -404,6 +378,8 @@ Our experiments demonstrate that ethereal weights successfully encode functional
 The memory mechanism operates as an associative system that performs best with strong retrieval cues, though the temporal decay ("age") of stored information can also serve as an effective retrieval mechanism. This dual-access pattern mirrors biological working memory, where both content-based and temporal-based retrieval strategies coexist. However, the associative nature of this memory system also reveals its limitations: while effective for storage and retrieval, it lacks inherent mechanisms for information transformation or manipulation, as evidenced by the challenges with palindrome tasks that require sequence reversal.
 
 The volatility characteristics discussed in Section 4.4 are intrinsically linked to this memory function. The gradient explosion patterns that threaten stability are not merely implementation artifacts but fundamental consequences of the memory encoding mechanism. The aggressive gradient amplification required for rapid memory formation creates a delicate balance between effective encoding and system stability, suggesting that volatility management is an essential component of any practical ethereal weights implementation.
+
+Models using ethereal weights often maintain higher loss values than traditional methods, even when achieving superior accuracy. This apparent paradox occurs because the strength of memory encoding is directly related to the loss magnitude—the gradient signal that drives memory formation. This relationship suggests an inherent trade-off between memory encoding strength and loss minimization, potentially limiting how low the loss can decrease while maintaining effective working memory capabilities.
 
 \subsection{Toward a Multi-Scale Memory Pipeline}
 
