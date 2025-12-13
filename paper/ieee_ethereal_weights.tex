@@ -116,7 +116,8 @@ The ephemeral weights approach mimics these biological processes by implementing
 
 \subsection{Model Architecture and Implementation}
 
-Our experimental setup compares a traditional RNN with a novel model using ephemeral weights to store short-term memory. Both networks are character-level predictors trained on synthetic datasets designed to test memory capabilities.
+Our experimental setup compares a traditional RNN with a novel model using ephemeral weights to store short-term memory. Both networks are character-level predictors trained on synthetic datasets designed to test memory capabilities. We choose a simple, 3-layer RNN because state-of-the-art neural networks most commonly use a form of recurrent connections in order to store relevant short-term information. Diffusion models immediately encode the output into a partially denoised image, and Transformers immediately encode the output into a token that is appended to the original input, and both major models pass those partially finished works to the next step. Modifications to the simple, traditional RNN lays the groundwork for the addition of a new, in-weights modality for short-term information encoding, that may be applicable to a diverse array of more modern techniques.
+
 
 \subsubsection{Baseline RNN Model}
 
@@ -128,9 +129,6 @@ y_t &= \text{softmax}(W_{hy}h_t + b_y)
 \end{align}
 
 Where $h_t$ represents the hidden state at time $t$, $x_t$ is the one-hot encoded input character, $y_t$ is the output prediction, and $W_{xh}$, $W_{hh}$, $W_{hy}$ are weight matrices for input-to-hidden, hidden-to-hidden (recurrent), and hidden-to-output connections respectively. Each hidden layer contains 256 units.
-
-State-of-the-art neural networks most commonly use a form of recurrent connections in order to store relevant short-term information. Diffusion models immediately encode the output into a partially denoised image, and Transformers immediately encode the output into a token that is appended to the original input, and both major models pass those partially finished works to the next step. Modifications to the simple, traditional RNN lays the groundwork for the addition of a new, in-weights modality for short-term information encoding, that may be applicable to a diverse array of more modern techniques.
-
 
 \subsubsection{Ephemeral Weights Model}
 
@@ -158,7 +156,7 @@ We randomly designate approximately 10\% of the total parameters as ephemeral we
 w_k(t+1) = w_k(t) - \alpha_k \cdot \nabla_k L(t)
 \end{equation}
 
-Where $\nabla_k L(t)$ is the gradient of the loss function with respect to weight $w_k$ at time step $t$.
+Where $\nabla_k L(t)$ is the gradient of the loss function with respect to weight $w_k$ at time step $t$. For ephemeral weights using Direct Feedback Alignment (DFA), $\nabla_k L(t)$ represents the feedback signal computed via fixed random projection matrices rather than the true backpropagated gradient.
 
 \begin{figure}[htbp]
 \centerline{\includegraphics[width=\columnwidth]{model_diagram.png}}
@@ -173,7 +171,8 @@ To prevent gradient instability from the rapid weight changes, we implement a co
 w_k^{\text{fast}}(t+1) = \gamma \cdot w_k^{\text{fast}}(t+1)
 \end{equation}
 
-Where $\gamma = 0.7$ is the forgetting rate coefficient applied after each standard update. This mechanism ensures that information stored in ephemeral weights gradually fades, maintaining stability while allowing the network to adapt to new inputs.
+Where $\gamma = 0.7$ is the forgetting rate coefficient applied after each standard update. This mechanism ensures that information stored in ephemeral weights gradually fades, maintaining stability while allowing the network to adapt to new inputs. 
+While reminiscent of the LSTM's forget gate, this forgetting rate is static and uniform across all high-plasticity ephemeral weights. Additionally, it operates on the weights themselves of the network rather than a hidden cell state value. Selective retention measures are foregone in favor of our more unified information storage mechanism.
 
 \subsection{Training Procedure}
 
