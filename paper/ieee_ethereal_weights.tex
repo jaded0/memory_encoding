@@ -195,18 +195,21 @@ A synthetic dataset is constructed for simple, single character retrieval. The s
 00?.0!.
 \end{verbatim}
 
+Successful completion of this task indicates that the model can store and retrieve a single value, not necessarily preceded by the input that originally preceded it, indicating a working memory function that isn't purely associative alone. This is an important test for a weights based memory mechanism, which would otherwise be expected to blindly encode recent inputs without the ability to selectively retrieve them later. It also tests the model's ability to balance the dual demands on its optimization on the loss function: to minimize loss while also creating a strong enough gradient signal to encode the selected memory.
+Under experimental implementations, Ephemeral Weights does not compute as many steps in the same amount of time, but remains remarkably stable. Its performance on this task is shown in Fig.~\ref{fig:key_recall}, demonstrating its higher floor for loss values that's likely tied to the strength of its memory encoding. Despite the higher loss, it achieves full accuracy more quickly than the baseline RNN at the same learning rate. More comprehensive hyperparameter comparisons were deemed out of scope for this initial exploration of the mechanism, because our primary goal is to establish the viability of the approach as a memory mechanism, not as an optimizer.
+
 \begin{figure}[htbp]
 \centerline{\includegraphics[width=\columnwidth]{figure_1.png}}
-\caption{Baseline runs display the learning rate beside them, and ephemeral runs include the forget rate, as well. The first graph shows the loss, and the bottom graph displays the model's prediction accuracy. The baseline RNN achieves a lower loss value, and remains stable enough for a higher learning rate to be used, but Ephemeral Weights converges to a high accuracy before the baseline does, when the same learning rate is used and its forget rate is tuned well. Under experimental implementations, Ephemeral Weights does not compute as many steps in the same amount of time, but remains remarkably stable.}
+\caption{Performance on the Key-Recall task. Baseline runs display the learning rate beside them, and ephemeral runs include the forget rate, as well. The first graph shows the loss, and the bottom graph displays the model's prediction accuracy. The baseline RNN achieves a lower loss value, and remains stable enough for a higher learning rate to be used, but Ephemeral Weights converges to a high accuracy before the baseline does, when the same learning rate is used and its forget rate is tuned well. }
 \label{fig:key_recall}
 \end{figure}
 
 \subsection{Repeated Sequences}
-A synthetic dataset of one to four randomly chosen characters repeated until the character limit. The ability to train this task indicates that the memory storage mechanism is capable of storing several input-output associations. 
+A synthetic dataset of one to four randomly chosen characters repeated until the character limit. The ability to train this task indicates that the memory storage mechanism is capable of storing several input-output associations. Meant to test the model's ability to store multiple association in the same parametric working memory simultaneously, as an assurance that the mechanism isn't severely limited in capacity. The mechanism is capable, yet appears to hit a saddle point in performance until later in the training, hypothesized to be due to learning how to reconcile overlapping representations in the weights, as shown in Fig.~\ref{fig:repeated_sequences}. Again, the difference in loss values is laid bare, indicating the model's unique relationship with gradient magnitudes. Overall, the ephemeral weights mechanism is proved capable of storing these associations without recurrent connections, the implications of which include new avenues for optimization, since the recurrent connection requires sequential operations that limit parallelism, in turn limiting scaling potential.
 
 \begin{figure}[htbp]
 \centerline{\includegraphics[width=\columnwidth]{figure_2.png}}
-\caption{The baseline, traditional RNN with backprop is used as a benchmark, converging quickly on the loss values and accuracy. Ephemeral weights converge more slowly, but do so without any recurrent connection.}
+\caption{Performance on the Repeated Sequences task. The baseline, traditional RNN with backprop is used as a benchmark, converging quickly on the loss values and accuracy. Ephemeral weights converge more slowly, but do so without any recurrent connection.}
 \label{fig:repeated_sequences}
 \end{figure}
 
@@ -229,7 +232,7 @@ This task goes beyond simple associative retrieval, requiring the network to not
 
 \subsubsection{Volatility Emergence and Gradient Explosion}
 
-The palindromes task reveals a fundamental challenge with ethereal weights: their susceptibility to gradient explosion under certain conditions. As shown in Fig.~\ref{fig:palindromes}, the model can achieve promising accuracy (up to 0.75) before experiencing catastrophic failure characterized by rapidly increasing loss and plummeting accuracy. This volatility pattern is particularly pronounced with synthetic datasets, which tend to create non-smooth, "bumpy" loss landscapes that amplify the destabilizing effects of rapid weight changes.
+The palindromes task reveals a basic challenge with ethereal weights: their susceptibility to gradient explosion under certain conditions. As shown in Fig.~\ref{fig:palindromes}, the model can achieve promising accuracy (up to 0.75) before experiencing catastrophic failure characterized by rapidly increasing loss and plummeting accuracy. This volatility pattern is particularly pronounced with synthetic datasets, which tend to create non-smooth, "bumpy" loss landscapes that amplify the destabilizing effects of rapid weight changes.
 
 Our analysis reveals that gradient explosion in ethereal weights follows a predictable pattern driven by the ratio of gradient norms between high-plasticity and low-plasticity weights. In stable training runs, this gradient ratio tends to shrink over time as the slower weights provide stabilizing influence. However, in models that eventually explode, the gradient ratio consistently grows from the start, indicating that high-plasticity weights are gaining disproportionate influence over the network's behavior.
 
@@ -241,11 +244,11 @@ The stability of the system depends on a delicate balance between multiple facto
 
 \textbf{Base Learning Rate}: Controls the only weights whose values truly persist across time steps. If these slow weights are too weak to provide adequate stabilizing influence over the more volatile high-plasticity weights, the system becomes unstable.
 
-\textbf{High-Plasticity Learning Rate}: Creates a narrow operational window—too low and the model lacks effective working memory, too high and gradient explosion becomes inevitable.
+\textbf{High-Plasticity Learning Rate}: Creates a narrow operational window: too low and the model lacks effective working memory, too high and gradient explosion becomes inevitable.
 
 \textbf{Ratio of High to Low-Plasticity Weights}: Typically set to 0.1 or 0.2, this ratio must provide sufficient capacity for associative memory storage while avoiding the instability that comes with too many volatile parameters.
 
-\textbf{Forgetting Rate}: Must balance memory persistence with stability—too aggressive and ethereal memory disappears before it can be utilized, too conservative and gradient explosion becomes unavoidable.
+\textbf{Forgetting Rate}: Must balance memory persistence with stability: too aggressive and ethereal memory disappears before it can be utilized, too conservative and gradient explosion becomes unavoidable.
 
 A critical challenge is that appropriate values for these hyperparameters appear highly task-dependent, influenced by factors such as the required memory persistence duration, the density of information that must be stored in working memory, and the natural volatility of the dataset itself. This dependency on intensive hyperparameter tuning represents a significant limitation for practical applications.
 
@@ -352,7 +355,7 @@ However, this effective learning rate metric fails to correlate strongly with ac
 A critical concern with the ethereal weights approach is whether the volatile behavior of high-plasticity weights interferes with the stable, long-term learning that should occur in the low-plasticity parameters. Our analysis demonstrates that these two learning processes can coexist effectively, with each operating at its designated timescale without mutual interference.
 
 \begin{figure}[htbp]
-\centerline{\includegraphics[width=\columnwidth]{figure_4.png}}
+\centerline{\includegraphics[width=\columnwidth]{grad_norms.png}}
 \caption{Gradient norm evolution throughout training shows clear separation between high-plasticity and low-plasticity weight categories. The high-plasticity weights (red) exhibit characteristic volatility with occasional spikes corresponding to memory encoding events, while low-plasticity weights (blue) maintain steady, controlled gradient magnitudes. This separation demonstrates that the two learning processes operate independently, allowing stable long-term learning to proceed alongside volatile working memory encoding.}
 \label{fig:gradient_norms}
 \end{figure}
@@ -371,15 +374,17 @@ The implications of this dual-timescale learning extend beyond the immediate app
 
 \section{Discussion}
 
+Large Language Models (LLMs) have surpassed human performance on a variety of tasks, yet progress has largely stalled on their performance on many things routinely done by even a household cat. Among them are one-shot online learning, rapid adaptation to new contexts, and robustness to adversarial attacks such as camoflage. Major failure modes are long-term coherence in an agentic task, quick incorporation of new information, management of memory over long conversations, and many other circumstances all hinging on the same shortcoming: the lack of a functional working memory system, especially one that transitions well to long-term memory storage. A biological system, such as that of a simple mammal, has countless mechanisms for storing memory, persisting state, managing plasticty, etc. that current LLMs only crudely approximate with its only two available systems: parameter-based memory and activation-based memory. Rather than exclusively relying on the former for long-term knowledge and the latter for short-term context, ethereal weights present a more fluid memory system that blurs the lines between these two extremes.
+
 \subsection{Ethereal Weights as Functional Working Memory}
 
 Our experiments demonstrate that ethereal weights successfully encode functional working memory without explicit gatekeeping mechanisms. Unlike traditional memory architectures that employ gates, attention mechanisms, or explicit memory curation, ethereal weights operate through pure associative storage of recent gradient updates. This approach can reliably hold multiple pieces of information simultaneously—our experiments confirm storage of at least three distinct items—with positional encoding providing additional organizational structure.
 
-The memory mechanism operates as an associative system that performs best with strong retrieval cues, though the temporal decay ("age") of stored information can also serve as an effective retrieval mechanism. This dual-access pattern mirrors biological working memory, where both content-based and temporal-based retrieval strategies coexist. However, the associative nature of this memory system also reveals its limitations: while effective for storage and retrieval, it lacks inherent mechanisms for information transformation or manipulation, as evidenced by the challenges with palindrome tasks that require sequence reversal.
+The memory mechanism operates as an associative system that performs best with strong retrieval cues, though the temporal decay ("age") of stored information can also serve as an effective retrieval mechanism. This dual-access pattern mirrors biological working memory, where both content-based and temporal-based retrieval strategies coexist. However, the associative nature of the memory system also reveals its limitations: while effective for storage and retrieval, it lacks inherent mechanisms for information transformation or manipulation, as evidenced by the challenges with palindrome tasks that require sequence reversal.
 
 The volatility characteristics discussed in Section 4.4 are intrinsically linked to this memory function. The gradient explosion patterns that threaten stability are not merely implementation artifacts but fundamental consequences of the memory encoding mechanism. The aggressive gradient amplification required for rapid memory formation creates a delicate balance between effective encoding and system stability, suggesting that volatility management is an essential component of any practical ethereal weights implementation.
 
-Models using ethereal weights often maintain higher loss values than traditional methods, even when achieving superior accuracy. This apparent paradox occurs because the strength of memory encoding is directly related to the loss magnitude—the gradient signal that drives memory formation. This relationship suggests an inherent trade-off between memory encoding strength and loss minimization, potentially limiting how low the loss can decrease while maintaining effective working memory capabilities.
+Models using ethereal weights often maintain higher loss values than traditional methods, even when achieving superior accuracy. This apparent paradox occurs because the strength of memory encoding is directly related to the loss magnitude. This relationship suggests an inherent trade-off between memory encoding strength and loss minimization, potentially limiting how low the loss can decrease while maintaining effective working memory capabilities.
 
 \subsection{Toward a Multi-Scale Memory Pipeline}
 
