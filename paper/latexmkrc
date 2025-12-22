@@ -5,12 +5,12 @@ $interaction = 'nonstopmode';
 
 # Engines
 $pdflatex = 'pdflatex -file-line-error -synctex=1 %O %S';
-# If you later switch engines, uncomment one of these and set it in latexmkrc:
-# $lualatex = 'lualatex -file-line-error -synctex=1 %O %S';
-# $xelatex  = 'xelatex  -file-line-error -synctex=1 %O %S';
 
-# Bibtex (COLLAs style typically uses natbib+bibtex)
+# Bibtex
 $bibtex = 'bibtex %O %B';
 
-# Default entry file (change if your main file isn’t main.tex)
-@default_files = ('ieee_ethereal_weights.tex');
+# Build BOTH versions every time
+@default_files = (
+    'ieee_ethereal_weights.tex',
+    'ieee_ethereal_weights_appendixed.tex'
+);
