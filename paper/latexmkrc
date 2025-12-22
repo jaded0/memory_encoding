@@ -14,3 +14,5 @@ $bibtex = 'bibtex %O %B';
     'ieee_ethereal_weights.tex',
     'ieee_ethereal_weights_appendixed.tex'
 );
+# IMPORTANT: Track dependencies so latexmk rebuilds when \input files change
+$recorder = 1;
