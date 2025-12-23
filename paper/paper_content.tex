@@ -126,12 +126,11 @@ We randomly designate approximately 10\% of the total parameters as ephemeral we
 w_k(t+1) = w_k(t) - \alpha_k \cdot \nabla_k L(t)
 \end{equation}
 
-Where $\nabla_k L(t)$ is the gradient of the loss function with respect to weight $w_k$ at time step $t$. For ephemeral weights using Direct Feedback Alignment (DFA), $\nabla_k L(t)$ represents the feedback signal computed via fixed random projection matrices rather than the true backpropagated gradient.
+Where $\nabla_k L(t)$ is the gradient of the loss function with respect to weight $w_k$ at time step $t$. For ephemeral weights using Direct Feedback Alignment (DFA), $\nabla_k L(t)$ represents the feedback signal computed via fixed random projection matrices rather than the true backpropagated gradient. If we were to use backpropagation, the high-plasticity weights (which have large values) would be used to backpropagate gradients, introducing significant volatility into the learning dynamics. DFA's fixed random feedback weights provide a stable gradient signal regardless of the volatile state of the high-plasticity parameters.
 
 \begin{figure*}[!t]
 \centerline{\includegraphics[width=\textwidth]{model_diagram.png}}
-\caption{In a traditional RNN, the hidden state $h_{t-1}$ carries information forward through time. In the Ephemeral Weights model, this recurrent connection is removed, and short-term memory is instead stored in rapidly updating parameters (ephemeral weights) that adjust based on recent inputs. This allows the model to retain context without explicit recurrence.}
-\label{fig:model_diagram}
+\caption{In a traditional RNN, the hidden state $h_{t-1}$ carries information forward through time. In the Ephemeral Weights model, this recurrent connection is removed, and short-term memory is instead stored in rapidly updating parameters (ephemeral weights) that adjust based on recent inputs. This allows the model to retain context without explicit recurrence.}\label{fig:model_diagram}
 \end{figure*}
 \subsection{Forgetting Rate Mechanism}
 
@@ -142,7 +141,10 @@ w_k^{\text{fast}}(t+1) = \gamma \cdot w_k^{\text{fast}}(t+1)
 \end{equation}
 
 Where $\gamma = 0.7$ is the forgetting rate coefficient applied after each standard update. This mechanism ensures that information stored in ephemeral weights gradually fades, maintaining stability while allowing the network to adapt to new inputs. 
+
 While reminiscent of the LSTM's forget gate, this forgetting rate is static and uniform across all high-plasticity ephemeral weights. Additionally, it operates on the weights themselves of the network rather than a hidden cell state value. Selective retention measures are foregone in favor of our more unified information storage mechanism.
+
+For the purposes of stable experimentation, the high-plasticity weights are initialized to 0 at each new sequence.
 
 \subsection{Training Procedure}
 
@@ -166,21 +168,11 @@ A synthetic dataset is constructed for simple, single character retrieval. The s
 \end{verbatim}
 
 Successful completion of this task indicates that the model can store and retrieve a single value, not necessarily preceded by the input that originally preceded it, indicating a working memory function that isn't purely associative alone. This is an important test for a weights based memory mechanism, which would otherwise be expected to blindly encode recent inputs without the ability to selectively retrieve them later. It also tests the model's ability to balance the dual demands on its optimization on the loss function: to minimize loss while also creating a strong enough gradient signal to encode the selected memory.
-Under experimental implementations, Ephemeral Weights does not compute as many steps in the same amount of time, but remains remarkably stable. Its performance on this task is shown in Fig.~\ref{fig:key_recall}, demonstrating its higher floor for loss values that's likely tied to the strength of its memory encoding. Despite the higher loss, it achieves full accuracy more quickly than the baseline RNN at the same learning rate. More comprehensive hyperparameter comparisons were deemed out of scope for this initial exploration of the mechanism, because our primary goal is to establish the viability of the approach as a memory mechanism, not as an optimizer.
+Under experimental implementations, Ephemeral Weights does not compute as many steps in the same amount of time, but remains remarkably stable. Its performance on this task is shown in Fig.~\ref{fig:key_recall}, demonstrating its higher floor for loss values that's likely tied to the strength of its memory encoding. Despite the higher loss, it achieves full accuracy more quickly than the baseline RNN at the same learning rate. A deeper exploration of performance advantages, however, were deemed out of scope for this initial exploration of the mechanism, because our primary goal is to establish the viability of the approach as a memory mechanism, not as an optimizer.
 
-\begin{figure}[htbp]
+\begin{figure}[!t]
 \centerline{\includegraphics[width=\columnwidth]{figure_1.png}}
-\caption{Performance on the Key-Recall task. Baseline runs display the learning rate beside them, and ephemeral runs include the forget rate, as well. The first graph shows the loss, and the bottom graph displays the model's prediction accuracy. The baseline RNN achieves a lower loss value, and remains stable enough for a higher learning rate to be used, but Ephemeral Weights converges to a high accuracy before the baseline does, when the same learning rate is used and its forget rate is tuned well. }
-\label{fig:key_recall}
-\end{figure}
-
-\subsection{Repeated Sequences}
-A synthetic dataset of one to four randomly chosen characters repeated until the character limit. The ability to train this task indicates that the memory storage mechanism is capable of storing several input-output associations. Meant to test the model's ability to store multiple association in the same parametric working memory simultaneously, as an assurance that the mechanism isn't severely limited in capacity. The mechanism is capable, yet appears to hit a saddle point in performance until later in the training, hypothesized to be due to learning how to reconcile overlapping representations in the weights, as shown in Fig.~\ref{fig:repeated_sequences}. Again, the difference in loss values is laid bare, indicating the model's unique relationship with gradient magnitudes. Overall, the ephemeral weights mechanism is proved capable of storing these associations without recurrent connections, the implications of which include new avenues for optimization, since the recurrent connection requires sequential operations that limit parallelism, in turn limiting scaling potential.
-
-\begin{figure}[htbp]
-\centerline{\includegraphics[width=\columnwidth]{figure_2.png}}
-\caption{Performance on the Repeated Sequences task. The baseline, traditional RNN with backprop is used as a benchmark, converging quickly on the loss values and accuracy. Ephemeral weights converge more slowly, but do so without any recurrent connection.}
-\label{fig:repeated_sequences}
+\caption{Performance on the Key-Recall task. Baseline runs display the learning rate beside them, and ephemeral runs include the forget rate, as well. The first graph shows the loss, and the bottom graph displays the model's prediction accuracy. The baseline RNN achieves a lower loss value, and remains stable enough for a higher learning rate to be used, but Ephemeral Weights converges to a high accuracy before the baseline does, when the same learning rate is used and its forget rate is tuned well. }\label{fig:key_recall}
 \end{figure}
 
 \subsection{Palindromes}
@@ -194,100 +186,14 @@ qwerttrewq
 
 This task entails more than simple associative retrieval, requiring the network to not only store character associations but also retrieve them in inverted order. The reversal operation demands both memory storage and transformation capabilities, making it significantly more challenging than key-recall or repeated sequences.
 
-\begin{figure}[htbp]
-\centerline{\includegraphics[width=\columnwidth]{figure_3.png}}
-\caption{Ephemeral weights demonstrate characteristic volatility on the palindromes task, reaching accuracy as high as 0.75 before experiencing gradient explosion and failure. This pattern illustrates the inherent instability that can emerge with synthetic datasets that create particularly steep loss landscapes.}
-\label{fig:palindromes}
-\end{figure}
-
-\subsubsection{Volatility Emergence and Gradient Explosion}
-
-The palindromes task shows our method to be susceptible to gradient explosion under certain conditions. As shown in Fig.~\ref{fig:palindromes}, the model can achieve promising accuracy (up to 0.75) before experiencing catastrophic failure characterized by rapidly increasing loss and plummeting accuracy. This volatility pattern is particularly pronounced with synthetic datasets, which tend to create non-smooth, "bumpy" loss landscapes that amplify the destabilizing effects of rapid weight changes.
-
-Our analysis reveals that gradient explosion in ethereal weights follows a predictable pattern driven by the ratio of gradient norms between high-plasticity and low-plasticity weights. In stable training runs, this gradient ratio tends to shrink over time as the slower weights provide stabilizing influence. However, in models that eventually explode, the gradient ratio consistently grows from the start, indicating that high-plasticity weights are gaining disproportionate influence over the network's behavior.
-
-This observation suggests that gradient explosion in ethereal weights is not merely a case of traditional exploding gradients, but rather a feedback loop where high-plasticity weights exploit the learning objective in an uncontrolled manner. The rapid weight changes create increasingly large gradient signals, which in turn drive even more extreme weight updates, creating a runaway process that overwhelms the stabilizing influence of slower weights.
-
-A Hyperparameter sweep on the 3-character reversed sequence task indicated that the linear interaction of the base learning rate and the high-plasticity learning rate determines the stability outcomes. It also indicated, in the same sweep, that of the two hyperparameters, high-plasticity learning rate is far more dominant in determining the accuracy of the model in the time-constrained training regime. Therefore, a balance must be struck, when choosing hyperparameters, setting the high-plasticity as high enough to enable effective memory encoding, but low enough to avoid instability (Fig.~\ref{fig:hyperparameter_sweep}).
-
-\begin{figure}[htbp]
-\centerline{\includegraphics[width=\columnwidth]{figure_5.png}}
-\caption{Hyperparameter sweep results on the 3-character reversed sequence task showing the interaction between base learning rate and high-plasticity learning rate. The visualization demonstrates the linear relationship between these hyperparameters in determining stability outcomes, with the high-plasticity learning rate showing dominant influence over model accuracy in time-constrained training regimes.}
-\label{fig:hyperparameter_sweep}
-\end{figure}
-
-\subsection{Configuration Performance Summary}
-
-Following extensive experimentation with different model configurations, we present a high-level comparison of performance across various combinations of model type, updater mechanism, and recurrence settings. 
-
-
-The key differentiator between RNN and Ethereal implementations is the per-batch-item versus shared weights architecture. While standard RNNs maintain synchronized weights across all batch items, the Ethereal implementation maintains separate weight instances for each sequence in the batch. This architectural difference allows ethereal weights to store sequence-specific information directly in the parameters, effectively replacing the need for recurrent connections.
-
-The stability advantage of DFA over backpropagation becomes particularly apparent in the Ethereal configurations. When using backpropagation, the high-plasticity weights (which have large values) are used to backpropagate gradients, introducing significant volatility into the learning dynamics. DFA avoids this issue by using fixed random feedback weights, providing a stable gradient signal regardless of the volatile state of the high-plasticity parameters.
-
-\subsection{Volatility and Stability Analysis}
-
-The ethereal weights mechanism exhibits characteristic volatility patterns that closely resemble exploding gradient phenomena. In both classical exploding gradients and our ethereal-weights volatility, instability stems from positive feedback in the update rule: as parameter magnitudes increase, the induced gradients scale up, amplifying subsequent updates unless explicit damping (e.g., weight decay, normalization, or clipping) keeps the effective gain below unity. Understanding these dynamics is crucial for practical implementation and reveals fundamental constraints of the approach.
-
-\subsubsection{Gradient Explosion Dynamics}
-
-The volatility manifests as a cascading failure where gradient norms and weight magnitudes accelerate simultaneously, leading to rapid increases in loss and corresponding drops in accuracy, as seen in Fig.~\ref{fig:palindromes}. This behavior appears intrinsic to the mechanism rather than a mere implementation artifact—the aggressive gradient amplification required for effective memory encoding creates inherent instability.
-
-A key early warning indicator emerges from monitoring the gradient norms of high-plasticity and low-plasticity weights. Stability correlates with this value shrinking and stabilizing over time, while growth of the gradient norm precedes explosive behavior (Fig.~\ref{fig:compare_norms}). This observation aligns with the intuitive understanding that high-plasticity weights, when left unchecked by slower stabilizing weights, can enter a positive feedback loop where rapid changes amplify subsequent gradient signals.
-\begin{figure}[htbp]
-\centerline{\includegraphics[width=\columnwidth]{compare_norms.png}}
-\caption{A learning rate of 0.0001 is used for the stable run, and the exploding run uses a learning rate of 0.0002. The gradient norms of the exploding run (brown) grow jointly, while the stable run's (blue) gradient norms stabilize. The ratio of high-plasticity to low-plasticity gradient norms shrink, slightly, in the exploding run, but remain stable in the stable run.}
-\label{fig:compare_norms}
-\end{figure}
-
-Holding other hyperparameters constant, varying the base learning rate and the plasticity modifier reveals a linear boundary between stable and unstable regimes. Lower base learning rates allow for higher plasticity modifiers before instability arises, while higher base learning rates necessitate more conservative plasticity settings (Fig.~\ref{fig:hyperparameter_sweep_6}). A limitation of this experiment is that some runs that initially appear stable within the training timeframe still exhibit climbing loss numbers at the tail end, suggesting eventual instability if training were extended further.
-\begin{figure}[htbp]
-\centerline{\includegraphics[width=\columnwidth]{figure_6.png}}
-\caption{Hyperparameter sweep results on the 3-character reversed sequence task showing the interaction between base learning rate and high-plasticity learning rate, 10 samples for each combination, on stability. A linear boundary separates runs that remained under a loss of 2 from those that underwent a runaway explosion of gradient values during a set number of training steps.}
-\label{fig:hyperparameter_sweep_6}
-\end{figure}
-
-\subsubsection{Forgetting Rate Dynamics}
-
-The forgetting rate mechanism proves essential but insufficient for complete stabilization. While aggressive forgetting rates prevent explosion, they also reduce memory duration below useful thresholds. Conversely, insufficient forgetting leads to inevitable instability. This creates a narrow operational window that varies significantly across tasks and datasets.
-
-Synthetic datasets consistently exhibit more volatile behavior than natural text tasks, likely due to their non-smooth loss landscapes. The discrete, artificial nature of synthetic sequence tasks creates sharp loss cliffs that amplify the destabilizing effects of rapid weight changes, whereas natural language provides more gradual loss surfaces that better accommodate the ethereal weights mechanism.
-
-\subsubsection{Stabilization Strategies}
-
-Given the inherent volatility of ethereal weights, developing effective stabilization strategies becomes crucial for practical implementation. Our experiments reveal several approaches that can help balance stability with working memory effectiveness, though each comes with specific trade-offs.
-
-\textbf{Gradient Propagation Method Selection}: Direct Feedback Alignment (DFA) emerges as the most effective approach for maintaining stability. Unlike standard backpropagation, which creates volatile feedback loops when plastic weights are used for both forward computation and gradient propagation, DFA employs fixed random feedback weights that remain constant throughout training. This architectural choice significantly reduces the positive feedback effects that lead to gradient explosion.
-
-\textbf{Weight Clipping}: Constraining weight magnitudes through clipping proves highly effective when combined with standard backpropagation. By preventing weights from reaching extreme values, clipping helps contain the cascading effects that characterize gradient explosion. However, the same large weight magnitudes that threaten stability are often necessary for effective memory encoding. Overly aggressive clipping can therefore eliminate the model's working memory capabilities entirely, and turns out to be less useful when using DFA on more conservative choices of learning rate and ratio hyperparameters.
-A hyperparameter sweep on the clipping threshold was performed on the 3-character reversed sequence task, on selections of base learning rate and high-plasticity learning rate that were known to be on the edge of stability without clipping. The results were inconclusive, with 10 samples each on values between 0.01 and 100 showing no clear pattern of better stability or accuracy. This suggests that while weight clipping can help prevent explosion, its optimal setting is highly data-dependent.
-
-\textbf{Periodic Memory Reset}: Wiping high-plasticity weights after sequence completion provides a hard reset mechanism that prevents the accumulation of destabilizing weight values across sequences. This approach proves particularly effective for tasks with clear sequence boundaries, essentially treating each sequence as an independent working memory episode. While this prevents cross-sequence contamination, it also eliminates any potential benefits from longer-term memory consolidation.
-
-\textbf{Ineffective Approaches}: Several commonly used stabilization techniques prove counterproductive with ethereal weights. Gradient clipping, despite its effectiveness in traditional neural networks, fails because the memory mechanism fundamentally depends on occasional large gradient magnitudes to encode information effectively. Similarly, batch normalization and layer normalization actively harm performance by normalizing away the bimodal gradient distribution that enables memory encoding—the extreme gradient magnitudes these techniques suppress are precisely what makes ethereal weights functional.
-
-\textbf{Dataset Choice}: The choice of training data significantly impacts stability requirements. Natural language tasks, with their relatively smooth loss landscapes, suffer less readily from the volatile dynamics observed in this paper. 
-
-\textbf{Extended Training Regimes}: Some models exhibit U-shaped learning curves where initial gradient explosion eventually stabilizes after sufficient training. This phenomenon suggests that the optimization landscape contains stable regions accessible only after traversing unstable phases. While intriguing, this approach remains impractical for most applications due to the computational cost and unpredictability of the stabilization process.
-
-\textbf{Hyperparameter Co-optimization}: The most promising long-term approach involves developing principled methods for jointly optimizing the base learning rate, plasticity modifiers, forgetting rates, and plasticity ratios. Current approaches rely heavily on task-specific hyperparameter sweeps, but future work should explore meta-learning approaches or adaptive mechanisms that can automatically balance stability and memory effectiveness across different tasks and datasets.
-
-The fundamental challenge remains that ethereal weights operate in a narrow stability regime where effective memory encoding and system stability are in constant tension. Future implementations will likely require sophisticated control mechanisms that can dynamically adjust these parameters based on real-time monitoring of gradient ratios and other stability indicators.
-
-\subsubsection{Effective Learning Rate Paradox}
-
-An intriguing phenomenon emerges when calculating the effective learning rate across all parameters. Despite theoretical expectations, effective learning rates that would cause immediate explosion in traditional RNNs (often exceeding 20 in synthetic tasks) prove workable with ethereal weights. This paradox suggests that the forgetting mechanism fundamentally alters the learning dynamics, creating a different stability regime than conventional gradient descent.
-
-However, this effective learning rate metric fails to correlate strongly with actual performance or stability, indicating that the temporal dynamics of forgetting introduce complexities not captured by simple averaging approaches. The ethereal component of the learning process appears to operate under different mathematical principles than standard parameter optimization.
 
 \subsection{Preservation of Long-Term Learning}
 
 A critical concern with the ethereal weights approach is whether the volatile behavior of high-plasticity weights interferes with the stable, long-term learning that should occur in the low-plasticity parameters. Our analysis demonstrates that these two learning processes can coexist effectively, with each operating at its designated timescale without mutual interference.
 
-\begin{figure}[htbp]
+\begin{figure}[!t]
 \centerline{\includegraphics[width=\columnwidth]{grad_norms.png}}
-\caption{Gradient norm evolution throughout training shows clear separation between high-plasticity and low-plasticity weight categories. The high-plasticity weights (red) exhibit characteristic volatility with occasional spikes corresponding to memory encoding events, while low-plasticity weights (blue) maintain steady, controlled gradient magnitudes. This separation demonstrates that the two learning processes operate independently, allowing stable long-term learning to proceed alongside volatile working memory encoding.}
-\label{fig:gradient_norms}
+\caption{Gradient norm evolution throughout training shows clear separation between high-plasticity and low-plasticity weight categories. The high-plasticity weights (red) exhibit characteristic volatility with occasional spikes corresponding to memory encoding events, while low-plasticity weights (blue) maintain steady, controlled gradient magnitudes. This separation demonstrates that the two learning processes operate independently, allowing stable long-term learning to proceed alongside volatile working memory encoding.}\label{fig:gradient_norms}
 \end{figure}
 
 Fig.~\ref{fig:gradient_norms} reveals that gradient norms for high-plasticity and low-plasticity weights remain highly distinct throughout training, indicating that the two categories of parameters operate in separate dynamic regimes. The high-plasticity weights exhibit the expected volatility with occasional large spikes corresponding to memory encoding events, while the low-plasticity weights maintain steady, controlled gradient magnitudes characteristic of stable optimization.
@@ -301,6 +207,25 @@ To rigorously test this dual-learning hypothesis, future experiments could imple
 Another promising experimental approach would involve training ethereal weights models on tasks with known long-term dependencies (such as copying tasks with very long delays) while simultaneously requiring short-term memory operations. Success on both components would provide strong evidence that the architecture can maintain stable long-term learning while providing functional working memory capabilities.
 
 The implications of this dual-timescale learning extend beyond the immediate applications of ethereal weights. This approach suggests a general framework for neural architectures that can simultaneously optimize for different temporal objectives, potentially offering new approaches to continual learning, meta-learning, and adaptive systems that must balance stability with flexibility.
+
+\subsection{Volatility Emergence and Gradient Explosion}
+
+The ethereal weights mechanism exhibits characteristic volatility patterns that closely resemble exploding gradient phenomena. In both classical exploding gradients and our ethereal-weights volatility, instability stems from positive feedback in the update rule: as parameter magnitudes increase, the induced gradients scale up, amplifying subsequent updates unless explicit damping (e.g., weight decay, normalization, or clipping) keeps the effective gain below unity. 
+
+The model may achieve promising accuracy before explosion, which manifests as a cascading failure where gradient norms and weight magnitudes accelerate simultaneously, leading to rapid increases in loss and corresponding drops in accuracy. This volatility pattern is particularly pronounced with synthetic datasets, which tend to create non-smooth, "bumpy" loss landscapes that amplify the destabilizing effects of rapid weight changes. 
+
+In stable training runs, the ratio of gradient norms between high-plasticity and low-plasticity weights gradually shrinks over time, as the slow-training weights provide a stabilizing influence. However, in models that eventually explode, this gradient ratio consistently grows from the start, indicating that high-plasticity weights are gaining disproportionate influence over the network's dynamics. 
+
+Traditional stabilization techniques, however, are ineffective in this context.
+Gradient clipping, despite its effectiveness in traditional neural networks, fails because the memory mechanism fundamentally depends on occasional large gradient magnitudes to encode information effectively. Similarly, batch normalization and layer normalization actively harm performance by normalizing away the extreme bimodal gradient distribution that enables memory encoding.
+
+There is a corridor of effective parameter values that maintains both the encoding power and stability of the system. A Hyperparameter sweep on the 3-character reversed sequence task indicated that the linear interaction of the base learning rate and the high-plasticity learning rate determines both the performance and the stability outcomes. It also indicated, in the same sweep, that of the two hyperparameters, high-plasticity learning rate is far more dominant in determining the accuracy of the model in the time-constrained training regime. Therefore, a balance must be struck, setting the high-plasticity to be high enough to enable effective memory encoding, but low enough to avoid instability (Fig.~\ref{fig:hyperparameter_sweep}). 
+
+\begin{figure}[!t]
+\centerline{\includegraphics[width=\columnwidth]{figure_5.png}}
+\caption{Hyperparameter sweep results on the 3-character reversed sequence task showing the interaction between base learning rate and high-plasticity learning rate. The visualization demonstrates the linear relationship between these hyperparameters in determining stability outcomes, with the high-plasticity learning rate showing dominant influence over model accuracy in time-constrained training regimes.}\label{fig:hyperparameter_sweep}
+\end{figure}
+
 
 \section{Discussion}
 

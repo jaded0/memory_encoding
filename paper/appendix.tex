@@ -1,4 +1,12 @@
 \section{Appendix}
+\subsection{Repeated Sequences}
+A synthetic dataset of one to four randomly chosen characters repeated until the character limit. The ability to train this task indicates that the memory storage mechanism is capable of storing several input-output associations. Meant to test the model's ability to store multiple association in the same parametric working memory simultaneously, as an assurance that the mechanism isn't severely limited in capacity. The mechanism is capable, yet appears to hit a saddle point in performance until later in the training, hypothesized to be due to learning how to reconcile overlapping representations in the weights, as shown in Fig.~\ref{fig:repeated_sequences}. Again, the difference in loss values is laid bare, indicating the model's unique relationship with gradient magnitudes. Overall, the ephemeral weights mechanism is proved capable of storing these associations without recurrent connections, the implications of which include new avenues for optimization, since the recurrent connection requires sequential operations that limit parallelism, in turn limiting scaling potential.
+
+\begin{figure}[!t]
+\centerline{\includegraphics[width=\columnwidth]{figure_2.png}}
+\caption{Performance on the Repeated Sequences task. The baseline, traditional RNN with backprop is used as a benchmark, converging quickly on the loss values and accuracy. Ephemeral weights converge more slowly, but do so without any recurrent connection.}\label{fig:repeated_sequences}
+\end{figure}
+
 
 \begin{figure}[htbp]
 \centerline{\includegraphics[width=\columnwidth]{figure_3.png}}
