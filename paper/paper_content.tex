@@ -126,7 +126,7 @@ We randomly designate approximately 10\% of the total parameters as ephemeral we
 w_k(t+1) = w_k(t) - \alpha_k \cdot \nabla_k L(t)
 \end{equation}
 
-Where $\nabla_k L(t)$ is the gradient of the loss function with respect to weight $w_k$ at time step $t$. For ephemeral weights using Direct Feedback Alignment (DFA), $\nabla_k L(t)$ represents the feedback signal computed via fixed random projection matrices rather than the true backpropagated gradient. If we were to use backpropagation, the high-plasticity weights (which have large values) would be used to backpropagate gradients, introducing significant volatility into the learning dynamics. DFA's fixed random feedback weights provide a stable gradient signal regardless of the volatile state of the high-plasticity parameters.
+Where $\nabla_k L(t)$ is the gradient of the loss function with respect to weight $w_k$ at time step $t$. For ephemeral weights using Direct Feedback Alignment (DFA) \cite{noklandDirectFeedbackAlignment}, $\nabla_k L(t)$ represents the feedback signal computed via fixed random projection matrices rather than the true backpropagated gradient. If we were to use backpropagation, the high-plasticity weights (which have large values) would be used to backpropagate gradients, introducing significant volatility into the learning dynamics. DFA's fixed random feedback weights provide a stable gradient signal regardless of the volatile state of the high-plasticity parameters.
 
 \begin{figure*}[!t]
 \centerline{\includegraphics[width=\textwidth]{model_diagram.png}}
@@ -172,14 +172,13 @@ Under experimental implementations, Ephemeral Weights does not compute as many s
 
 \begin{figure}[!t]
 \centerline{\includegraphics[width=\columnwidth]{figure_1.png}}
-\caption{Performance on the Key-Recall task. Baseline runs display the learning rate beside them, and ephemeral runs include the forget rate, as well. The first graph shows the loss, and the bottom graph displays the model's prediction accuracy. The baseline RNN achieves a lower loss value, and remains stable enough for a higher learning rate to be used, but Ephemeral Weights converges to a high accuracy before the baseline does, when the same learning rate is used and its forget rate is tuned well. }\label{fig:key_recall}
+\caption{Performance on the Key-Recall task. Baseline runs display the learning rate beside them, and ephemeral runs include the forget rate, as well. The first graph shows the loss, and the bottom graph displays the model's prediction accuracy. The baseline RNN achieves a lower loss value, and remains stable enough for a higher learning rate to be used, but Ephemeral Weights converges to a high accuracy before the baseline does, when the same learning rate is used and its forget rate is tuned well. Both runs end at the same time limit.}\label{fig:key_recall}
 \end{figure}
 
 \subsection{Palindromes}
 A synthetic dataset of random-character palindromes tests the model's ability to perform more complex memory operations. In this next-character prediction task, the model must recall the first half of characters in reverse order to complete the palindrome. Some examples:
 \begin{verbatim}
 abcba
-xyzyx
 12321
 qwerttrewq
 \end{verbatim}
@@ -229,7 +228,7 @@ There is a corridor of effective parameter values that maintains both the encodi
 
 \section{Discussion}
 
-Large Language Models (LLMs) have surpassed human performance on a variety of tasks, yet progress has largely stalled on their performance on many things routinely done by even a household cat. Among them are one-shot online learning, rapid adaptation to new contexts, and robustness to adversarial attacks such as camoflage. Major failure modes are long-term coherence in an agentic task, quick incorporation of new information, management of memory over long conversations, and many other circumstances all hinging on the same shortcoming: the lack of a functional working memory system, especially one that transitions well to long-term memory storage. A biological system, such as that of a simple mammal, has countless mechanisms for storing memory, persisting state, managing plasticty, etc. that current LLMs only crudely approximate with its only two available systems: parameter-based memory and activation-based memory. Rather than exclusively relying on the former for long-term knowledge and the latter for short-term context, ethereal weights present a more fluid memory system that blurs the lines between these two extremes.
+Large Language Models (LLMs) have surpassed human performance on a variety of tasks, yet progress has largely stalled on their performance on many things routinely done by even a household cat. Such failure modes include long-term coherence in an agentic task, quick incorporation of new information, management of memory over long conversations, and robustness to adversarial attacks such as camoflage, all hinging on the same shortcoming: the lack of a functional progression of state over multiple timescales. A biological system, such as that of a simple mammal, has countless mechanisms for storing memory, persisting state, and managing plasticty that current LLMs only crudely approximate with its only two available systems: parameter-based memory and activation-based memory. Rather than exclusively relying on the former for long-term knowledge and the latter for short-term context, ethereal weights present a more fluid memory system.
 
 \subsection{Ethereal Weights as Functional Working Memory}
 
