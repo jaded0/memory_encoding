@@ -436,3 +436,19 @@
     pages = "14048--14077",
     abstract = "Transformers have revolutionized almost all natural language processing (NLP) tasks but suffer from memory and computational complexity that scales quadratically with sequence length. In contrast, recurrent neural networks (RNNs) exhibit linear scaling in memory and computational requirements but struggle to match the same performance as Transformers due to limitations in parallelization and scalability. We propose a novel model architecture, Receptance Weighted Key Value (RWKV), that combines the efficient parallelizable training of transformers with the efficient inference of RNNs. Our approach leverages a linear attention mechanism and allows us to formulate the model as either a Transformer or an RNN, thus parallelizing computations during training and maintains constant computational and memory complexity during inference. We scale our models as large as 14 billion parameters, by far the largest dense RNN ever trained, and find RWKV performs on par with similarly sized Transformers, suggesting future work can leverage this architecture to create more efficient models. This work presents a significant step towards reconciling trade-offs between computational efficiency and model performance in sequence processing tasks."
 }
+
+
+@article{graves_hybrid_2016,
+	title = {Hybrid computing using a neural network with dynamic external memory},
+	volume = {538},
+	issn = {1476-4687},
+	url = {https://doi.org/10.1038/nature20101},
+	doi = {10.1038/nature20101},
+	abstract = {Artificial neural networks are remarkably adept at sensory processing, sequence learning and reinforcement learning, but are limited in their ability to represent variables and data structures and to store data over long timescales, owing to the lack of an external memory. Here we introduce a machine learning model called a differentiable neural computer (DNC), which consists of a neural network that can read from and write to an external memory matrix, analogous to the random-access memory in a conventional computer. Like a conventional computer, it can use its memory to represent and manipulate complex data structures, but, like a neural network, it can learn to do so from data. When trained with supervised learning, we demonstrate that a DNC can successfully answer synthetic questions designed to emulate reasoning and inference problems in natural language. We show that it can learn tasks such as finding the shortest path between specified points and inferring the missing links in randomly generated graphs, and then generalize these tasks to specific graphs such as transport networks and family trees. When trained with reinforcement learning, a DNC can complete a moving blocks puzzle in which changing goals are specified by sequences of symbols. Taken together, our results demonstrate that DNCs have the capacity to solve complex, structured tasks that are inaccessible to neural networks without external read–write memory.},
+	number = {7626},
+	journal = {Nature},
+	author = {Graves, Alex and Wayne, Greg and Reynolds, Malcolm and Harley, Tim and Danihelka, Ivo and Grabska-Barwińska, Agnieszka and Colmenarejo, Sergio Gómez and Grefenstette, Edward and Ramalho, Tiago and Agapiou, John and Badia, Adrià Puigdomènech and Hermann, Karl Moritz and Zwols, Yori and Ostrovski, Georg and Cain, Adam and King, Helen and Summerfield, Christopher and Blunsom, Phil and Kavukcuoglu, Koray and Hassabis, Demis},
+	month = oct,
+	year = {2016},
+	pages = {471--476},
+}
