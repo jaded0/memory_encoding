@@ -194,3 +194,4 @@ current_runs.txt
 _minted-* 
 tikz-cache/ 
 build/
+*.zip
