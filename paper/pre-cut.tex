@@ -64,7 +64,7 @@ Meta-learning research focuses on creating models that can quickly adapt themsel
 
 In continual and online learning, models must adapt to new data without forgetting previous knowledge—a capability that standard neural networks struggle with due to the rigid training/inference paradigm. A common approach is experience replay, where past experiences are stored and periodically revisited. Popularized in deep Q-networks by \cite{mnihHumanlevelControlDeep2015}, replay buffers stabilize training and improve data efficiency by breaking temporal correlations in online data. However, this solution adds complexity through buffer management and sampling strategies.
 
-As recent works confirm \cite{Forgetting_Survey_2024}, memory-based rehearsal provides a strong baseline in lifelong learning but requires extra storage and training iterations that simpler online learners would avoid. More sophisticated replay variants (selective storing, compressed activation replay, or generative replay) further increase system complexity by introducing components solely to manage past knowledge. This represents a trade-off: simplicity versus the ability to retain information across learning episodes. By introducing high-plasticity ethereal weights among the normal low-plasticity weights of the network, we attempt to avoid such a trade-off and pursue both goals simultaneously.
+As recent works confirm \cite{Forgetting_Survey_2024}, memory-based rehearsal provides a strong baseline in lifelong learning but requires extra storage and training iterations that simpler online learners would avoid. More sophisticated replay variants (selective storing, compressed activation replay, or generative replay) further increase system complexity by introducing components solely to manage past knowledge. This represents a trade-off: simplicity versus the ability to retain information across learning episodes. By introducing high-plasticity ephemeral weights among the normal low-plasticity weights of the network, we attempt to avoid such a trade-off and pursue both goals simultaneously.
 
 \subsubsection{External Memory Architectures}
 
@@ -72,7 +72,7 @@ Rather than modifying learning algorithms, some approaches augment neural networ
 
 Building on these foundations, \cite{westonMemoryNetworks2014} introduced Memory Networks for question-answering tasks, using a separate memory to store facts with an iterative attention process for retrieval. Similarly, \cite{santoroMetaLearningMemoryAugmentedNeural2016} showed that Memory-Augmented Neural Networks can rapidly encode new samples into external memory, achieving one-shot learning without extensive retraining. The trade-off is an extra memory module and controller logic that simpler feed-forward networks don't require.
 
-In recent years, transformer-based models have also incorporated external memory systems. \cite{wuMemorizingTransformers2022} proposed Memorizing Transformers that maintain a key-value store of past activations, extending the effective context window beyond fixed self-attention limits. Similarly, \cite{wangAugmentingLanguageModels2023} augmented language models with dedicated long-term memory modules that require learning separate read/write operations. These approaches improve knowledge retention but add complexity through additional networks and procedures. While external memory architectures indeed add a new, functional method for short-term knowledge retention, they do not reconcile the difference in methods for information storage across different timescales in the way that ethereal weights does.
+In recent years, transformer-based models have also incorporated external memory systems. \cite{wuMemorizingTransformers2022} proposed Memorizing Transformers that maintain a key-value store of past activations, extending the effective context window beyond fixed self-attention limits. Similarly, \cite{wangAugmentingLanguageModels2023} augmented language models with dedicated long-term memory modules that require learning separate read/write operations. These approaches improve knowledge retention but add complexity through additional networks and procedures. While external memory architectures indeed add a new, functional method for short-term knowledge retention, they do not reconcile the difference in methods for information storage across different timescales in the way that ephemeral weights does.
 
 \subsubsection{Current Industry Approaches and Limitations}
 
@@ -182,7 +182,7 @@ During both training and inference, the Ephemeral Weights model computes gradien
 
 For short-term information to be effectively encoded, a complete training step—including loss calculation and backward pass—must be performed after each character prediction. This character-by-character update cycle is essential for the memory encoding mechanism, as it allows recent inputs to be immediately incorporated into the high-plasticity weights before the next prediction.
 
-Traditional batching approaches fail with ethereal weights because they cause working memory to be shared across different sequence instances, obfuscating the information that should be encoded in high-plasticity weights. Instead, batching must be implemented using separate weight instances for each sequence, with gradient accumulation occurring only after complete sequences are processed. This ensures that each sequence maintains its own isolated working memory state.
+Traditional batching approaches fail with ephemeral weights because they cause working memory to be shared across different sequence instances, obfuscating the information that should be encoded in high-plasticity weights. Instead, batching must be implemented using separate weight instances for each sequence, with gradient accumulation occurring only after complete sequences are processed. This ensures that each sequence maintains its own isolated working memory state.
 
 \section{Experiments}
 
@@ -232,11 +232,11 @@ This task entails more than simple associative retrieval, requiring the network 
 
 \subsubsection{Volatility Emergence and Gradient Explosion}
 
-The palindromes task reveals a basic challenge with ethereal weights: their susceptibility to gradient explosion under certain conditions. As shown in Fig.~\ref{fig:palindromes}, the model can achieve promising accuracy (up to 0.75) before experiencing catastrophic failure characterized by rapidly increasing loss and plummeting accuracy. This volatility pattern is particularly pronounced with synthetic datasets, which tend to create non-smooth, "bumpy" loss landscapes that amplify the destabilizing effects of rapid weight changes.
+The palindromes task reveals a basic challenge with ephemeral weights: their susceptibility to gradient explosion under certain conditions. As shown in Fig.~\ref{fig:palindromes}, the model can achieve promising accuracy (up to 0.75) before experiencing catastrophic failure characterized by rapidly increasing loss and plummeting accuracy. This volatility pattern is particularly pronounced with synthetic datasets, which tend to create non-smooth, "bumpy" loss landscapes that amplify the destabilizing effects of rapid weight changes.
 
-Our analysis reveals that gradient explosion in ethereal weights follows a predictable pattern driven by the ratio of gradient norms between high-plasticity and low-plasticity weights. In stable training runs, this gradient ratio tends to shrink over time as the slower weights provide stabilizing influence. However, in models that eventually explode, the gradient ratio consistently grows from the start, indicating that high-plasticity weights are gaining disproportionate influence over the network's behavior.
+Our analysis reveals that gradient explosion in ephemeral weights follows a predictable pattern driven by the ratio of gradient norms between high-plasticity and low-plasticity weights. In stable training runs, this gradient ratio tends to shrink over time as the slower weights provide stabilizing influence. However, in models that eventually explode, the gradient ratio consistently grows from the start, indicating that high-plasticity weights are gaining disproportionate influence over the network's behavior.
 
-This observation suggests that gradient explosion in ethereal weights is not merely a case of traditional exploding gradients, but rather a feedback loop where high-plasticity weights exploit the learning objective in an uncontrolled manner. The rapid weight changes create increasingly large gradient signals, which in turn drive even more extreme weight updates, creating a runaway process that overwhelms the stabilizing influence of slower weights.
+This observation suggests that gradient explosion in ephemeral weights is not merely a case of traditional exploding gradients, but rather a feedback loop where high-plasticity weights exploit the learning objective in an uncontrolled manner. The rapid weight changes create increasingly large gradient signals, which in turn drive even more extreme weight updates, creating a runaway process that overwhelms the stabilizing influence of slower weights.
 
 \subsubsection{Hyperparameter Dependencies and Effective Learning Rate}
 
@@ -248,7 +248,7 @@ The stability of the system depends on a delicate balance between multiple facto
 
 \textbf{Ratio of High to Low-Plasticity Weights}: Typically set to 0.1 or 0.2, this ratio must provide sufficient capacity for associative memory storage while avoiding the instability that comes with too many volatile parameters.
 
-\textbf{Forgetting Rate}: Must balance memory persistence with stability: too aggressive and ethereal memory disappears before it can be utilized, too conservative and gradient explosion becomes unavoidable.
+\textbf{Forgetting Rate}: Must balance memory persistence with stability: too aggressive and ephemeral memory disappears before it can be utilized, too conservative and gradient explosion becomes unavoidable.
 
 A critical challenge is that appropriate values for these hyperparameters appear highly task-dependent, influenced by factors such as the required memory persistence duration, the density of information that must be stored in working memory, and the natural volatility of the dataset itself. This dependency on intensive hyperparameter tuning represents a significant limitation for practical applications.
 
@@ -277,27 +277,27 @@ RNN & Backprop & False & Poor & No memory mechanism & No hidden state, no weight
 RNN & BPTT & True & Good & Traditional RNN with BPTT & Gradients flow through time \\
 RNN & BPTT & False & Poor & Delayed batch gradient descent & No temporal connection to exploit \\
 \hline
-Ethereal & DFA & True & Good & Immediate weight adaptation & Fixed feedback weights stabilize volatile updates \\
-Ethereal & DFA & False & Good & Per-batch adaptation & Each batch maintains separate weights \\
-Ethereal & Backprop & Any & Poor & Rapid gradient explosion & High-plast weights used in backward pass \\
-Ethereal & BPTT & True & Mixed & Rapid gradient explosion & High-plast weights used in backward pass \\
-Ethereal & BPTT & False & Fail & No within-sequence adaptation & BPTT delays updates, negating ethereal benefit \\
+Ephemeral & DFA & True & Good & Immediate weight adaptation & Fixed feedback weights stabilize volatile updates \\
+Ephemeral & DFA & False & Good & Per-batch adaptation & Each batch maintains separate weights \\
+Ephemeral & Backprop & Any & Poor & Rapid gradient explosion & High-plast weights used in backward pass \\
+Ephemeral & BPTT & True & Mixed & Rapid gradient explosion & High-plast weights used in backward pass \\
+Ephemeral & BPTT & False & Fail & No within-sequence adaptation & BPTT delays updates, negating ephemeral benefit \\
 \hline
-\multicolumn{6}{l}{$^{\mathrm{a}}$Ethereal models maintain per-batch-item weight sets, enabling memory storage without recurrence.} \\
-\multicolumn{6}{l}{The success of ethereal weights with DFA stems from the stability provided by fixed random feedback} \\
+\multicolumn{6}{l}{$^{\mathrm{a}}$Ephemeral models maintain per-batch-item weight sets, enabling memory storage without recurrence.} \\
+\multicolumn{6}{l}{The success of ephemeral weights with DFA stems from the stability provided by fixed random feedback} \\
 \multicolumn{6}{l}{weights, while backpropagation configurations work but with higher volatility.}
 \end{tabular}
 \label{tab:configuration_comparison}
 \end{center}
 \end{table*}
 
-The key differentiator between RNN and Ethereal implementations is the per-batch-item versus shared weights architecture. While standard RNNs maintain synchronized weights across all batch items, the Ethereal implementation maintains separate weight instances for each sequence in the batch. This architectural difference allows ethereal weights to store sequence-specific information directly in the parameters, effectively replacing the need for recurrent connections.
+The key differentiator between RNN and Ephemeral implementations is the per-batch-item versus shared weights architecture. While standard RNNs maintain synchronized weights across all batch items, the Ephemeral implementation maintains separate weight instances for each sequence in the batch. This architectural difference allows ephemeral weights to store sequence-specific information directly in the parameters, effectively replacing the need for recurrent connections.
 
-The stability advantage of DFA over backpropagation becomes particularly apparent in the Ethereal configurations. When using backpropagation, the high-plasticity weights (which have large values) are used to backpropagate gradients, introducing significant volatility into the learning dynamics. DFA avoids this issue by using fixed random feedback weights, providing a stable gradient signal regardless of the volatile state of the high-plasticity parameters.
+The stability advantage of DFA over backpropagation becomes particularly apparent in the Ephemeral configurations. When using backpropagation, the high-plasticity weights (which have large values) are used to backpropagate gradients, introducing significant volatility into the learning dynamics. DFA avoids this issue by using fixed random feedback weights, providing a stable gradient signal regardless of the volatile state of the high-plasticity parameters.
 
 \subsection{Volatility and Stability Analysis}
 
-The ethereal weights mechanism exhibits characteristic volatility patterns that closely resemble exploding gradient phenomena. In both classical exploding gradients and our ethereal-weights volatility, instability stems from positive feedback in the update rule: as parameter magnitudes increase, the induced gradients scale up, amplifying subsequent updates unless explicit damping (e.g., weight decay, normalization, or clipping) keeps the effective gain below unity. Understanding these dynamics is crucial for practical implementation and reveals fundamental constraints of the approach.
+The ephemeral weights mechanism exhibits characteristic volatility patterns that closely resemble exploding gradient phenomena. In both classical exploding gradients and our ephemeral-weights volatility, instability stems from positive feedback in the update rule: as parameter magnitudes increase, the induced gradients scale up, amplifying subsequent updates unless explicit damping (e.g., weight decay, normalization, or clipping) keeps the effective gain below unity. Understanding these dynamics is crucial for practical implementation and reveals fundamental constraints of the approach.
 
 \subsubsection{Gradient Explosion Dynamics}
 
@@ -321,11 +321,11 @@ Holding other hyperparameters constant, varying the base learning rate and the p
 
 The forgetting rate mechanism proves essential but insufficient for complete stabilization. While aggressive forgetting rates prevent explosion, they also reduce memory duration below useful thresholds. Conversely, insufficient forgetting leads to inevitable instability. This creates a narrow operational window that varies significantly across tasks and datasets.
 
-Synthetic datasets consistently exhibit more volatile behavior than natural text tasks, likely due to their non-smooth loss landscapes. The discrete, artificial nature of synthetic sequence tasks creates sharp loss cliffs that amplify the destabilizing effects of rapid weight changes, whereas natural language provides more gradual loss surfaces that better accommodate the ethereal weights mechanism.
+Synthetic datasets consistently exhibit more volatile behavior than natural text tasks, likely due to their non-smooth loss landscapes. The discrete, artificial nature of synthetic sequence tasks creates sharp loss cliffs that amplify the destabilizing effects of rapid weight changes, whereas natural language provides more gradual loss surfaces that better accommodate the ephemeral weights mechanism.
 
 \subsubsection{Stabilization Strategies}
 
-Given the inherent volatility of ethereal weights, developing effective stabilization strategies becomes crucial for practical implementation. Our experiments reveal several approaches that can help balance stability with working memory effectiveness, though each comes with specific trade-offs.
+Given the inherent volatility of ephemeral weights, developing effective stabilization strategies becomes crucial for practical implementation. Our experiments reveal several approaches that can help balance stability with working memory effectiveness, though each comes with specific trade-offs.
 
 \textbf{Gradient Propagation Method Selection}: Direct Feedback Alignment (DFA) emerges as the most effective approach for maintaining stability. Unlike standard backpropagation, which creates volatile feedback loops when plastic weights are used for both forward computation and gradient propagation, DFA employs fixed random feedback weights that remain constant throughout training. This architectural choice significantly reduces the positive feedback effects that lead to gradient explosion.
 
@@ -334,7 +334,7 @@ A hyperparameter sweep on the clipping threshold was performed on the 3-characte
 
 \textbf{Periodic Memory Reset}: Wiping high-plasticity weights after sequence completion provides a hard reset mechanism that prevents the accumulation of destabilizing weight values across sequences. This approach proves particularly effective for tasks with clear sequence boundaries, essentially treating each sequence as an independent working memory episode. While this prevents cross-sequence contamination, it also eliminates any potential benefits from longer-term memory consolidation.
 
-\textbf{Ineffective Approaches}: Several commonly used stabilization techniques prove counterproductive with ethereal weights. Gradient clipping, despite its effectiveness in traditional neural networks, fails because the memory mechanism fundamentally depends on occasional large gradient magnitudes to encode information effectively. Similarly, batch normalization and layer normalization actively harm performance by normalizing away the bimodal gradient distribution that enables memory encoding—the extreme gradient magnitudes these techniques suppress are precisely what makes ethereal weights functional.
+\textbf{Ineffective Approaches}: Several commonly used stabilization techniques prove counterproductive with ephemeral weights. Gradient clipping, despite its effectiveness in traditional neural networks, fails because the memory mechanism fundamentally depends on occasional large gradient magnitudes to encode information effectively. Similarly, batch normalization and layer normalization actively harm performance by normalizing away the bimodal gradient distribution that enables memory encoding—the extreme gradient magnitudes these techniques suppress are precisely what makes ephemeral weights functional.
 
 \textbf{Dataset Choice}: The choice of training data significantly impacts stability requirements. Natural language tasks, with their relatively smooth loss landscapes, suffer less readily from the volatile dynamics observed in this paper. 
 
@@ -342,17 +342,17 @@ A hyperparameter sweep on the clipping threshold was performed on the 3-characte
 
 \textbf{Hyperparameter Co-optimization}: The most promising long-term approach involves developing principled methods for jointly optimizing the base learning rate, plasticity modifiers, forgetting rates, and plasticity ratios. Current approaches rely heavily on task-specific hyperparameter sweeps, but future work should explore meta-learning approaches or adaptive mechanisms that can automatically balance stability and memory effectiveness across different tasks and datasets.
 
-The fundamental challenge remains that ethereal weights operate in a narrow stability regime where effective memory encoding and system stability are in constant tension. Future implementations will likely require sophisticated control mechanisms that can dynamically adjust these parameters based on real-time monitoring of gradient ratios and other stability indicators.
+The fundamental challenge remains that ephemeral weights operate in a narrow stability regime where effective memory encoding and system stability are in constant tension. Future implementations will likely require sophisticated control mechanisms that can dynamically adjust these parameters based on real-time monitoring of gradient ratios and other stability indicators.
 
 \subsubsection{Effective Learning Rate Paradox}
 
-An intriguing phenomenon emerges when calculating the effective learning rate across all parameters. Despite theoretical expectations, effective learning rates that would cause immediate explosion in traditional RNNs (often exceeding 20 in synthetic tasks) prove workable with ethereal weights. This paradox suggests that the forgetting mechanism fundamentally alters the learning dynamics, creating a different stability regime than conventional gradient descent.
+An intriguing phenomenon emerges when calculating the effective learning rate across all parameters. Despite theoretical expectations, effective learning rates that would cause immediate explosion in traditional RNNs (often exceeding 20 in synthetic tasks) prove workable with ephemeral weights. This paradox suggests that the forgetting mechanism fundamentally alters the learning dynamics, creating a different stability regime than conventional gradient descent.
 
-However, this effective learning rate metric fails to correlate strongly with actual performance or stability, indicating that the temporal dynamics of forgetting introduce complexities not captured by simple averaging approaches. The ethereal component of the learning process appears to operate under different mathematical principles than standard parameter optimization.
+However, this effective learning rate metric fails to correlate strongly with actual performance or stability, indicating that the temporal dynamics of forgetting introduce complexities not captured by simple averaging approaches. The ephemeral component of the learning process appears to operate under different mathematical principles than standard parameter optimization.
 
 \subsection{Preservation of Long-Term Learning}
 
-A critical concern with the ethereal weights approach is whether the volatile behavior of high-plasticity weights interferes with the stable, long-term learning that should occur in the low-plasticity parameters. Our analysis demonstrates that these two learning processes can coexist effectively, with each operating at its designated timescale without mutual interference.
+A critical concern with the ephemeral weights approach is whether the volatile behavior of high-plasticity weights interferes with the stable, long-term learning that should occur in the low-plasticity parameters. Our analysis demonstrates that these two learning processes can coexist effectively, with each operating at its designated timescale without mutual interference.
 
 \begin{figure}[htbp]
 \centerline{\includegraphics[width=\columnwidth]{grad_norms.png}}
@@ -362,33 +362,33 @@ A critical concern with the ethereal weights approach is whether the volatile be
 
 Fig.~\ref{fig:gradient_norms} reveals that gradient norms for high-plasticity and low-plasticity weights remain highly distinct throughout training, indicating that the two categories of parameters operate in separate dynamic regimes. The high-plasticity weights exhibit the expected volatility with occasional large spikes corresponding to memory encoding events, while the low-plasticity weights maintain steady, controlled gradient magnitudes characteristic of stable optimization.
 
-This separation is crucial for the dual-timescale learning hypothesis underlying ethereal weights. The steady decrease in loss observed across our experiments suggests that the model continues to learn long-term patterns at the low-plasticity learning rate while simultaneously managing working memory at the high-plasticity rate. This dual-process behavior indicates that ethereal weights successfully implement a form of multi-timescale learning where different parameter subsets serve distinct functional roles.
+This separation is crucial for the dual-timescale learning hypothesis underlying ephemeral weights. The steady decrease in loss observed across our experiments suggests that the model continues to learn long-term patterns at the low-plasticity learning rate while simultaneously managing working memory at the high-plasticity rate. This dual-process behavior indicates that ephemeral weights successfully implement a form of multi-timescale learning where different parameter subsets serve distinct functional roles.
 
 The preservation of long-term learning can be attributed to several factors. First, the random assignment of plasticity levels ensures that the network's fundamental computational capacity remains largely intact, with only a small fraction (typically 10-20\%) of parameters dedicated to volatile memory functions. Second, the forgetting mechanism prevents high-plasticity weights from accumulating permanent biases that could interfere with the network's overall optimization trajectory.
 
 To rigorously test this dual-learning hypothesis, future experiments could implement a controlled study where models are trained on a primary task (e.g., language modeling) while periodically exposed to working memory challenges (e.g., key-recall sequences). By measuring performance on both the primary task and working memory tasks throughout training, researchers could quantify how effectively the two learning processes coexist. Additionally, ablation studies could examine performance when high-plasticity weights are periodically frozen or reset, allowing direct measurement of the low-plasticity weights' learning progress in isolation.
 
-Another promising experimental approach would involve training ethereal weights models on tasks with known long-term dependencies (such as copying tasks with very long delays) while simultaneously requiring short-term memory operations. Success on both components would provide strong evidence that the architecture can maintain stable long-term learning while providing functional working memory capabilities.
+Another promising experimental approach would involve training ephemeral weights models on tasks with known long-term dependencies (such as copying tasks with very long delays) while simultaneously requiring short-term memory operations. Success on both components would provide strong evidence that the architecture can maintain stable long-term learning while providing functional working memory capabilities.
 
-The implications of this dual-timescale learning extend beyond the immediate applications of ethereal weights. This approach suggests a general framework for neural architectures that can simultaneously optimize for different temporal objectives, potentially offering new approaches to continual learning, meta-learning, and adaptive systems that must balance stability with flexibility.
+The implications of this dual-timescale learning extend beyond the immediate applications of ephemeral weights. This approach suggests a general framework for neural architectures that can simultaneously optimize for different temporal objectives, potentially offering new approaches to continual learning, meta-learning, and adaptive systems that must balance stability with flexibility.
 
 \section{Discussion}
 
-Large Language Models (LLMs) have surpassed human performance on a variety of tasks, yet progress has largely stalled on their performance on many things routinely done by even a household cat. Among them are one-shot online learning, rapid adaptation to new contexts, and robustness to adversarial attacks such as camoflage. Major failure modes are long-term coherence in an agentic task, quick incorporation of new information, management of memory over long conversations, and many other circumstances all hinging on the same shortcoming: the lack of a functional working memory system, especially one that transitions well to long-term memory storage. A biological system, such as that of a simple mammal, has countless mechanisms for storing memory, persisting state, managing plasticty, etc. that current LLMs only crudely approximate with its only two available systems: parameter-based memory and activation-based memory. Rather than exclusively relying on the former for long-term knowledge and the latter for short-term context, ethereal weights present a more fluid memory system that blurs the lines between these two extremes.
+Large Language Models (LLMs) have surpassed human performance on a variety of tasks, yet progress has largely stalled on their performance on many things routinely done by even a household cat. Among them are one-shot online learning, rapid adaptation to new contexts, and robustness to adversarial attacks such as camoflage. Major failure modes are long-term coherence in an agentic task, quick incorporation of new information, management of memory over long conversations, and many other circumstances all hinging on the same shortcoming: the lack of a functional working memory system, especially one that transitions well to long-term memory storage. A biological system, such as that of a simple mammal, has countless mechanisms for storing memory, persisting state, managing plasticty, etc. that current LLMs only crudely approximate with its only two available systems: parameter-based memory and activation-based memory. Rather than exclusively relying on the former for long-term knowledge and the latter for short-term context, ephemeral weights present a more fluid memory system that blurs the lines between these two extremes.
 
-\subsection{Ethereal Weights as Functional Working Memory}
+\subsection{Ephemeral Weights as Functional Working Memory}
 
-Our experiments demonstrate that ethereal weights successfully encode functional working memory without explicit gatekeeping mechanisms. Unlike traditional memory architectures that employ gates, attention mechanisms, or explicit memory curation, ethereal weights operate through pure associative storage of recent gradient updates. This approach can reliably hold multiple pieces of information simultaneously—our experiments confirm storage of at least three distinct items—with positional encoding providing additional organizational structure.
+Our experiments demonstrate that ephemeral weights successfully encode functional working memory without explicit gatekeeping mechanisms. Unlike traditional memory architectures that employ gates, attention mechanisms, or explicit memory curation, ephemeral weights operate through pure associative storage of recent gradient updates. This approach can reliably hold multiple pieces of information simultaneously—our experiments confirm storage of at least three distinct items—with positional encoding providing additional organizational structure.
 
 The memory mechanism operates as an associative system that performs best with strong retrieval cues, though the temporal decay ("age") of stored information can also serve as an effective retrieval mechanism. This dual-access pattern mirrors biological working memory, where both content-based and temporal-based retrieval strategies coexist. However, the associative nature of the memory system also reveals its limitations: while effective for storage and retrieval, it lacks inherent mechanisms for information transformation or manipulation, as evidenced by the challenges with palindrome tasks that require sequence reversal.
 
-The volatility characteristics discussed in Section 4.4 are intrinsically linked to this memory function. The gradient explosion patterns that threaten stability are not merely implementation artifacts but fundamental consequences of the memory encoding mechanism. The aggressive gradient amplification required for rapid memory formation creates a delicate balance between effective encoding and system stability, suggesting that volatility management is an essential component of any practical ethereal weights implementation.
+The volatility characteristics discussed in Section 4.4 are intrinsically linked to this memory function. The gradient explosion patterns that threaten stability are not merely implementation artifacts but fundamental consequences of the memory encoding mechanism. The aggressive gradient amplification required for rapid memory formation creates a delicate balance between effective encoding and system stability, suggesting that volatility management is an essential component of any practical ephemeral weights implementation.
 
-Models using ethereal weights often maintain higher loss values than traditional methods, even when achieving superior accuracy. This apparent paradox occurs because the strength of memory encoding is directly related to the loss magnitude. This relationship suggests an inherent trade-off between memory encoding strength and loss minimization, potentially limiting how low the loss can decrease while maintaining effective working memory capabilities.
+Models using ephemeral weights often maintain higher loss values than traditional methods, even when achieving superior accuracy. This apparent paradox occurs because the strength of memory encoding is directly related to the loss magnitude. This relationship suggests an inherent trade-off between memory encoding strength and loss minimization, potentially limiting how low the loss can decrease while maintaining effective working memory capabilities.
 
 \subsection{Toward a Multi-Scale Memory Pipeline}
 
-The current ethereal weights approach represents only one component of what could become a comprehensive memory hierarchy. The limitations observed in our experiments—particularly the lack of information selection and the challenges with complex transformations—suggest that ethereal weights are best understood as part of a larger memory pipeline rather than a complete solution.
+The current ephemeral weights approach represents only one component of what could become a comprehensive memory hierarchy. The limitations observed in our experiments—particularly the lack of information selection and the challenges with complex transformations—suggest that ephemeral weights are best understood as part of a larger memory pipeline rather than a complete solution.
 
 We envision a biologically-inspired memory architecture that operates across multiple timescales: context windows for immediate information access, recurrent connections for short-term rehearsal loops, high-plasticity weights for rapid encoding, medium-plasticity weights for intermediate storage, and low-plasticity weights for long-term consolidation. This hierarchy mirrors human memory processes, where information flows from immediate perception through various stages of consolidation.
 
@@ -396,7 +396,7 @@ Consider the analogy of remembering a phone number: humans typically have an imm
 
 This multi-scale approach could enable emergent memory consolidation behaviors similar to replay buffers in reinforcement learning or bootstrapped fine-tuning in language models. A conversational AI system might initially store user preferences in context windows, transfer frequently mentioned preferences to recurrent loops, gradually encode them in high-plasticity weights, and eventually consolidate important patterns into the model's long-term parameters. This would create a natural progression from ephemeral working memory to permanent knowledge, freeing up short-term memory resources for new information.
 
-The key insight is that effective memory systems require not just storage mechanisms but also information selection and consolidation processes. Future work should explore how attention-like mechanisms or learned gating functions could be integrated with ethereal weights to create more sophisticated memory management systems.
+The key insight is that effective memory systems require not just storage mechanisms but also information selection and consolidation processes. Future work should explore how attention-like mechanisms or learned gating functions could be integrated with ephemeral weights to create more sophisticated memory management systems.
 
 \subsection{Bridging Manual Memory Storage and Parameter-Based Memory}
 
@@ -417,7 +417,7 @@ Future work should explore dynamic plasticity parameters, variable forgetting ra
 The potential for this work extends to alignment and continual learning applications. A language model that is capable of continuous alignment in a more biologically plausible way has the potential to adapt more closely to individuals' needs in an ever-refining way. Smooth transitions from short to long-term memory, stored efficiently in model parameters will grant AI a new modality for computing problems over varying timescales, opening up larger and more complex projects to AI assistance. The possibilities include agents capable of coherently planning and orchestrating projects over the course of days and weeks, rather than minutes.
 
 \bibliographystyle{IEEEtran}
-\bibliography{ieee_ethereal_weights}
+\bibliography{ieee_ephemeral_weights}
 \vspace{12pt}
 
 \end{document}
