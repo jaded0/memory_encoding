@@ -11,8 +11,8 @@ $bibtex = 'bibtex %O %B';
 
 # Build BOTH versions every time
 @default_files = (
-    'ieee_ethereal_weights.tex',
-    'ieee_ethereal_weights_appendixed.tex'
+    'ieee_ephemeral_weights.tex',
+    'ieee_ephemeral_weights_appendixed.tex'
 );
 # IMPORTANT: Track dependencies so latexmk rebuilds when \input files change
 $recorder = 1;
