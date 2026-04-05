@@ -49,6 +49,13 @@ def plot_ascii_bar_graph(data, title, max_width=40):
 # from memory_profiler import profile
 
 trigger_sync = TriggerWandbSyncHook() if TriggerWandbSyncHook else None  # <--- New!
+# --- Robust Control Integration ---
+try:
+    from hebby_integration import init_controller, controller_step, update_plasticity
+    HAS_CONTROLLER = True
+except ImportError:
+    HAS_CONTROLLER = False
+
 
 # --- W&B end-of-run markers ---
 def wb_mark_end(reason: str, tags=None, exit_code: int | None = None):
@@ -338,6 +345,21 @@ def main():
     parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=True, help='Whether to enable recurrent hidden state connections')
     parser.add_argument('--log_freq', type=int, default=None, help='Frequency for W&B sync triggers (overrides LOG_FREQ environment variable)')
     parser.add_argument('--no_resume', type=str2bool, nargs='?', const=True, default=True, help='Disable automatic checkpoint resumption (default: True)')
+    # --- Controller arguments ---
+    parser.add_argument('--controller_mode', type=str, default='fixed',
+                        choices=['fixed', 'lqr', 'hinf'],
+                        help='Controller mode: fixed (baseline), lqr, or hinf')
+    parser.add_argument('--control_log_dir', type=str, default=None,
+                        help='Directory for per-step control CSV logs')
+    parser.add_argument('--control_run_name', type=str, default='run',
+                        help='Name for this run CSV log file')
+    parser.add_argument('--sysid_results', type=str, default=None,
+                        help='Path to sysid_results.json for LQR/Hinf controllers')
+    parser.add_argument('--alpha_min', type=float, default=1.0,
+                        help='Minimum allowed alpha value')
+    parser.add_argument('--alpha_max', type=float, default=100000.0,
+                        help='Maximum allowed alpha value')
+
 
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
@@ -499,6 +521,18 @@ def main():
         "wandb_step": 0,  # Initialize wandb_step
         "log_norms_now": False,
     }
+    # --- Initialize Controller ---
+    ctrl_controller = None
+    ctrl_logger = None
+    ctrl_state = None
+    if HAS_CONTROLLER:
+        ctrl_controller, ctrl_logger, ctrl_state = init_controller(args, config)
+        print(f"Controller mode: {args.controller_mode}, controller: {ctrl_controller}")
+    else:
+        if getattr(args, "controller_mode", "fixed") != "fixed":
+            print("WARNING: hebby_integration not found, falling back to fixed mode")
+
+
 
     # --- Resume from Checkpoint ---
 
@@ -709,10 +743,23 @@ def main():
 
             # --- Train Step ---
             state["log_norms_now"] = (iter % args.print_freq == 0)
+            # When controller is active, always log norms for gradient tracking
+            if HAS_CONTROLLER and ctrl_controller is not None:
+                state["log_norms_now"] = True
             # The train function returns step-by-step outputs for the first batch item if log_outputs=True
             output, loss, og_loss, reg_loss, current_iter_all_outputs, current_iter_all_labels = train(
                 line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train
             )
+            # --- Controller Step ---
+            if HAS_CONTROLLER and ctrl_controller is not None and isinstance(rnn, EtherealRNN):
+                acc_for_ctrl = 0.0
+                new_alpha = controller_step(
+                    ctrl_controller, ctrl_logger, ctrl_state,
+                    rnn, loss, acc_for_ctrl
+                )
+                if getattr(args, "controller_mode", "fixed") != "fixed":
+                    update_plasticity(rnn, new_alpha)
+
             
             # Check for NaN in loss and terminate if detected
             if torch.isnan(torch.tensor(loss)).any():
@@ -1000,6 +1047,11 @@ def main():
 
 
     finally: # Ensure wandb finishes even on error/interrupt
+        # --- Close controller logger ---
+        if HAS_CONTROLLER and ctrl_logger is not None:
+            ctrl_logger.close()
+            print(f"Control log saved to: {ctrl_logger.path}")
+
         if args.track and wandb.run is not None:
             print("Finishing W&B run...")
             wandb.finish()
