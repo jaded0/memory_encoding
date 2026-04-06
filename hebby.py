@@ -347,7 +347,7 @@ def main():
     parser.add_argument('--no_resume', type=str2bool, nargs='?', const=True, default=True, help='Disable automatic checkpoint resumption (default: True)')
     # --- Controller arguments ---
     parser.add_argument('--controller_mode', type=str, default='fixed',
-                        choices=['fixed', 'lqr', 'hinf'],
+                        choices=['fixed', 'lqr', 'hinf', 'adaptive'],
                         help='Controller mode: fixed (baseline), lqr, or hinf')
     parser.add_argument('--control_log_dir', type=str, default=None,
                         help='Directory for per-step control CSV logs')

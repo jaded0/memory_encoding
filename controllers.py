@@ -249,3 +249,52 @@ def design_hinf(plant_model, Q=1.0, R=0.01, alpha_min=1.0, alpha_max=1e5, x_ref=
         alpha_min=alpha_min, alpha_max=alpha_max,
         x_ref=x_ref,
     )
+
+
+class AdaptiveController(BaseController):
+    """Adaptive controller that adjusts alpha based on recent loss trend.
+
+    Increases alpha when loss is decreasing (safe to be more aggressive),
+    decreases alpha when loss is increasing or high (back off to safety).
+    This handles the bifurcation: stays below the instability threshold.
+    """
+
+    def __init__(self, alpha0, alpha_min, alpha_max, loss_target=2.0,
+                 increase_rate=1.05, decrease_rate=0.5, loss_window=20):
+        super().__init__(alpha0, alpha_min, alpha_max)
+        self.loss_target = loss_target
+        self.increase_rate = increase_rate
+        self.decrease_rate = decrease_rate
+        self.loss_window = loss_window
+        self._losses = []
+        self._current_alpha = alpha0
+
+    def compute_alpha(self, x, x_ref=None):
+        """x is expected to be the current loss value."""
+        self._losses.append(x)
+
+        if len(self._losses) < 2:
+            return self._current_alpha
+
+        recent = self._losses[-self.loss_window:]
+        mean_loss = sum(recent) / len(recent)
+
+        if mean_loss > self.loss_target * 2:
+            # Loss is very high — aggressively reduce alpha
+            self._current_alpha *= self.decrease_rate
+        elif mean_loss > self.loss_target:
+            # Loss is above target — gently reduce alpha
+            self._current_alpha *= 0.9
+        elif len(self._losses) > self.loss_window:
+            # Loss is at or below target — can we push alpha higher?
+            old_mean = sum(self._losses[-2*self.loss_window:-self.loss_window]) / self.loss_window if len(self._losses) > 2*self.loss_window else mean_loss
+            if mean_loss <= old_mean:
+                # Loss is trending down, safe to increase
+                self._current_alpha *= self.increase_rate
+
+        self._current_alpha = max(self.alpha_min, min(self.alpha_max, self._current_alpha))
+        return self._current_alpha
+
+    def reset(self):
+        self._losses = []
+        self._current_alpha = self.alpha0

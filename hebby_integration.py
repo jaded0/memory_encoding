@@ -10,37 +10,23 @@ import numpy as np
 import torch
 
 from control_logger import ControlLogger, compute_ephemeral_weight_norm, compute_gradient_norms
-from controllers import FixedController, LQRController, HinfController
+from controllers import FixedController, LQRController, HinfController, AdaptiveController
 
 
 def init_controller(args, config):
-    """Initialize controller and logger based on command-line args.
-
-    Args:
-        args: parsed argparse namespace with controller_mode, control_log_dir, etc.
-        config: training config dict
-
-    Returns:
-        (controller, logger, control_state) tuple
-    """
+    """Initialize controller and logger based on command-line args."""
     alpha0 = config["plast_clip"]
     gamma0 = config["forget_rate"]
 
-    # Default safe range
     alpha_min = getattr(args, "alpha_min", 1.0)
     alpha_max = getattr(args, "alpha_max", alpha0 * 10)
 
-    # Initialize logger
     logger = None
     if hasattr(args, "control_log_dir") and args.control_log_dir:
         run_name = getattr(args, "control_run_name", "run")
         logger = ControlLogger(log_dir=args.control_log_dir, run_name=run_name)
 
-    # Controller state tracking
-    control_state = {
-        "current_alpha": alpha0,
-        "step": 0,
-    }
+    control_state = {"current_alpha": alpha0, "step": 0}
 
     mode = getattr(args, "controller_mode", "fixed")
 
@@ -48,9 +34,17 @@ def init_controller(args, config):
         controller = FixedController(alpha0=alpha0, alpha_min=alpha_min, alpha_max=alpha_max)
         return controller, logger, control_state
 
-    # Load system ID results for LQR/Hinf
+    if mode == "adaptive":
+        controller = AdaptiveController(
+            alpha0=alpha0, alpha_min=alpha_min, alpha_max=alpha_max,
+            loss_target=2.0, increase_rate=1.02, decrease_rate=0.5,
+        )
+        print(f"Initialized Adaptive controller: alpha0={alpha0}, target_loss=2.0")
+        return controller, logger, control_state
+
+    # LQR/Hinf require system ID results
     sysid_path = getattr(args, "sysid_results", None)
-    if sysid_path is None or not os.path.exists(sysid_path):
+    if sysid_path is None or not os.path.exists(str(sysid_path)):
         print(f"WARNING: sysid_results not found at {sysid_path}, falling back to fixed controller")
         controller = FixedController(alpha0=alpha0, alpha_min=alpha_min, alpha_max=alpha_max)
         return controller, logger, control_state
@@ -59,9 +53,7 @@ def init_controller(args, config):
         sysid = json.load(f)
 
     plant = sysid["analytical"]
-    A = plant["A"]
-    B = plant["B"]
-    E = plant["E"]
+    A, B, E = plant["A"], plant["B"], plant["E"]
     x_ref = plant.get("x_bar", 0.0)
     Q = sysid["controller_params"]["Q"]
     R = sysid["controller_params"]["R"]
@@ -71,16 +63,12 @@ def init_controller(args, config):
     if mode == "lqr":
         controller = LQRController(
             A=A, B=B, Q=Q, R=R,
-            alpha0=alpha0, alpha_min=alpha_min, alpha_max=alpha_max,
-            x_ref=x_ref,
-        )
+            alpha0=alpha0, alpha_min=alpha_min, alpha_max=alpha_max, x_ref=x_ref)
         print(f"Initialized LQR controller: {controller}")
     elif mode == "hinf":
         controller = HinfController(
             A=A, B=B, E=E, Q=Q, R=R,
-            alpha0=alpha0, alpha_min=alpha_min, alpha_max=alpha_max,
-            x_ref=x_ref,
-        )
+            alpha0=alpha0, alpha_min=alpha_min, alpha_max=alpha_max, x_ref=x_ref)
         print(f"Initialized H-inf controller: {controller}")
     else:
         raise ValueError(f"Unknown controller_mode: {mode}")
@@ -89,35 +77,20 @@ def init_controller(args, config):
 
 
 def controller_step(controller, logger, control_state, rnn, loss_val, acc_val):
-    """Execute one controller step: measure state, compute alpha, log.
-
-    Called once per training iteration (per sequence), BEFORE the weight update
-    but AFTER gradient computation.
-
-    Args:
-        controller: BaseController instance
-        logger: ControlLogger instance (or None)
-        control_state: dict with step counter
-        rnn: the EtherealRNN model
-        loss_val: current loss value
-        acc_val: current accuracy value
-
-    Returns:
-        new_alpha: the plasticity multiplier to use for this step's update
-    """
-    # Measure current state
+    """Execute one controller step: measure state, compute alpha, log."""
     x = compute_ephemeral_weight_norm(rnn)
     g_raw, g_ratio = compute_gradient_norms(rnn)
 
-    # Compute new alpha
-    new_alpha = controller.compute_alpha(x)
+    if isinstance(controller, AdaptiveController):
+        new_alpha = controller.compute_alpha(loss_val)
+    else:
+        new_alpha = controller.compute_alpha(x)
+
     control_state["current_alpha"] = new_alpha
     t = control_state["step"]
 
-    # Log
     if logger is not None:
         gamma = 0.0
-        # Get gamma from model
         for module in rnn.modules():
             if hasattr(module, "forgetting_factor"):
                 ff = module.forgetting_factor
@@ -134,11 +107,7 @@ def controller_step(controller, logger, control_state, rnn, loss_val, acc_val):
 
 
 def update_plasticity(rnn, new_alpha):
-    """Update plasticity values for all HebbianLinear layers to new_alpha.
-
-    This is the mechanism by which the controller affects training:
-    it changes the plasticity multiplier for high-plasticity weights.
-    """
+    """Update plasticity values for all HebbianLinear layers to new_alpha."""
     with torch.no_grad():
         for module in rnn.modules():
             if hasattr(module, "plasticity") and hasattr(module, "mask"):
