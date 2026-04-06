@@ -10,6 +10,7 @@ dataset_keys = {
     "jbrazzy/baby_names": "Names",
     "brucewlee1/htest-palindrome": "centerpiece",
     "long_range_memory_dataset": "text",
+    "long_range_memory_small": "text",
     "1_resequence": "text",
     "2_resequence": "text",
     "3_resequence": "text",

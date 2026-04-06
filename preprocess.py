@@ -7,6 +7,7 @@ dataset_keys = {
     "jbrazzy/baby_names": "train",
     "brucewlee1/htest-palindrome": "test",
     "long_range_memory_dataset": "train",
+    "long_range_memory_small": "train",
     "1_resequence": "train",
     "2_resequence": "train",
     "3_resequence": "train",
@@ -25,7 +26,7 @@ dataset_keys = {
 
 # Load dataset
 def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True):
-    if ("palindrome_dataset" in dataset_name) or ("long_range_memory_dataset" in dataset_name) or ("resequence" in dataset_name):
+    if ("palindrome_dataset" in dataset_name) or ("long_range_memory" in dataset_name) or ("resequence" in dataset_name):
         dataset = load_from_disk(f"synth_datasets/{dataset_name}")
         print(f"loaded dataset {dataset_name}")
     else:

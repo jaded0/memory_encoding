@@ -752,7 +752,12 @@ def main():
             )
             # --- Controller Step ---
             if HAS_CONTROLLER and ctrl_controller is not None and isinstance(rnn, EtherealRNN):
+                # Compute per-iteration accuracy for controller logging
                 acc_for_ctrl = 0.0
+                if output is not None and line_tensor.numel() > 0:
+                    preds = output.detach().argmax(dim=1)
+                    targets = line_tensor[:, -1]
+                    acc_for_ctrl = (preds == targets).float().mean().item()
                 new_alpha = controller_step(
                     ctrl_controller, ctrl_logger, ctrl_state,
                     rnn, loss, acc_for_ctrl
