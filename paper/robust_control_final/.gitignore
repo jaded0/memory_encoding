@@ -13,5 +13,5 @@ paper_content.tex
 *.synctex.gz
 *.toc
 
-# Built PDF (copied to ~/Documents/generated_pdfs/ by `make`)
-robust_control.pdf
+# Note: robust_control.pdf is intentionally committed — matches the
+# convention in ../ieee_ephemeral_weights.pdf etc.
