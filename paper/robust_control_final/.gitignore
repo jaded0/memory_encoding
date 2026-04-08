@@ -1,0 +1,17 @@
+# Pipeline intermediates
+.paper_content.md
+paper_content.tex
+
+# latexmk build artifacts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+
+# Built PDF (copied to ~/Documents/generated_pdfs/ by `make`)
+robust_control.pdf
