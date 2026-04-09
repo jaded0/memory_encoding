@@ -1,0 +1,20 @@
+# Pipeline intermediates
+.presentation_content.md
+presentation_content.tex
+
+# latexmk build artifacts
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.nav
+*.out
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+
+# Note: presentation.pdf is intentionally committed — matches the
+# convention in ../robust_control_final/robust_control.pdf etc.

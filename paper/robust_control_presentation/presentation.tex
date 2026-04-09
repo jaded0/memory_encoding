@@ -1,0 +1,41 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+
+\usetheme{metropolis}
+
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{textcomp}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{url}
+\usepackage{hyperref}
+
+% Constrain every \includegraphics to slide content area unless overridden,
+% so figures don't render at native pixel size and overflow the frame.
+\setkeys{Gin}{width=0.85\textwidth,height=0.7\textheight,keepaspectratio}
+
+% Shrink dense table content so the two big "comparison" tables fit on a
+% single slide without overflowing horizontally.
+\AtBeginEnvironment{tabular}{\footnotesize}
+
+% pandoc-generated body sometimes relies on these.
+\providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+\title{Ephemeral Memory}
+\subtitle{Successful Retention of Short-Term Information Using Variable Plasticity and Decaying Weight Values}
+\author{Jaden Lorenc}
+\institute{Brigham Young University}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\input{presentation_content}
+
+\end{document}
