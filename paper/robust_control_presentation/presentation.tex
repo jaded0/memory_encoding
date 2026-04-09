@@ -23,6 +23,10 @@
 % single slide without overflowing horizontally.
 \AtBeginEnvironment{tabular}{\footnotesize}
 
+% Shrink verbatim/code blocks so the Experiments slide's two example
+% blocks both fit without overflowing the bottom of the frame.
+\AtBeginEnvironment{verbatim}{\footnotesize}
+
 % pandoc-generated body sometimes relies on these.
 \providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
 
