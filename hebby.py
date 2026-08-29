@@ -4,12 +4,12 @@ from hebbian_model import EtherealRNN, SimpleRNN
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
+from reproducibility import capture_rng_state, seed_everything
 from utils import randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint
 import time
 import math
 import argparse
 import sys
-import numpy as np
 import itertools
 import os
 import psutil
@@ -338,12 +338,20 @@ def main():
     parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=True, help='Whether to enable recurrent hidden state connections')
     parser.add_argument('--log_freq', type=int, default=None, help='Frequency for W&B sync triggers (overrides LOG_FREQ environment variable)')
     parser.add_argument('--no_resume', type=str2bool, nargs='?', const=True, default=True, help='Disable automatic checkpoint resumption (default: True)')
+    parser.add_argument('--seed', type=int, default=None, help='Seed Python, NumPy, Torch, and data loading (default: unseeded).')
+    parser.add_argument('--deterministic', type=str2bool, nargs='?', const=True, default=False,
+                        help='Require deterministic Torch operations; requires --seed.')
 
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
     print("SLURM Job ID:", job_id)
     
     args = parser.parse_args()
+
+    try:
+        seed_everything(args.seed, deterministic=args.deterministic)
+    except ValueError as exc:
+        parser.error(str(exc))
     
     # Set log_freq: command line arg takes precedence over environment variable
     if args.log_freq is not None:
@@ -375,6 +383,8 @@ def main():
         "input_mode": args.input_mode,
         "plast_proportion": args.plast_proportion,
         "enable_recurrence": args.enable_recurrence,
+        "seed": args.seed,
+        "deterministic": args.deterministic,
     }
     print(f"Input mode selected: {args.input_mode}") # Inform user
 
@@ -432,7 +442,9 @@ def main():
     print(f"Character set size: {n_characters}")
 
     # Use drop_last=True if batch size doesn't divide dataset size evenly
-    dataloader = load_and_preprocess_data(args.dataset, args.batch_size, drop_last=True)
+    dataloader = load_and_preprocess_data(
+        args.dataset, args.batch_size, drop_last=True, seed=args.seed
+    )
 
     # Decide a max sequence length to support
     MAX_SEQ_LEN = 2000  # or any upper bound you expect
@@ -622,6 +634,8 @@ def main():
             "input_mode": args.input_mode,
             "plast_proportion": args.plast_proportion,
             "enable_recurrence": args.enable_recurrence,
+            "seed": args.seed,
+            "deterministic": args.deterministic,
         }
         # Key change here: use the determined wandb_run_id and resume="allow"
         print(f"tags given to wandb: {args.tags}")
@@ -956,8 +970,7 @@ def main():
                     'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
                     'main_program_state': state,
                     'config': config,
-                    'torch_rng_state': torch.get_rng_state(),
-                    'numpy_rng_state': np.random.get_state(),
+                    **capture_rng_state(),
                 }
                 save_checkpoint(checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
 
@@ -985,8 +998,7 @@ def main():
                 'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
                 'main_program_state': state,
                 'config': config,
-                'torch_rng_state': torch.get_rng_state(),
-                'numpy_rng_state': np.random.get_state(),
+                **capture_rng_state(),
             }
             save_checkpoint(final_checkpoint_state, args.checkpoint_dir, "interrupt_checkpoint.pth")
             save_checkpoint(final_checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth") # also update latest

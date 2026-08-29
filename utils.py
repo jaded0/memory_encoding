@@ -3,7 +3,8 @@ import time
 import math
 import argparse
 import os
-import numpy as np
+
+from reproducibility import restore_rng_state
 
 dataset_keys = {
     "roneneldan/tinystories": "text",
@@ -136,20 +137,27 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
     loaded_config = checkpoint.get('config', {}) # The config used for this checkpoint
 
-    if loaded_config.get('n_hidden') != config['n_hidden'] or \
-        loaded_config.get('n_layers') != config['n_layers'] or \
-        loaded_config.get('updater') != config['updater'] or \
-        loaded_config.get('charset_size') != config['charset_size']:
+    compatibility_defaults = {
+        'n_hidden': None,
+        'n_layers': None,
+        'updater': None,
+        'charset_size': None,
+        'seed': None,
+        'deterministic': False,
+    }
+    mismatches = [
+        (key, config.get(key, default), loaded_config.get(key, default))
+        for key, default in compatibility_defaults.items()
+        if config.get(key, default) != loaded_config.get(key, default)
+    ]
+    if mismatches:
         print("--------------------------------------------------------------------")
-        print("ERROR: Checkpoint loaded with potentially incompatible configuration!")
-        print(f"  Current n_hidden: {config['n_hidden']}, Loaded: {loaded_config.get('n_hidden')}")
-        print(f"  Current n_layers: {config['n_layers']}, Loaded: {loaded_config.get('n_layers')}")
-        print(f"  Current update_rule: {config['update_rule']}, Loaded: {loaded_config.get('update_rule')}")
-        print(f"  Current charset_size: {config['charset_size']}, Loaded: {loaded_config.get('charset_size')}")
+        print("ERROR: Checkpoint configuration mismatch!")
+        for key, current_value, loaded_value in mismatches:
+            print(f"  Current {key}: {current_value}, Loaded: {loaded_value}")
         print("  Please verify settings or delete checkpoint if starting a new experiment.")
         print("--------------------------------------------------------------------")
-        # Decide whether to proceed or exit, e.g., sys.exit("Config mismatch with checkpoint.")
-        raise RuntimeError("Checkpoint configuration mismatch – aborting run.")
+        raise RuntimeError("Checkpoint configuration mismatch - aborting run.")
     
     # saved_vocab = checkpoint['config']['charset_size']
     # current_vocab = len(get_charset(args.dataset))
@@ -181,14 +189,7 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     main_state = checkpoint.get('main_program_state', {}) # Your custom state dict from main
     # loaded_config = checkpoint.get('config', {}) # The config used for this checkpoint
 
-    # RNG states
-    if 'torch_rng_state' in checkpoint:
-        torch.set_rng_state(checkpoint['torch_rng_state'].cpu()) # RNG state must be on CPU
-    if 'numpy_rng_state' in checkpoint:
-        np.random.set_state(checkpoint['numpy_rng_state'])
-    # import random # if you use it
-    # if 'python_rng_state' in checkpoint:
-    #     random.setstate(checkpoint['python_rng_state'])
+    restore_rng_state(checkpoint)
 
     print(f"=> Loaded checkpoint '{checkpoint_path}' (iteration {start_iter})")
 

@@ -1,5 +1,6 @@
 from datasets import load_dataset, load_from_disk
 import torch.utils.data
+from reproducibility import make_torch_generator, seed_data_worker
 from utils import filter_text, text_to_indices, text_to_indices_and_one_hot, collate_fn
 
 dataset_keys = {
@@ -24,7 +25,7 @@ dataset_keys = {
 }
 
 # Load dataset
-def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True):
+def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True, seed=None):
     if ("palindrome_dataset" in dataset_name) or ("long_range_memory_dataset" in dataset_name) or ("resequence" in dataset_name):
         dataset = load_from_disk(f"synth_datasets/{dataset_name}")
         print(f"loaded dataset {dataset_name}")
@@ -58,7 +59,10 @@ def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True):
     print('preprocessed') 
 
     # Shuffle the dataset
-    dataset = dataset.shuffle()#seed=42)
+    if seed is None:
+        dataset = dataset.shuffle()
+    else:
+        dataset = dataset.shuffle(seed=seed)
 
     # # Inspect a few examples from the dataset
     # for i in range(3):
@@ -67,15 +71,19 @@ def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True):
     # Create a DataLoader
     if not "roneneldan/tinystories" in dataset_name:
         dataset = list(dataset)
-    dataloader = torch.utils.data.DataLoader(
-        dataset, 
-        batch_size=batch_size, 
-        shuffle=True, 
-        collate_fn=collate_fn,
-        drop_last=drop_last,
-        num_workers=10,
-        pin_memory=True
-    )
+    dataloader_kwargs = {
+        "batch_size": batch_size,
+        "shuffle": True,
+        "collate_fn": collate_fn,
+        "drop_last": drop_last,
+        "num_workers": 10,
+        "pin_memory": True,
+    }
+    if seed is not None:
+        dataloader_kwargs["generator"] = make_torch_generator(seed)
+        dataloader_kwargs["worker_init_fn"] = seed_data_worker
+
+    dataloader = torch.utils.data.DataLoader(dataset, **dataloader_kwargs)
 
 
     return dataloader

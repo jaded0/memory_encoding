@@ -87,6 +87,8 @@ python hebby.py --updater bptt --model_type ethereal
 - `--plast_proportion`: Proportion of weights that are high-plasticity
 - `--forget_rate`: Forgetting factor for high-plasticity weights
 - `--batch_size`: Number of sequences processed together
+- `--seed`: Seed Python, NumPy, Torch, dataset shuffling, and DataLoader sampling
+- `--deterministic`: Require deterministic Torch operations; requires `--seed`
 
 ### Advanced Features
 
@@ -97,19 +99,27 @@ python hebby.py --updater bptt --model_type ethereal
 
 ## Testing
 
-Run the unified updates test to verify the implementation:
+Run the network-free assertion suite from the repository root:
 
 ```bash
-python test_unified_updates.py
+CUDA_VISIBLE_DEVICES="" python -m unittest discover -s . -t . -v
 ```
+
+The suite includes fixed-input golden traces through the real `hebby.train()`
+path for DFA, backprop, and BPTT. See
+[BASELINE_CHARACTERIZATION.md](BASELINE_CHARACTERIZATION.md) for the trace
+schema, regeneration command, and known limitations.
 
 ## Project Structure
 
 - `hebby.py`: Main training script with unified training loop
 - `hebbian_model.py`: Implementation of EtherealRNN and HebbianLinear layers
 - `preprocess.py`: Data loading and preprocessing utilities
+- `reproducibility.py`: Opt-in seeding and checkpoint RNG state helpers
 - `utils.py`: Helper functions and utilities
 - `test_unified_updates.py`: Test script for unified update approach
+- `tests/fixtures/training_traces.json`: CPU golden traces for all update paths
+- `BASELINE_CHARACTERIZATION.md`: Reproducibility and baseline trace contract
 - `UNIFIED_UPDATES.md`: Detailed documentation of unified approach
 
 ## Results and Monitoring
