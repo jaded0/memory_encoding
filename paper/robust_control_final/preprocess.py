@@ -72,6 +72,23 @@ def preprocess(text: str) -> str:
 
     text = abstract_re.sub(abstract_sub, text, count=1)
 
+    # 6. Drop the trailing skeleton sections (manual References stub, the
+    #    "to ai" note, and the AI editing-notes block). A real bibliography
+    #    is added by the shell .tex via \bibliography{robust_control}.
+    text = re.split(r"^#\s+References\s*$", text, maxsplit=1, flags=re.MULTILINE)[0]
+    text = text.rstrip().rstrip("-").rstrip()  # drop the trailing '---' rule
+
+    # 7. Convert '[cite key1, key2]' markers into '\cite{key1,key2}'.
+    #    The non-key marker 'course readings' maps to the course-notes entry.
+    KEY_ALIAS = {"course readings": "Dahleh6241J"}
+
+    def cite_sub(m: re.Match) -> str:
+        raw = m.group(1)
+        keys = [KEY_ALIAS.get(k.strip(), k.strip()) for k in raw.split(",")]
+        return "\\cite{" + ",".join(keys) + "}"
+
+    text = re.sub(r"\[cite\s+([^\]]+)\]", cite_sub, text)
+
     return text
 
 

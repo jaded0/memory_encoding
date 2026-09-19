@@ -75,14 +75,26 @@ def convert_longtable(text: str) -> str:
         body_rows = re.sub(r"\\bottomrule(?:\\noalign\{\})?\s*", "", body_rows)
         body_rows = body_rows.rstrip()
 
-        # Narrow two-column spec that fits the 88 mm IEEE column.
-        colspec = (
-            r"@{}>{\raggedright\arraybackslash}p{0.22\columnwidth}"
-            r">{\raggedright\arraybackslash}p{0.68\columnwidth}@{}"
-        )
+        # Pick a column spec and float environment by column count. Count
+        # cells in the header row (number of '&' separators, +1).
+        first_header = header_rows.split(r"\\")[0]
+        ncols = first_header.count("&") + 1
+
+        if ncols <= 3:
+            # Narrow symbol/definition table; fits one 88 mm IEEE column.
+            colspec = (
+                r"@{}>{\raggedright\arraybackslash}p{0.22\columnwidth}"
+                r">{\raggedright\arraybackslash}p{0.68\columnwidth}@{}"
+            )
+            env, opt = "table", "[h]"
+        else:
+            # Wide table: span both columns (table*) with a left-aligned
+            # first and last column and centered numeric columns between.
+            colspec = "@{}l" + "c" * (ncols - 2) + "l@{}"
+            env, opt = "table*", "[t]"
 
         rebuilt = (
-            "\\begin{table}[h]\n"
+            f"\\begin{{{env}}}{opt}\n"
             "\\centering\n"
             "\\footnotesize\n"
             f"\\begin{{tabular}}{{{colspec}}}\n"
@@ -92,7 +104,7 @@ def convert_longtable(text: str) -> str:
             f"{body_rows}\n"
             "\\bottomrule\n"
             "\\end{tabular}\n"
-            "\\end{table}"
+            f"\\end{{{env}}}"
         )
         out.append(rebuilt)
         i = end + len("\\end{longtable}")

@@ -23,6 +23,9 @@
 
 % pandoc-generated body sometimes relies on these
 \providecommand{\tightlist}{\setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+% Newer pandoc wraps images in \pandocbounded{...}; width is already
+% constrained by \setkeys{Gin} above, so pass the content through.
+\providecommand{\pandocbounded}[1]{#1}
 
 \title{\LARGE \bf
 Robust Control of Ephemeral Weight Dynamics
@@ -31,7 +34,7 @@ Robust Control of Ephemeral Weight Dynamics
 \author{Jaden Lorenc%
 \thanks{J. Lorenc is with the Computer Science Department,
 Brigham Young University, Provo, UT, USA
-{\tt\small jaden.lorenc@byu.edu}}%
+{\tt\small jaded79@student.byu.edu}}%
 }
 
 \begin{document}
@@ -42,6 +45,7 @@ Brigham Young University, Provo, UT, USA
 
 \input{paper_content}
 
-\addtolength{\textheight}{-3cm}
+\bibliographystyle{IEEEtran}
+\bibliography{robust_control}
 
 \end{document}

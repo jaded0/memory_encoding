@@ -1,0 +1,254 @@
+% ============================================================
+% Robust Control of Ephemeral Weight Dynamics -- bibliography
+% Fast-weights / ML entries lifted from the Ephemeral Weights paper bib.
+% Control-theory and course entries authored for this report.
+% ============================================================
+
+% ---------- Control theory ----------
+
+@article{Doyle1978LQGMargins,
+  author  = {Doyle, John C.},
+  title   = {Guaranteed Margins for {LQG} Regulators},
+  journal = {IEEE Transactions on Automatic Control},
+  year    = {1978},
+  volume  = {23},
+  number  = {4},
+  pages   = {756--757},
+  doi     = {10.1109/TAC.1978.1101812}
+}
+
+@article{Zames1981,
+  author  = {Zames, George},
+  title   = {Feedback and Optimal Sensitivity: Model Reference Transformations, Multiplicative Seminorms, and Approximate Inverses},
+  journal = {IEEE Transactions on Automatic Control},
+  year    = {1981},
+  volume  = {26},
+  number  = {2},
+  pages   = {301--320},
+  doi     = {10.1109/TAC.1981.1102603}
+}
+
+@article{Doyle1982mu,
+  author  = {Doyle, John C.},
+  title   = {Analysis of Feedback Systems with Structured Uncertainties},
+  journal = {IEE Proceedings D - Control Theory and Applications},
+  year    = {1982},
+  volume  = {129},
+  number  = {6},
+  pages   = {242--250},
+  doi     = {10.1049/ip-d.1982.0053}
+}
+
+@article{DoyleGloverKhargonekarFrancis1989,
+  author  = {Doyle, John C. and Glover, Keith and Khargonekar, Pramod P. and Francis, Bruce A.},
+  title   = {State-Space Solutions to Standard {$H_2$} and {$H_\infty$} Control Problems},
+  journal = {IEEE Transactions on Automatic Control},
+  year    = {1989},
+  volume  = {34},
+  number  = {8},
+  pages   = {831--847},
+  doi     = {10.1109/9.29425}
+}
+
+@article{PackardDoyle1993mu,
+  author  = {Packard, Andrew and Doyle, John},
+  title   = {The Complex Structured Singular Value},
+  journal = {Automatica},
+  year    = {1993},
+  volume  = {29},
+  number  = {1},
+  pages   = {71--109},
+  doi     = {10.1016/0005-1098(93)90175-S}
+}
+
+@book{RawlingsMayneDiehl2017,
+  author    = {Rawlings, James B. and Mayne, David Q. and Diehl, Moritz M.},
+  title     = {Model Predictive Control: Theory, Computation, and Design},
+  edition   = {2nd},
+  publisher = {Nob Hill Publishing},
+  address   = {Madison, WI},
+  year      = {2017}
+}
+
+@article{LessardRechtPackard2016IQCOptimization,
+  author  = {Lessard, Laurent and Recht, Benjamin and Packard, Andrew},
+  title   = {Analysis and Design of Optimization Algorithms via Integral Quadratic Constraints},
+  journal = {SIAM Journal on Optimization},
+  year    = {2016},
+  volume  = {26},
+  number  = {1},
+  pages   = {57--95},
+  doi     = {10.1137/15M1009597}
+}
+
+@inproceedings{CohenEtAl2021EdgeOfStability,
+  author    = {Cohen, Jeremy M. and Kaur, Simran and Li, Yuanzhi and Kolter, J. Zico and Talwalkar, Ameet},
+  title     = {Gradient Descent on Neural Networks Typically Occurs at the Edge of Stability},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2021}
+}
+
+@inproceedings{DanielTaylorNowozin2016StepSizeControllers,
+  author    = {Daniel, Christian and Taylor, Jonathan and Nowozin, Sebastian},
+  title     = {Learning Step Size Controllers for Robust Neural Network Training},
+  booktitle = {Proceedings of the 30th AAAI Conference on Artificial Intelligence},
+  year      = {2016},
+  pages     = {1519--1525}
+}
+
+@misc{Dahleh6241J,
+  author       = {Dahleh, Mohammed and Dahleh, Munther A. and Verghese, George C.},
+  title        = {Lectures on Dynamic Systems and Control (MIT 6.241J)},
+  howpublished = {MIT OpenCourseWare, Massachusetts Institute of Technology},
+  year         = {2011}
+}
+
+% ---------- Fast weights / parameter-based memory (from EW paper bib) ----------
+
+@article{hintonUsingFastWeights1987,
+  title = {Using {{Fast Weights}} to {{Deblur Old Memories}}},
+  author = {Hinton, Geoffrey E. and Plaut, David C.},
+  year = 1987,
+  journal = {Proceedings of the Annual Meeting of the Cognitive Science Society},
+  volume = {9},
+  number = {0},
+  urldate = {2025-03-04},
+  abstract = {Connectionist models usually have a single weight on each connection. Some interesting newproperties emerge if each connection has two weights: A slowly changing, plastic weight which stores long-term knowledge and a fast-changing, elastic weight which stores temporary knowledge and spontaneously decays towards zero. If a network learns a set of associations and then these associationsare "blurred" by subsequent learning, all the original associations can be "deblurred" by rehearsing on just a few of them. The rehearsal allows the fast weights to take on values that temporarily cancel outthe changes in the slow weights caused by the subsequent learning.},
+  langid = {english},
+  file = {/home/jaden/snap/zotero-snap/common/Zotero/storage/YZLP9MLD/Hinton and Plaut - 1987 - Using Fast Weights to Deblur Old Memories.pdf}
+}
+
+@article{schmidhuberLearningControlFastweight1992,
+  title = {Learning to Control Fast-Weight Memories: {{An}} Alternative to Dynamic Recurrent Networks},
+  author = {Schmidhuber, J{\"u}rgen},
+  year = 1992,
+  month = jan,
+  journal = {Neural Computation},
+  volume = {4},
+  number = {1},
+  eprint = {https://direct.mit.edu/neco/article-pdf/4/1/131/812242/neco.1992.4.1.131.pdf},
+  pages = {131--139},
+  issn = {0899-7667},
+  doi = {10.1162/neco.1992.4.1.131},
+  abstract = {Previous algorithms for supervised sequence learning are based on dynamic recurrent networks. This paper describes an alternative class of gradient-based systems consisting of two feedforward nets that learn to deal with temporal sequences using fast weights: The first net learns to produce context-dependent weight changes for the second net whose weights may vary very quickly. The method offers the potential for STM storage efficiency: A single weight (instead of a full-fledged unit) may be sufficient for storing temporal information. Various learning methods are derived. Two experiments with unknown time delays illustrate the approach. One experiment shows how the system can be used for adaptive temporary variable binding.},
+  file = {/home/jaden/snap/zotero-snap/common/Zotero/storage/YP674PBI/Schmidhuber - 1992 - Learning to control fast-weight memories An alternative to dynamic recurrent networks.pdf}
+}
+
+@inproceedings{miconiDifferentiablePlasticityTraining2018a,
+  title = {Differentiable Plasticity: Training Plastic Neural Networks with Backpropagation},
+  shorttitle = {Differentiable Plasticity},
+  booktitle = {Proceedings of the 35th {{International Conference}} on {{Machine Learning}}},
+  author = {Miconi, Thomas and Stanley, Kenneth and Clune, Jeff},
+  year = 2018,
+  month = jul,
+  pages = {3559--3568},
+  publisher = {PMLR},
+  issn = {2640-3498},
+  urldate = {2025-03-04},
+  abstract = {How can we build agents that keep learning from experience, quickly and efficiently, after their initial training? Here we take inspiration from the main mechanism of learning in biological brains: synaptic plasticity, carefully tuned by evolution to produce efficient lifelong learning. We show that plasticity, just like connection weights, can be optimized by gradient descent in large (millions of parameters) recurrent networks with Hebbian plastic connections. First, recurrent plastic networks with more than two million parameters can be trained to memorize and reconstruct sets of novel, high-dimensional (1000+ pixels) natural images not seen during training. Crucially, traditional non-plastic recurrent networks fail to solve this task. Furthermore, trained plastic networks can also solve generic meta-learning tasks such as the Omniglot task, with competitive results and little parameter overhead. Finally, in reinforcement learning settings, plastic networks outperform non-plastic equivalent in a maze exploration task. We conclude that differentiable plasticity may provide a powerful novel approach to the learning-to-learn problem.},
+  langid = {english},
+  file = {/home/jaden/snap/zotero-snap/common/Zotero/storage/NZJ93QHA/Miconi et al. - 2018 - Differentiable plasticity training plastic neural networks with backpropagation.pdf;/home/jaden/snap/zotero-snap/common/Zotero/storage/SLAUE23H/Miconi et al. - 2018 - Differentiable plasticity training plastic neural networks with backpropagation.pdf}
+}
+
+@misc{baUsingFastWeights2016,
+  title = {Using {{Fast Weights}} to {{Attend}} to the {{Recent Past}}},
+  author = {Ba, Jimmy and Hinton, Geoffrey and Mnih, Volodymyr and Leibo, Joel Z. and Ionescu, Catalin},
+  year = 2016,
+  month = dec,
+  number = {arXiv:1610.06258},
+  eprint = {1610.06258},
+  primaryclass = {stat},
+  publisher = {arXiv},
+  doi = {10.48550/arXiv.1610.06258},
+  urldate = {2025-03-04},
+  abstract = {Until recently, research on artificial neural networks was largely restricted to systems with only two types of variable: Neural activities that represent the current or recent input and weights that learn to capture regularities among inputs, outputs and payoffs. There is no good reason for this restriction. Synapses have dynamics at many different time-scales and this suggests that artificial neural networks might benefit from variables that change slower than activities but much faster than the standard weights. These "fast weights" can be used to store temporary memories of the recent past and they provide a neurally plausible way of implementing the type of attention to the past that has recently proved very helpful in sequence-to-sequence models. By using fast weights we can avoid the need to store copies of neural activity patterns.},
+  archiveprefix = {arXiv},
+  keywords = {Computer Science - Machine Learning,Computer Science - Neural and Evolutionary Computing,Statistics - Machine Learning},
+  file = {/home/jaden/snap/zotero-snap/common/Zotero/storage/HQGVLZPL/Ba et al. - 2016 - Using Fast Weights to Attend to the Recent Past.pdf;/home/jaden/snap/zotero-snap/common/Zotero/storage/8L5RBMV9/1610.html}
+}
+
+@inproceedings{irieGoingLinearTransformers2021a,
+  title = {Going beyond Linear Transformers with Recurrent Fast Weight Programmers},
+  booktitle = {Proceedings of the 35th International Conference on Neural Information Processing Systems},
+  author = {Irie, Kazuki and Schlag, Imanol and Csord{\'a}s, R{\'o}bert and Schmidhuber, J{\"u}rgen},
+  year = 2021,
+  series = {Nips '21},
+  publisher = {Curran Associates Inc.},
+  address = {Red Hook, NY, USA},
+  abstract = {Transformers with linearised attention ("linear Transformers") have demonstrated the practical scalability and effectiveness of outer product-based Fast Weight Programmers (FWPs) from the '90s. However, the original FWP formulation is more general than the one of linear Transformers: a slow neural network (NN) continually reprograms the weights of a fast NN with arbitrary architecture. In existing linear Transformers, both NNs are feedforward and consist of a single layer. Here we explore new variations by adding recurrence to the slow and fast nets. We evaluate our novel recurrent FWPs (RFWPs) on two synthetic algorithmic tasks (code execution and sequential ListOps), Wikitext-103 language models, and on the Atari 2600 2D game environment. Our models exhibit properties of Transformers and RNNs. In the reinforcement learning setting, we report large improvements over LSTM in several Atari games. Our code is public.},
+  articleno = {590},
+  isbn = {978-1-7138-4539-3},
+  file = {/home/jaden/snap/zotero-snap/common/Zotero/storage/PG7B6CZZ/Irie et al. - 2021 - Going Beyond Linear Transformers with Recurrent Fast Weight Programmers.pdf}
+}
+
+@inproceedings{clark-etal-2022-meta,
+  title = {Meta-Learning Fast Weight Language Models},
+  booktitle = {Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing},
+  author = {Clark, Kevin and Guu, Kelvin and Chang, Ming-Wei and Pasupat, Panupong and Hinton, Geoffrey and Norouzi, Mohammad},
+  editor = {Goldberg, Yoav and Kozareva, Zornitsa and Zhang, Yue},
+  year = 2022,
+  month = dec,
+  pages = {9751--9757},
+  publisher = {Association for Computational Linguistics},
+  address = {Abu Dhabi, United Arab Emirates},
+  doi = {10.18653/v1/2022.emnlp-main.661},
+  abstract = {Dynamic evaluation of language models (LMs) adapts model parameters at test time using gradient information from previous tokens and substantially improves LM performance. However, it requires over 3x more compute than standard inference. We present Fast Weight Layers (FWLs), a neural component that provides the benefits of dynamic evaluation much more efficiently by expressing gradient updates as linear attention. A key improvement over dynamic evaluation is that FWLs can also be applied at training time, so the model learns to make good use of gradient updates. FWLs can easily be added on top of existing transformer models, require relatively little extra compute or memory to run, and significantly improve language modeling perplexity.},
+  file = {/home/jaden/snap/zotero-snap/common/Zotero/storage/ZAWUDU35/Clark et al. - 2022 - Meta-Learning Fast Weight Language Models.pdf}
+}
+
+@inproceedings{mikolovRecurrentNeuralNetwork2010,
+  title = {Recurrent Neural Network Based Language Model},
+  booktitle = {Interspeech 2010},
+  author = {Mikolov, Tom{\'a}{\v s} and Karafi{\'a}t, Martin and Burget, Luk{\'a}{\v s} and {\v C}ernock{\'y}, Jan and Khudanpur, Sanjeev},
+  year = 2010,
+  month = sep,
+  pages = {1045--1048},
+  publisher = {ISCA},
+  doi = {10.21437/Interspeech.2010-343},
+  urldate = {2025-03-04},
+  abstract = {A new recurrent neural network based language model (RNN LM) with applications to speech recognition is presented. Results indicate that it is possible to obtain around 50\% reduction of perplexity by using mixture of several RNN LMs, compared to a state of the art backoff language model. Speech recognition experiments show around 18\% reduction of word error rate on the Wall Street Journal task when comparing models trained on the same amount of data, and around 5\% on the much harder NIST RT05 task, even when the backoff model is trained on much more data than the RNN LM. We provide ample empirical evidence to suggest that connectionist language models are superior to standard n-gram techniques, except their high computational (training) complexity. Index Terms: language modeling, recurrent neural networks, speech recognition},
+  langid = {english},
+  file = {/home/jaden/snap/zotero-snap/common/Zotero/storage/STG3FEXR/Mikolov et al. - 2010 - Recurrent neural network based language model.pdf}
+}
+
+@inproceedings{pmlr-v80-krause18a,
+  title = {Dynamic Evaluation of Neural Sequence Models},
+  booktitle = {Proceedings of the 35th International Conference on Machine Learning},
+  author = {Krause, Ben and Kahembwe, Emmanuel and Murray, Iain and Renals, Steve},
+  editor = {Dy, Jennifer and Krause, Andreas},
+  year = 2018,
+  month = jul,
+  series = {Proceedings of Machine Learning Research},
+  volume = {80},
+  pages = {2766--2775},
+  publisher = {PMLR},
+  abstract = {We explore dynamic evaluation, where sequence models are adapted to the recent sequence history using gradient descent, assigning higher probabilities to re-occurring sequential patterns. We develop a dynamic evaluation approach that outperforms existing adaptation approaches in our comparisons. We apply dynamic evaluation to outperform all previous word-level perplexities on the Penn Treebank and WikiText-2 datasets (achieving 51.1 and 44.3 respectively) and all previous character-level cross-entropies on the text8 and Hutter Prize datasets (achieving 1.19 bits/char and 1.08 bits/char respectively).},
+  file = {/home/jaden/snap/zotero-snap/common/Zotero/storage/J6XHV2IG/Krause et al. - Dynamic Evaluation of Neural Sequence Models.pdf}
+}
+
+@inproceedings{finnModelagnosticMetalearningFast2017,
+  title = {Model-Agnostic Meta-Learning for Fast Adaptation of Deep Networks},
+  booktitle = {Proceedings of the 34th International Conference on Machine Learning - Volume 70},
+  author = {Finn, Chelsea and Abbeel, Pieter and Levine, Sergey},
+  year = 2017,
+  series = {{{ICML}}'17},
+  pages = {1126--1135},
+  publisher = {JMLR.org},
+  address = {Sydney, NSW, Australia},
+  abstract = {We propose an algorithm for meta-learning that is model-agnostic, in the sense that it is compatible with any model trained with gradient descent and applicable to a variety of different learning problems, including classification, regression, and reinforcement learning. The goal of meta-learning is to train a model on a variety of learning tasks, such that it can solve new learning tasks using only a small number of training samples. In our approach, the parameters of the model are explicitly trained such that a small number of gradient steps with a small amount of training data from a new task will produce good generalization performance on that task. In effect, our method trains the model to be easy to fine-tune. We demonstrate that this approach leads to state-of-the-art performance on two few-shot image classification benchmarks, produces good results on few-shot regression, and accelerates fine-tuning for policy gradient reinforcement learning with neural network policies.},
+  file = {/home/jaden/snap/zotero-snap/common/Zotero/storage/YH47YUWF/Finn et al. - 2017 - Model-agnostic meta-learning for fast adaptation of deep networks.pdf}
+}
+
+@inproceedings{noklandDirectFeedbackAlignment,
+  title = {Direct Feedback Alignment Provides Learning in Deep Neural Networks},
+  author = {N{\o}kland, Arild},
+  booktitle = {Proceedings of the 30th International Conference on Neural Information Processing Systems},
+  series = {NIPS'16},
+  year = 2016,
+  pages = {1037--1045},
+  publisher = {Curran Associates Inc.},
+  address = {Red Hook, NY, USA},
+  abstract = {Artificial neural networks are most commonly trained with the back-propagation algorithm, where the gradient for learning is provided by back-propagating the error, layer by layer, from the output layer to the hidden layers. A recently discovered method called feedback-alignment shows that the weights used for propagating the error backward don't have to be symmetric with the weights used for propagation the activation forward. In fact, random feedback weights work evenly well, because the network learns how to make the feedback useful. In this work, the feedback alignment principle is used for training hidden layers more independently from the rest of the network, and from a zero initial condition. The error is propagated through fixed random feedback connections directly from the output layer to each hidden layer. This simple method is able to achieve zero training error even in convolutional networks and very deep networks, completely without error backpropagation. The method is a step towards biologically plausible machine learning because the error signal is almost local, and no symmetric or reciprocal weights are required. Experiments show that the test performance on MNIST and CIFAR is almost as good as those obtained with back-propagation for fully connected networks. If combined with dropout, the method achieves 1.45\% error on the permutation invariant MNIST task.},
+  langid = {english},
+  file = {/home/jaden/snap/zotero-snap/common/Zotero/storage/BYJWJWGC/Nøkland - Direct Feedback Alignment Provides Learning in Deep Neural Networks.pdf}
+}

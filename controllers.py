@@ -132,11 +132,15 @@ class HinfController(BaseController):
         if P < 0:
             return None
 
-        # Verify closed-loop stability
-        K = B * A * P / (R + B**2 * P - (B * E)**2 * P / (gamma**2 + E**2 * P - 1e-30))
-        # Simplified for scalar: K = B*A*P / (R + B²P) when gamma is large enough
-        K_simple = B * A * P / (R + B**2 * P)
-        A_cl = A - B * K_simple
+        # Verify closed-loop stability using the true H-inf gain.
+        # For the scalar minimax game min_u max_d Σ[Qx² + Ru² - γ²d²],
+        # the saddle-point control gain is:
+        #   K = γ²·B·A·P / [γ²(R + B²P) - R·E²·P]
+        denom = gamma**2 * (R + B**2 * P) - R * E**2 * P
+        if denom <= 0:
+            return None
+        K_hinf = gamma**2 * B * A * P / denom
+        A_cl = A - B * K_hinf
         if abs(A_cl) >= 1.0:
             return None
 
@@ -180,8 +184,9 @@ class HinfController(BaseController):
             if gamma_ub - gamma_lb < tol:
                 break
 
-        # Compute gain at optimal gamma
-        K = (B * A * P) / (R + B**2 * P)
+        # Compute gain at optimal gamma using the true H-inf formula
+        denom = gamma_ub**2 * (R + B**2 * P) - R * E**2 * P
+        K = gamma_ub**2 * B * A * P / denom
         return gamma_ub, P, K
 
     def compute_alpha(self, x, x_ref=None):
