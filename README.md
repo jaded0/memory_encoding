@@ -66,9 +66,14 @@ pip install torch wandb matplotlib numpy psutil
 
 ### Basic Training
 
+The defaults are the configuration the run scripts use: ephemeral model, DFA, no recurrence,
+`last_one` input, no normalization or clipping, batch 16, and the hyperparameters
+(lr 1e-4, plasticity 1e5, forget rate 0.01, hidden 1024, 10% ephemeral weights) that solve
+3-char palindromes. `python train.py --help` lists every default.
+
 ```bash
-# Train with DFA updates
-python train.py --updater dfa --model_type ephemeral
+# Train with DFA updates (the defaults)
+python train.py
 
 # Train with backprop updates
 python train.py --updater backprop --model_type ephemeral
@@ -82,10 +87,10 @@ python train.py --updater bptt --model_type ephemeral
 - `--updater`: Choose between `dfa`, `backprop`, or `bptt`
 - `--model_type`: Choose between `rnn` or `ephemeral`
 - `--learning_rate`: Learning rate for weight updates
-- `--plast_learning_rate`: Learning rate for plasticity parameters
-- `--plast_clip`: Maximum value for high-plasticity weights
+- `--plast_clip`: Plasticity (learning-rate multiplier, alpha) of the ephemeral weights
 - `--plast_proportion`: Proportion of weights that are high-plasticity
-- `--forget_rate`: Forgetting factor for high-plasticity weights
+- `--forget_rate`: Fraction of each ephemeral weight removed per step
+- `--resume` / `--resume_checkpoint PATH`: Resume from `latest_checkpoint.pth`, or from an explicit checkpoint
 - `--batch_size`: Number of sequences processed together
 - `--seed`: Seed Python, NumPy, Torch, dataset shuffling, and DataLoader sampling
 - `--deterministic`: Require deterministic Torch operations; requires `--seed`

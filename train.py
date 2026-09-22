@@ -301,44 +301,48 @@ def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, l
 
 def main():
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Train a model with specified hyperparameters.')
-    parser.add_argument('--learning_rate', type=float, default=0.005, help='Learning rate for the optimizer')
+    # Defaults match the configuration the run scripts actually use; the model hyperparameters
+    # (lr, plast_clip, forget_rate, hidden_size, plast_proportion, dataset) are the bench_sweep point
+    # that solves 3-char palindromes without recurrence.
+    parser = argparse.ArgumentParser(description='Train a model with specified hyperparameters.',
+                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate for the optimizer')
     parser.add_argument('--plast_learning_rate', type=float, default=0.005, help='Learning rate for the plasticity')
-    parser.add_argument('--plast_clip', type=float, default=0.005, help='How high the plasticity can go.')
+    parser.add_argument('--plast_clip', type=float, default=1e5, help='Plasticity (learning-rate multiplier) of the ephemeral weights, alpha.')
     parser.add_argument('--imprint_rate', type=float, default=0.00, help='Imprint rate (unused)')
-    parser.add_argument('--forget_rate', type=float, default=0.00, help='Forget rate, forgetting factor, prevents explosion.')
+    parser.add_argument('--forget_rate', type=float, default=0.01, help='Fraction of each ephemeral weight removed per step (w <- (1 - forget_rate) w).')
     parser.add_argument('--checkpoint_save_freq', type=int, default=10000,
                         help='How often to save a checkpoint (in iterations).')
-    parser.add_argument('--residual_connection', type=str2bool, nargs='?', const=True, default=True, help='whether to have a skip connection')
-    parser.add_argument('--grad_clip', type=float, default=1e-1, help='Clip gradients to this value.')
-    parser.add_argument('--hidden_size', type=int, default=128, help='Size of hidden layers in RNN')
+    parser.add_argument('--residual_connection', type=str2bool, nargs='?', const=True, default=False, help='whether to have a skip connection')
+    parser.add_argument('--grad_clip', type=float, default=0, help='Element-wise clip on ephemeral-weight updates (0 = off).')
+    parser.add_argument('--hidden_size', type=int, default=1024, help='Size of hidden layers in RNN')
     parser.add_argument('--num_layers', type=int, default=3, help='Number of layers in RNN')
     parser.add_argument('--n_iters', type=int, default=10000, help='Number of training iterations')
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
     parser.add_argument('--model_type', type=str, default='ephemeral', choices=['rnn', 'ephemeral'], help='Model architecture to use.')
     parser.add_argument('--updater', type=str, default='dfa', choices=['dfa', 'backprop', 'bptt'], help='Weight update algorithm to use.')
-    parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=True, help='Whether to normalize the weights.')
-    parser.add_argument('--clip_weights', type=float, default=1, help='Whether to clip the weights.')
+    parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=False, help='Rescale every float parameter of each layer to unit norm after each update (also rescales plasticity and forgetting).')
+    parser.add_argument('--clip_weights', type=float, default=0, help='Clamp candidate weights to [-clip_weights, clip_weights] (0 = off).')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
-    parser.add_argument('--dataset', type=str, default='roneneldan/tinystories', help='The dataset used for training.')
+    parser.add_argument('--dataset', type=str, default='3_palindrome_dataset_vary_length', help='The dataset used for training.')
     parser.add_argument('--notes', type=str, default='nothing to say', help='talk about this run')
     parser.add_argument('--group', type=str, default="nothing_in_particular", help='Description of what sort of experiment is being run, here.')
     parser.add_argument('--tags', nargs='*', default=[], help="List of tags for WandB")
-    parser.add_argument('--batch_size', type=int, default=4, help='how much to stuff in at once')
+    parser.add_argument('--batch_size', type=int, default=16, help='how much to stuff in at once')
     parser.add_argument('--positional_encoding_dim', type=int, default=0,
                         help='Dimension for optional positional encoding (0 means off).')
     parser.add_argument('--self_grad', type=float, default=0.0, help='Scale of self_grad. grad based replacement for recurrence.')
-    parser.add_argument('--input_mode', type=str, default='last_two', choices=['last_one', 'last_two'],
+    parser.add_argument('--input_mode', type=str, default='last_one', choices=['last_one', 'last_two'],
                         help='Input mode: use last one or last two characters.')
     parser.add_argument('--checkpoint_dir', type=str, default='./checkpoints',
                         help='Directory to save checkpoints.')
     parser.add_argument('--resume_checkpoint', type=str, default=None,
-                        help='Path to checkpoint to resume training from (e.g., checkpoints/latest_checkpoint.pth).')
-    parser.add_argument('--plast_proportion', type=float, default=0.2, help='Proportion of weights that are plastic in ephemeral layers.')  # <-- Add this line
-    parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=True, help='Whether to enable recurrent hidden state connections')
+                        help='Resume from this checkpoint (always resumes; errors if missing).')
+    parser.add_argument('--plast_proportion', type=float, default=0.1, help='Proportion of weights that are ephemeral (high-plasticity) in each layer.')
+    parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=False, help='Whether to enable recurrent hidden state connections')
     parser.add_argument('--log_freq', type=int, default=None, help='Frequency for W&B sync triggers (overrides LOG_FREQ environment variable)')
-    parser.add_argument('--no_resume', type=str2bool, nargs='?', const=True, default=True, help='Disable automatic checkpoint resumption (default: True)')
-    parser.add_argument('--seed', type=int, default=None, help='Seed Python, NumPy, Torch, and data loading (default: unseeded).')
+    parser.add_argument('--resume', type=str2bool, nargs='?', const=True, default=False, help='Resume from <checkpoint_dir>/latest_checkpoint.pth if it exists.')
+    parser.add_argument('--seed', type=int, default=None, help='Seed Python, NumPy, Torch, and data loading (unset = unseeded).')
     parser.add_argument('--deterministic', type=str2bool, nargs='?', const=True, default=False,
                         help='Require deterministic Torch operations; requires --seed.')
 
@@ -474,23 +478,20 @@ def main():
 
     # --- Resume from Checkpoint ---
 
-    # Attempt to resume if --resume_checkpoint is given OR if latest_checkpoint.pth exists
-    # But only if --no_resume is False
+    # An explicit --resume_checkpoint always resumes; --resume picks up latest_checkpoint.pth if present.
     checkpoint_to_load = None
-    if not args.no_resume:
-        if args.resume_checkpoint:
-            if not os.path.isfile(args.resume_checkpoint):
-                raise FileNotFoundError(f"Explicit resume checkpoint not found: {args.resume_checkpoint}")
-            checkpoint_to_load = args.resume_checkpoint
-            print(f"Attempting to resume from explicit checkpoint: {checkpoint_to_load}")
-
-        elif os.path.isfile(latest_checkpoint_path): # No explicit resume, but latest exists
-            checkpoint_to_load = latest_checkpoint_path
-            print(f"Found latest checkpoint. Attempting to resume from: {checkpoint_to_load}")
-        else:
-            print("No checkpoint specified and no latest_checkpoint.pth found. Starting from scratch.")
+    if args.resume_checkpoint:
+        if not os.path.isfile(args.resume_checkpoint):
+            raise FileNotFoundError(f"Explicit resume checkpoint not found: {args.resume_checkpoint}")
+        checkpoint_to_load = args.resume_checkpoint
+        print(f"Attempting to resume from explicit checkpoint: {checkpoint_to_load}")
+    elif args.resume and os.path.isfile(latest_checkpoint_path):
+        checkpoint_to_load = latest_checkpoint_path
+        print(f"Found latest checkpoint. Attempting to resume from: {checkpoint_to_load}")
+    elif args.resume:
+        print(f"--resume given but no checkpoint at {latest_checkpoint_path}. Starting from scratch.")
     else:
-        print("Checkpoint resumption disabled by --no_resume flag. Starting from scratch.")
+        print("Starting from scratch (pass --resume or --resume_checkpoint to resume).")
 
 
     if checkpoint_to_load:

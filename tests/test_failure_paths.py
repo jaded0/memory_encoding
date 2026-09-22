@@ -86,7 +86,7 @@ class MainFailurePathTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             missing = os.path.join(directory, "missing.pth")
             with self.assertRaises(FileNotFoundError):
-                run_main("--no_resume", "False", "--resume_checkpoint", missing, checkpoint_dir=directory)
+                run_main("--resume_checkpoint", missing, checkpoint_dir=directory)
 
     def test_unreadable_checkpoint_raises_instead_of_restarting(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -94,7 +94,15 @@ class MainFailurePathTest(unittest.TestCase):
             with open(corrupt, "wb") as handle:
                 handle.write(b"not a checkpoint")
             with self.assertRaises(Exception):
-                run_main("--no_resume", "False", checkpoint_dir=directory)
+                run_main("--resume", checkpoint_dir=directory)
+
+    def test_explicit_checkpoint_resumes_without_extra_flags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_main("--checkpoint_save_freq", "3", checkpoint_dir=directory)
+            latest = os.path.join(directory, "latest_checkpoint.pth")
+            with patch.object(train_module, "load_checkpoint", wraps=train_module.load_checkpoint) as loader:
+                run_main("--resume_checkpoint", latest, "--n_iters", "5", checkpoint_dir=directory)
+            loader.assert_called_once()
 
     def test_clean_run_completes(self):
         with tempfile.TemporaryDirectory() as directory:

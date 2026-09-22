@@ -41,7 +41,7 @@ the real `train.train()` entry point for each updater. Each trace uses:
 - Seed 1729 and strict deterministic mode.
 - A fixed two-example, five-token in-memory sequence over `abcd`.
 - One recurrent layer, hidden size 4, and `last_two` input mode.
-- Recurrence enabled, matching the CLI default.
+- Recurrence enabled (the CLI default at the time; the default is now off).
 - Normalization and weight clipping disabled so raw mechanics remain visible.
 - Learning rate 0.01, gradient clip 0.2, plasticity 3.0, forgetting 0.25, and plastic proportion 0.5.
 

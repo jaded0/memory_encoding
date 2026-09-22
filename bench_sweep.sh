@@ -178,7 +178,7 @@ python -u train.py \
     --notes "$RUN_NOTES" \
     --plast_proportion $PLAST_PROPORTION \
     --enable_recurrence $ENABLE_RECURRENCE \
-    --no_resume true
+    --resume false
 
 echo "--- Bench Sweep Task $SLURM_ARRAY_TASK_ID Finished ---"
 
