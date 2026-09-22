@@ -48,20 +48,43 @@ def recall_chance(dataset_name):
     return None
 
 
+MAX_LAG = 60  # recall lags are bucketed by key = lag + 2 (0 = padding, 1 = non-recall target)
+KEYS = MAX_LAG + 2
+MASK_CACHE_LIMIT = 100_000
+
+
 class IntervalMetrics:
-    """Accumulates metrics over a logging interval. Tensors stay on device until ``summary()``."""
+    """Accumulates metrics over a logging interval with a handful of kernels and no device syncs.
+
+    Each target position gets a key (0 padding, 1 ordinary target, lag + 2 recall target); per-key counts,
+    correct predictions, and losses are reduced with ``scatter_add_`` into one stats vector that stays on device
+    until ``summary()``. Per-sequence masks are cached, since synthetic tasks have few distinct sequences.
+    """
 
     def __init__(self, dataset_name):
         self.dataset_name = dataset_name
+        self.has_recall = recall_chance(dataset_name) is not None
+        self._mask_cache = {}
         self.reset()
 
     def reset(self):
-        self.sums = {}
-        self.lag_sums = {}
+        self.stats = None
         self.iterations = 0
 
-    def _add(self, store, key, value):
-        store[key] = store.get(key, 0) + value
+    def _masks(self, text):
+        cached = self._mask_cache.get(text)
+        if cached is None:
+            keys = torch.ones(len(text) - 1, dtype=torch.long)
+            positions, end_index = recall_targets(text, self.dataset_name)
+            for target, lag in positions.items():
+                if target < len(text):
+                    if lag > MAX_LAG:
+                        raise ValueError(f"recall lag {lag} exceeds MAX_LAG={MAX_LAG}")
+                    keys[target - 1] = lag + 2
+            cached = (keys, end_index - 1 if end_index is not None else -1)
+            if len(self._mask_cache) < MASK_CACHE_LIMIT:
+                self._mask_cache[text] = cached
+        return cached
 
     def update(self, texts, onehot, preds, losses):
         """Add one batch.
@@ -74,65 +97,62 @@ class IntervalMetrics:
         targets = onehot[:, 1:].argmax(-1)
         valid = onehot[:, 1:].sum(-1) > 0  # padding rows are all-zero
         correct = (preds == targets) & valid
+        batch, steps = valid.shape
         self.iterations += 1
 
-        self._add(self.sums, "loss", (losses * valid).sum())
-        self._add(self.sums, "tokens", valid.sum())
-        self._add(self.sums, "correct", correct.sum())
-        last = valid.sum(1) - 1  # index of each sequence's final target
-        rows = torch.arange(preds.shape[0], device=device)
-        self._add(self.sums, "final_correct", correct[rows, last].sum())
-        self._add(self.sums, "final_count", preds.shape[0])
+        if self.has_recall:
+            masks = [self._masks(text) for text in texts]
+            key_rows = [row for row, _ in masks]
+            if all(len(row) == steps for row in key_rows):
+                keys = torch.stack(key_rows)
+            else:
+                keys = torch.zeros(batch, steps, dtype=torch.long)
+                for b, row in enumerate(key_rows):
+                    keys[b, :len(row)] = row[:steps]
+            end = torch.tensor([e for _, e in masks], dtype=torch.long)
+            keys, end = keys.to(device, non_blocking=True) * valid, end.to(device, non_blocking=True)
+        else:
+            keys, end = valid.long(), torch.full((batch,), -1, dtype=torch.long, device=device)
 
-        # Build masks on the CPU (the lags are known there) to avoid a device sync every iteration.
-        recall = torch.zeros(valid.shape, dtype=torch.bool)
-        lag = torch.full(valid.shape, -1, dtype=torch.long)
-        end = torch.zeros(valid.shape, dtype=torch.bool)
-        lags_seen = set()
-        for b, text in enumerate(texts):
-            positions, end_index = recall_targets(text, self.dataset_name)
-            for target, target_lag in positions.items():
-                if target >= len(text):
-                    continue  # truncated sequence
-                recall[b, target - 1] = True
-                lag[b, target - 1] = target_lag
-                lags_seen.add(target_lag)
-            if end_index is not None:
-                end[b, end_index - 1] = True
-        if not lags_seen:
-            return
-        recall, lag, end = (t.to(device, non_blocking=True) for t in (recall, lag, end))
+        # scatter_add_ into fixed-size buffers: unlike bincount on CUDA, it needs no device sync
+        flat = keys.flatten()
+        per_key = torch.zeros(3, KEYS, device=device)
+        values = torch.stack([valid.flatten().float(), correct.flatten().float(), (losses * valid).flatten()])
+        per_key.scatter_add_(1, flat.expand(3, -1), values)
+        counts, hits, loss_sums = per_key
 
-        self._add(self.sums, "recall_correct", (correct & recall).sum())
-        self._add(self.sums, "recall_count", recall.sum())
-        self._add(self.sums, "recall_loss", (losses * recall).sum())
-        other = valid & ~recall
-        self._add(self.sums, "other_loss", (losses * other).sum())
-        self._add(self.sums, "other_count", other.sum())
+        rows = torch.arange(batch, device=device)
+        recall = keys >= 2
         has_recall = recall.any(1)
-        exact = ((correct | ~recall).all(1) & has_recall).sum()
-        self._add(self.sums, "seq_exact", exact)
-        self._add(self.sums, "seq_count", has_recall.sum())
-        self._add(self.sums, "end_correct", (correct & end).sum())
-        self._add(self.sums, "end_count", end.sum())
-        for value in lags_seen:
-            at_lag = lag == value
-            self._add(self.lag_sums, (value, "correct"), (correct & at_lag).sum())
-            self._add(self.lag_sums, (value, "count"), at_lag.sum())
+        has_end = end >= 0
+        end_hit = correct[rows, end.clamp(min=0)] & has_end
+        extras = torch.stack([
+            correct[rows, valid.sum(1) - 1].sum(), torch.tensor(batch, device=device),
+            ((correct | ~recall).all(1) & has_recall).sum(), has_recall.sum(),
+            end_hit.sum(), has_end.sum(),
+        ]).float()
+        stats = torch.cat([counts, hits, loss_sums, extras])
+        self.stats = stats if self.stats is None else self.stats + stats
 
     def summary(self):
-        s = {k: float(v) for k, v in self.sums.items()}
-        ratio = lambda num, den: s[num] / s[den] if s.get(den) else None
+        if self.stats is None:
+            return {}
+        stats = self.stats.cpu()
+        counts, hits, loss_sums, extras = stats[:KEYS], stats[KEYS:2 * KEYS], stats[2 * KEYS:3 * KEYS], stats[3 * KEYS:]
+        final_hit, final_count, exact, seq_count, end_hit, end_count = extras.tolist()
+        ratio = lambda num, den: float(num) / float(den) if den else None
+        tokens, recall_count = counts[1:].sum(), counts[2:].sum()
         out = {
-            "loss": ratio("loss", "tokens"),
-            "token_acc": ratio("correct", "tokens"),
-            "final_char_acc": ratio("final_correct", "final_count"),
-            "recall_acc": ratio("recall_correct", "recall_count"),
-            "recall_loss": ratio("recall_loss", "recall_count"),
-            "other_loss": ratio("other_loss", "other_count"),
-            "recall_seq_exact": ratio("seq_exact", "seq_count"),
-            "recall_end_acc": ratio("end_correct", "end_count"),
+            "loss": ratio(loss_sums[1:].sum(), tokens),
+            "token_acc": ratio(hits[1:].sum(), tokens),
+            "final_char_acc": ratio(final_hit, final_count),
+            "recall_acc": ratio(hits[2:].sum(), recall_count),
+            "recall_loss": ratio(loss_sums[2:].sum(), recall_count),
+            "other_loss": ratio(loss_sums[1], counts[1]) if recall_count else None,
+            "recall_seq_exact": ratio(exact, seq_count),
+            "recall_end_acc": ratio(end_hit, end_count),
         }
-        for value in sorted({lag for lag, _ in self.lag_sums}):
-            out[f"recall_acc_lag_{value}"] = float(self.lag_sums[(value, "correct")]) / float(self.lag_sums[(value, "count")])
+        for key in range(2, KEYS):
+            if counts[key]:
+                out[f"recall_acc_lag_{key - 2}"] = float(hits[key] / counts[key])
         return {k: v for k, v in out.items() if v is not None}
