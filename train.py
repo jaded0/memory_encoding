@@ -1,6 +1,6 @@
-# hebby.py
+# train.py
 import torch
-from hebbian_model import EtherealRNN, SimpleRNN
+from ephemeral_model import EphemeralRNN, SimpleRNN
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
@@ -73,8 +73,8 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
 
-    # For EtherealRNN, reset high-plasticity weights at the start of the sequence
-    if isinstance(rnn, EtherealRNN):
+    # For EphemeralRNN, reset high-plasticity weights at the start of the sequence
+    if isinstance(rnn, EphemeralRNN):
         rnn.wipe()
 
     loss_total = 0.0
@@ -137,7 +137,7 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                 reward_update += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
             
             # Apply DFA updates using unified approach
-            if isinstance(rnn, EtherealRNN):
+            if isinstance(rnn, EphemeralRNN):
                 # Populate gradients using DFA feedback weights
                 for layer in rnn.linear_layers:
                     layer.populate_dfa_gradients(reward_update)
@@ -161,8 +161,8 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
             
         elif updater == 'backprop':
             # Backprop-specific processing
-            if isinstance(rnn, EtherealRNN):
-                # EtherealRNN with TRUE backprop - compute gradients through the network
+            if isinstance(rnn, EphemeralRNN):
+                # EphemeralRNN with TRUE backprop - compute gradients through the network
                 step_loss = criterion(output, final_char)
                 losses.append(step_loss.detach())
                 
@@ -235,8 +235,8 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
             
             # Only backward and update on the last step to get full sequence gradients
             if i == onehot_line_tensor.size()[1] - 2:  # Last step
-                if isinstance(rnn, EtherealRNN):
-                    # EtherealRNN with BPTT - backward through entire accumulated loss
+                if isinstance(rnn, EphemeralRNN):
+                    # EphemeralRNN with BPTT - backward through entire accumulated loss
                     total_loss = accumulated_loss.mean() if accumulated_loss.dim() > 0 else accumulated_loss
                     total_loss.backward(retain_graph=False)
                     
@@ -250,7 +250,7 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                     if state.get('log_norms_now', False):
                         rnn.store_all_grad_norms()
                     
-                    # Manual optimizer step for HebbyRNN
+                    # Manual optimizer step for EphemeralRNN
                     with torch.no_grad():
                         for param in rnn.parameters():
                             if param.grad is not None:
@@ -292,7 +292,7 @@ def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, l
     """Main training function that sets up criterion and calls unified trainer."""
     # For ALL updaters, use 'none' reduction to preserve per-example gradients
     # This allows independent weight updates per sequence in the batch
-    # This is critical for ethereal weights to adapt independently per sequence
+    # This is critical for ephemeral weights to adapt independently per sequence
     if config['criterion'].reduction != 'none':
         print(f"Warning: Overriding criterion reduction to 'none' for {config['updater']} training.")
         config['criterion'] = type(config['criterion'])(reduction='none')
@@ -305,7 +305,7 @@ def main():
     parser.add_argument('--learning_rate', type=float, default=0.005, help='Learning rate for the optimizer')
     parser.add_argument('--plast_learning_rate', type=float, default=0.005, help='Learning rate for the plasticity')
     parser.add_argument('--plast_clip', type=float, default=0.005, help='How high the plasticity can go.')
-    parser.add_argument('--imprint_rate', type=float, default=0.00, help='Imprint rate for Hebbian updates')
+    parser.add_argument('--imprint_rate', type=float, default=0.00, help='Imprint rate (unused)')
     parser.add_argument('--forget_rate', type=float, default=0.00, help='Forget rate, forgetting factor, prevents explosion.')
     parser.add_argument('--checkpoint_save_freq', type=int, default=10000,
                         help='How often to save a checkpoint (in iterations).')
@@ -315,7 +315,7 @@ def main():
     parser.add_argument('--num_layers', type=int, default=3, help='Number of layers in RNN')
     parser.add_argument('--n_iters', type=int, default=10000, help='Number of training iterations')
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
-    parser.add_argument('--model_type', type=str, default='ethereal', choices=['rnn', 'ethereal'], help='Model architecture to use.')
+    parser.add_argument('--model_type', type=str, default='ephemeral', choices=['rnn', 'ephemeral'], help='Model architecture to use.')
     parser.add_argument('--updater', type=str, default='dfa', choices=['dfa', 'backprop', 'bptt'], help='Weight update algorithm to use.')
     parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=True, help='Whether to normalize the weights.')
     parser.add_argument('--clip_weights', type=float, default=1, help='Whether to clip the weights.')
@@ -334,7 +334,7 @@ def main():
                         help='Directory to save checkpoints.')
     parser.add_argument('--resume_checkpoint', type=str, default=None,
                         help='Path to checkpoint to resume training from (e.g., checkpoints/latest_checkpoint.pth).')
-    parser.add_argument('--plast_proportion', type=float, default=0.2, help='Proportion of weights that are plastic in Hebbian layers.')  # <-- Add this line
+    parser.add_argument('--plast_proportion', type=float, default=0.2, help='Proportion of weights that are plastic in ephemeral layers.')  # <-- Add this line
     parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=True, help='Whether to enable recurrent hidden state connections')
     parser.add_argument('--log_freq', type=int, default=None, help='Frequency for W&B sync triggers (overrides LOG_FREQ environment variable)')
     parser.add_argument('--no_resume', type=str2bool, nargs='?', const=True, default=True, help='Disable automatic checkpoint resumption (default: True)')
@@ -368,7 +368,7 @@ def main():
         "imprint_rate": args.imprint_rate,
         "forget_rate": args.forget_rate,
         "checkpoint_save_freq": args.checkpoint_save_freq,
-        # Use 'mean' for backprop, will be overridden to 'none' in train() for Hebby
+        # Use 'mean' for backprop, will be overridden to 'none' in train() for the ephemeral model
         "criterion": torch.nn.CrossEntropyLoss(reduction='mean'),
         "residual_connection": args.residual_connection,
         "grad_clip": args.grad_clip,
@@ -487,9 +487,9 @@ def main():
         print(f"Initializing SimpleRNN model with '{args.updater}' updater.")
         rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"], 
                        dropout_rate=0, enable_recurrence=args.enable_recurrence)
-    elif args.model_type == 'ethereal':
-        print(f"Initializing EtherealRNN model with '{args.updater}' updater.")
-        rnn = EtherealRNN(
+    elif args.model_type == 'ephemeral':
+        print(f"Initializing EphemeralRNN model with '{args.updater}' updater.")
+        rnn = EphemeralRNN(
             base_input_size, config["n_hidden"], output_size, config["n_layers"], charset,
             normalize=args.normalize, residual_connection=args.residual_connection,
             clip_weights=args.clip_weights, updater=args.updater,
@@ -550,7 +550,7 @@ def main():
             print(f"resumed, starting from iter: {start_iter}")
 
             # Check if plast_clip has changed and update plasticity parameters if needed
-            if isinstance(rnn, EtherealRNN):
+            if isinstance(rnn, EphemeralRNN):
                 loaded_plast_clip = loaded_config.get('plast_clip', 1.0)
                 current_plast_clip = config.get('plast_clip', 1.0)
                 
@@ -592,7 +592,7 @@ def main():
                 if optimizer: # If backprop and optimizer exists
                     # Move optimizer states to device if it was re-initialized
                     # This is more for general robustness if optimizer was somehow re-created
-                    # For your Hebby case, optimizer is None, so this part is less critical here.
+                    # For the ephemeral DFA case, optimizer is None, so this part is less critical here.
                     for state_val in optimizer.state.values():
                         for k, v in state_val.items():
                             if isinstance(v, torch.Tensor):
@@ -713,7 +713,7 @@ def main():
             line_tensor = line_tensor.to(device)
             onehot_line_tensor = onehot_line_tensor.to(device)
 
-            # Ensure batch size matches model expectation if using HebbyRNN with fixed batch size param
+            # Ensure batch size matches model expectation if using EphemeralRNN with fixed batch size param
             if args.updater != "backprop" and hasattr(rnn, 'batch_size') and onehot_line_tensor.shape[0] != rnn.batch_size:
                  print(f"Warning: Batch size mismatch ({onehot_line_tensor.shape[0]} vs {rnn.batch_size}). Skipping batch.")
                  continue # Skip this batch
@@ -889,7 +889,7 @@ def main():
                     low_plast_updates = [v for k, v in model_norms.items() if 'low_plast_update_norm' in k]
                     # Also keep track of backprop norms if needed (check if 'grad_norm' exists)
                     grad_norms = [v for k, v in model_norms.items() if 'grad_norm' in k]
-                    all_weights = [v for k, v in model_norms.items() if 'weight_norm' in k] # For backprop or combined hebby
+                    all_weights = [v for k, v in model_norms.items() if 'weight_norm' in k] # For backprop or combined ephemeral
 
                     avg_hp_w_norm = sum(high_plast_weights) / len(high_plast_weights) if high_plast_weights else 0.0
                     avg_lp_w_norm = sum(low_plast_weights) / len(low_plast_weights) if low_plast_weights else 0.0
@@ -905,7 +905,7 @@ def main():
                         "avg_step_acc_t1": avg_step_acc_t1_plot,
                         "avg_step_acc_t2": avg_step_acc_t2_plot,
                         "avg_weight_norm": avg_weight_norm, # Combined / Backprop
-                        "avg_grad_update_norm": avg_grad_norm or (avg_hp_u_norm + avg_lp_u_norm), # Backprop or sum of Hebby
+                        "avg_grad_update_norm": avg_grad_norm or (avg_hp_u_norm + avg_lp_u_norm), # Backprop or sum of ephemeral
                         "avg_high_plast_weight_norm": avg_hp_w_norm,
                         "avg_low_plast_weight_norm": avg_lp_w_norm,
                         "avg_high_plast_update_norm": avg_hp_u_norm,

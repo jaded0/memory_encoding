@@ -3,7 +3,7 @@
 # ==============================================================================
 # run_training.sh
 #
-# Shell script to run the training script `hebby.py` with specified
+# Shell script to run the training script `train.py` with specified
 # hyperparameters.
 # ==============================================================================
 
@@ -30,7 +30,7 @@ NOTES="Benchmarking backprop on palindromes with last_two input."
 # Update Rule: Determines how model weights are adjusted.
 # Options: backprop, static_plastic_candidate, dfa, damage, oja, competitive,
 #          covariance, hpca, candidate, plastic_candidate.
-# See hebby.py for details on each rule.
+# See train.py for details on each rule.
 UPDATE_RULE='backprop'
 
 # Input Mode: Determines how many previous characters are fed into the model.
@@ -39,7 +39,7 @@ UPDATE_RULE='backprop'
 #   last_two: Uses the two most recent characters (current + previous).
 INPUT_MODE='last_two' # Choose 'last_one' or 'last_two'
 
-# Learning Rate: Step size for weight updates (backprop or Hebby rule base rate).
+# Learning Rate: Step size for weight updates (backprop or ephemeral rule base rate).
 # Smaller values -> slower, potentially more stable.
 # Larger values -> faster, potentially unstable.
 LEARNING_RATE=1e-3
@@ -51,10 +51,10 @@ PLAST_LEARNING_RATE=1e-10 # Relevant only for specific update rules
 # Plasticity Clip: Maximum value for plasticity parameters. (Ignored by 'backprop').
 PLAST_CLIP=1e3 # Relevant only for specific update rules
 
-# Imprint Rate: Strength of imprinting in Hebbian rules. (Ignored by 'backprop').
+# Imprint Rate: Strength of imprinting (unused). (Ignored by 'backprop').
 IMPRINT_RATE=0.3 # Relevant only for specific update rules
 
-# Forget Rate: Decay factor for weights in some Hebbian rules to prevent explosion.
+# Forget Rate: Decay factor for ephemeral weights to prevent explosion.
 # (Ignored by 'backprop').
 FORGET_RATE=0.3 # Relevant only for specific update rules
 
@@ -126,7 +126,7 @@ echo "  WandB Group: $GROUP"
 echo "  WandB Notes: $NOTES"
 echo "---"
 
-python hebby.py --learning_rate $LEARNING_RATE \
+python train.py --learning_rate $LEARNING_RATE \
                 --plast_learning_rate $PLAST_LEARNING_RATE \
                 --plast_clip $PLAST_CLIP \
                 --imprint_rate $IMPRINT_RATE \

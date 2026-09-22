@@ -22,7 +22,7 @@ TRACK=false
 DATASET=jbrazzy/baby_names
 CANDECAY=0.1
 
-python hebby.py --learning_rate $LEARNING_RATE \
+python train.py --learning_rate $LEARNING_RATE \
 --imprint_rate $IMPRINT_RATE \
 --stochasticity $STOCHASTICITY \
 --len_reward_history $LEN_REWARD_HISTORY \

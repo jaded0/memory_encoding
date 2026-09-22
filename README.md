@@ -1,6 +1,6 @@
-# Memory Encoding with EtherealRNN
+# Memory Encoding with EphemeralRNN
 
-This repository implements and compares different weight update mechanisms for recurrent neural networks, with a focus on the EtherealRNN architecture that features high-plasticity weights for short-term memory.
+This repository implements and compares different weight update mechanisms for recurrent neural networks, with a focus on the EphemeralRNN architecture that features high-plasticity weights for short-term memory.
 
 ## Overview
 
@@ -11,7 +11,7 @@ The project explores three different training approaches:
 
 ## Key Features
 
-### EtherealRNN Architecture
+### EphemeralRNN Architecture
 - **High-Plasticity Weights**: A subset of weights that can adapt rapidly for short-term memory
 - **Per-Batch Adaptation**: Each sequence in a batch has independent weight adaptations
 - **Forgetting Mechanism**: Controlled decay of high-plasticity weights between updates
@@ -68,19 +68,19 @@ pip install torch wandb matplotlib numpy psutil
 
 ```bash
 # Train with DFA updates
-python hebby.py --updater dfa --model_type ethereal
+python train.py --updater dfa --model_type ephemeral
 
 # Train with backprop updates
-python hebby.py --updater backprop --model_type ethereal
+python train.py --updater backprop --model_type ephemeral
 
 # Train with BPTT updates
-python hebby.py --updater bptt --model_type ethereal
+python train.py --updater bptt --model_type ephemeral
 ```
 
 ### Key Parameters
 
 - `--updater`: Choose between `dfa`, `backprop`, or `bptt`
-- `--model_type`: Choose between `rnn` or `ethereal`
+- `--model_type`: Choose between `rnn` or `ephemeral`
 - `--learning_rate`: Learning rate for weight updates
 - `--plast_learning_rate`: Learning rate for plasticity parameters
 - `--plast_clip`: Maximum value for high-plasticity weights
@@ -105,15 +105,15 @@ Run the network-free assertion suite from the repository root:
 CUDA_VISIBLE_DEVICES="" python -m unittest discover -s . -t . -v
 ```
 
-The suite includes fixed-input golden traces through the real `hebby.train()`
+The suite includes fixed-input golden traces through the real `train.train()`
 path for DFA, backprop, and BPTT. See
 [BASELINE_CHARACTERIZATION.md](BASELINE_CHARACTERIZATION.md) for the trace
 schema, regeneration command, and known limitations.
 
 ## Project Structure
 
-- `hebby.py`: Main training script with unified training loop
-- `hebbian_model.py`: Implementation of EtherealRNN and HebbianLinear layers
+- `train.py`: Main training script with unified training loop
+- `ephemeral_model.py`: Implementation of EphemeralRNN and EphemeralLinear layers
 - `preprocess.py`: Data loading and preprocessing utilities
 - `reproducibility.py`: Opt-in seeding and checkpoint RNG state helpers
 - `utils.py`: Helper functions and utilities

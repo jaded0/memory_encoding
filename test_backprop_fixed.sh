@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# run_training.sh - Runs hebby.py with specified hyperparameters.
+# run_training.sh - Runs train.py with specified hyperparameters.
 # ==============================================================================
 
 # --- W&B Tracking ---
@@ -37,14 +37,14 @@ CHECKPOINT_SAVE_FREQ=100000
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
-# MODEL_TYPE: 'ethereal' for the plastic model, 'rnn' for a standard SimpleRNN.
+# MODEL_TYPE: 'ephemeral' for the plastic model, 'rnn' for a standard SimpleRNN.
 # UPDATER: 'dfa' for Direct Feedback Alignment, 'backprop' for standard backpropagation, 'bptt' for backpropagation through time.
 #
-# To run EtherealRNN with backprop: MODEL_TYPE='ethereal', UPDATER='backprop', LEARNING_RATE=1e-5 (example)
+# To run EphemeralRNN with backprop: MODEL_TYPE='ephemeral', UPDATER='backprop', LEARNING_RATE=1e-5 (example)
 # To run SimpleRNN with backprop: MODEL_TYPE='rnn', UPDATER='backprop', LEARNING_RATE=1e-3 (example)
-# To run EtherealRNN with BPTT: MODEL_TYPE='ethereal', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
+# To run EphemeralRNN with BPTT: MODEL_TYPE='ephemeral', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
 #
-MODEL_TYPE='ethereal'           # ethereal | rnn
+MODEL_TYPE='ephemeral'           # ephemeral | rnn
 UPDATER='backprop'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
@@ -54,11 +54,11 @@ PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
 PLAST_CLIP=1e1               # Plasticity max value (much lower for stability)
 GRAD_CLIP=1e0                  # Max gradient norm (enable clipping)
 
-# --- Hebbian / Plasticity Specifics (ignored by backprop) ---
-IMPRINT_RATE=0.0             # Hebbian imprint strength (none for backprop)
+# --- Plasticity Specifics (ignored by backprop) ---
+IMPRINT_RATE=0.0             # Imprint strength (unused) (none for backprop)
 FORGET_RATE=0.01             # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
-PLAST_PROPORTION=0.2         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
+PLAST_PROPORTION=0.2         # Proportion of weights that are plastic in ephemeral layers  # <-- Add this line
 ENABLE_RECURRENCE=true       # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
@@ -94,7 +94,7 @@ mkdir -p "$CHECKPOINT_DIR"
 cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
 
-python -u hebby.py \
+python -u train.py \
     --model_type $MODEL_TYPE \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \

@@ -1,6 +1,6 @@
 #!/bin/bash --login
 # ==============================================================================
-# bench_sweep.sh - SLURM submission script for running hebby.py sweeps
+# bench_sweep.sh - SLURM submission script for running train.py sweeps
 #                   using job arrays for benchmarking sweep.
 # ==============================================================================
 
@@ -21,7 +21,7 @@
 # ======================== Parameter Definitions & Calculation ================
 echo "--- Preparing Bench Sweep Parameters ---"
 # --- Define Hyperparameter Options for Bench Sweep ---
-declare -a model_types=('ethereal')
+declare -a model_types=('ephemeral')
 declare -a updaters=('backprop' 'dfa')
 declare -a enable_recurrence=('false')
 declare -a clip_weights=('0' '1' '10')
@@ -131,7 +131,7 @@ echo "  Output File: slurm_logs/bench_sweep_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_
 echo "---"
 
 # Run the python script
-python -u hebby.py \
+python -u train.py \
     --model_type $MODEL_TYPE \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \

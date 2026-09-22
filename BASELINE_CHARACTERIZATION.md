@@ -10,14 +10,14 @@ Training remains unseeded by default. To seed Python, NumPy, Torch, Hugging Face
 dataset shuffling, DataLoader sampling, and DataLoader workers, pass `--seed`:
 
 ```bash
-python hebby.py --seed 1729
+python train.py --seed 1729
 ```
 
 Strict mode additionally enables deterministic Torch operations, disables
 cuDNN benchmarking and TF32, and configures deterministic cuBLAS behavior:
 
 ```bash
-python hebby.py --seed 1729 --deterministic True
+python train.py --seed 1729 --deterministic True
 ```
 
 `--deterministic` without `--seed` is rejected. A resumed checkpoint must use
@@ -36,7 +36,7 @@ data order as bitwise-continuous until a resumable sampler is implemented.
 ## Golden Trace
 
 `tests/fixtures/training_traces.json` records a fixed, network-free CPU call to
-the real `hebby.train()` entry point for each updater. Each trace uses:
+the real `train.train()` entry point for each updater. Each trace uses:
 
 - Seed 1729 and strict deterministic mode.
 - A fixed two-example, five-token in-memory sequence over `abcd`.

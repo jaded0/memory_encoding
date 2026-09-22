@@ -108,7 +108,7 @@ BATCH_SIZE={batch_size}
 
 python synth_datasets.py
 
-python hebby.py --learning_rate $LEARNING_RATE \\
+python train.py --learning_rate $LEARNING_RATE \\
 --group $GROUP \\
 --imprint_rate $IMPRINT_RATE \\
 --plast_learning_rate $PLAST_LEARNING_RATE \\

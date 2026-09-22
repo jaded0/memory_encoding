@@ -13,7 +13,7 @@ import numpy as np
 # Add the current directory to the path so we can import our modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from hebbian_model import HebbyRNN
+from ephemeral_model import EphemeralRNN
 from utils import initialize_charset
 
 def create_simple_dataset(batch_size=4, seq_len=10, vocab_size=5, num_batches=100):
@@ -75,7 +75,7 @@ def train_model(model_type='dfa', num_epochs=50, learning_rate=0.01):
     print("=" * 40)
     
     # Create model
-    rnn = HebbyRNN(
+    rnn = EphemeralRNN(
         input_size=vocab_size,
         hidden_size=hidden_size,
         output_size=vocab_size,

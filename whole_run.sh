@@ -1,6 +1,6 @@
 #!/bin/bash --login
 # ==============================================================================
-# whole_run.sh - SLURM submission script for running hebby.py
+# whole_run.sh - SLURM submission script for running train.py
 # ==============================================================================
 
 # --- SLURM Directives ---
@@ -77,14 +77,14 @@ CHECKPOINT_SAVE_FREQ=500
 
 # ======================== Core Training Parameters ============================
 # --- Training Strategy ---
-# MODEL_TYPE: 'ethereal' for the plastic model, 'rnn' for a standard SimpleRNN.
+# MODEL_TYPE: 'ephemeral' for the plastic model, 'rnn' for a standard SimpleRNN.
 # UPDATER: 'dfa' for Direct Feedback Alignment, 'backprop' for standard backpropagation, 'bptt' for backpropagation through time.
 #
-# To run EtherealRNN with backprop: MODEL_TYPE='ethereal', UPDATER='backprop', LEARNING_RATE=1e-5 (example)
+# To run EphemeralRNN with backprop: MODEL_TYPE='ephemeral', UPDATER='backprop', LEARNING_RATE=1e-5 (example)
 # To run SimpleRNN with backprop: MODEL_TYPE='rnn', UPDATER='backprop', LEARNING_RATE=1e-3 (example)
-# To run EtherealRNN with BPTT: MODEL_TYPE='ethereal', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
+# To run EphemeralRNN with BPTT: MODEL_TYPE='ephemeral', UPDATER='bptt', LEARNING_RATE=1e-5 (example)
 #
-MODEL_TYPE='ethereal'           # ethereal | rnn
+MODEL_TYPE='ephemeral'           # ephemeral | rnn
 UPDATER='dfa'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
 
@@ -94,11 +94,11 @@ PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
 PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
 GRAD_CLIP=0                  # Max gradient
 
-# --- Hebbian / Plasticity Specifics (ignored by backprop) ---
-IMPRINT_RATE=0.3             # Hebbian imprint strength
+# --- Plasticity Specifics (ignored by backprop) ---
+IMPRINT_RATE=0.3             # Imprint strength (unused)
 FORGET_RATE=0.1             # Weight decay/forgetting factor
 SELF_GRAD=0                  # Experimental recurrent replacement
-PLAST_PROPORTION=0.1         # Proportion of weights that are plastic in Hebbian layers  # <-- Add this line
+PLAST_PROPORTION=0.1         # Proportion of weights that are plastic in ephemeral layers  # <-- Add this line
 ENABLE_RECURRENCE=false       # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
@@ -137,7 +137,7 @@ mkdir -p "$CHECKPOINT_DIR"
 cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
 # The Python script will now automatically look for $CHECKPOINT_DIR/latest_checkpoint.pth
-python -u hebby.py \
+python -u train.py \
     --model_type $MODEL_TYPE \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \

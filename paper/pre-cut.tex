@@ -168,7 +168,7 @@ Where $\nabla_k L(t)$ is the gradient of the loss function with respect to weigh
 To prevent gradient instability from the rapid weight changes, we implement a controlled decay of ephemeral weights:
 
 \begin{equation}
-w_k^{\text{fast}}(t+1) = \gamma \cdot w_k^{\text{fast}}(t+1)
+w_k^{\text{eph}}(t+1) = \gamma \cdot w_k^{\text{eph}}(t+1)
 \end{equation}
 
 Where $\gamma = 0.7$ is the forgetting rate coefficient applied after each standard update. This mechanism ensures that information stored in ephemeral weights gradually fades, maintaining stability while allowing the network to adapt to new inputs. 

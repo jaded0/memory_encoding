@@ -9,9 +9,9 @@ import torch.nn.utils.parametrize as parametrize
 # from memory_profiler import profile
 
 
-class HebbianLinear(nn.Linear):
+class EphemeralLinear(nn.Linear):
     def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, updater='dfa', requires_grad=False, is_last_layer=False, plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2):
-        super(HebbianLinear, self).__init__(in_features, out_features, bias)
+        super(EphemeralLinear, self).__init__(in_features, out_features, bias)
 
         # Set requires_grad for the base class parameters
         self.weight.requires_grad = False # Base weights are not trained directly
@@ -303,7 +303,7 @@ class HebbianLinear(nn.Linear):
             self.plasticity.data[self.mask] = new_plast_clip
             print(f"Updated plasticity clip to {new_plast_clip} for {torch.sum(self.mask).item()} high-plasticity weights")
 
-class EtherealRNN(torch.nn.Module):
+class EphemeralRNN(torch.nn.Module):
     def __init__(
         self, input_size, hidden_size, output_size, num_layers, charset,
         dropout_rate=0, residual_connection=False, init_type='zero',
@@ -311,7 +311,7 @@ class EtherealRNN(torch.nn.Module):
         plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2,
         enable_recurrence=True
     ):
-        super(EtherealRNN, self).__init__()
+        super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout_rate = dropout_rate
@@ -322,9 +322,9 @@ class EtherealRNN(torch.nn.Module):
         self.forget_rate = forget_rate
         self.enable_recurrence = enable_recurrence
 
-        # Using HebbianLinear instead of Linear
+        # Using EphemeralLinear instead of Linear
         self.linear_layers = torch.nn.ModuleList([
-            HebbianLinear(
+            EphemeralLinear(
                 inner_size, inner_size, charset,
                 normalize=normalize, clip_weights=clip_weights,
                 updater=updater, plast_clip=plast_clip,
@@ -333,7 +333,7 @@ class EtherealRNN(torch.nn.Module):
             )
         ])
         for _ in range(1, num_layers):
-            self.linear_layers.append(HebbianLinear(
+            self.linear_layers.append(EphemeralLinear(
                 inner_size, inner_size, charset,
                 normalize=normalize, clip_weights=clip_weights,
                 updater=updater, plast_clip=plast_clip,
@@ -344,22 +344,22 @@ class EtherealRNN(torch.nn.Module):
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
 
-        # Final layers for hidden and output, also using HebbianLinear
-        self.i2h = HebbianLinear(
+        # Final layers for hidden and output, also using EphemeralLinear
+        self.i2h = EphemeralLinear(
             inner_size, hidden_size, charset,
             normalize=normalize, clip_weights=clip_weights,
             updater=updater, plast_clip=plast_clip,
             batch_size=batch_size, forget_rate=forget_rate,
             plast_proportion=plast_proportion
         )
-        self.i2o = HebbianLinear(
+        self.i2o = EphemeralLinear(
             inner_size, output_size, charset,
             normalize=normalize, clip_weights=clip_weights,
             updater=updater, requires_grad=False, is_last_layer=True,
             plast_clip=plast_clip, batch_size=batch_size, forget_rate=forget_rate,
             plast_proportion=plast_proportion
         )
-        self.self_grad = HebbianLinear(
+        self.self_grad = EphemeralLinear(
             inner_size, output_size, charset,
             normalize=normalize, clip_weights=clip_weights,
             updater=updater, requires_grad=False, is_last_layer=True,
@@ -374,7 +374,7 @@ class EtherealRNN(torch.nn.Module):
         if self.residual_connection:
             residual = combined.clone()  # Store the original combined tensor for residual connection
 
-        # Pass through the Hebbian linear layers with ReLU and Dropout
+        # Pass through the ephemeral linear layers with ReLU and Dropout
         for layer in self.linear_layers:
             combined = layer(combined)
             combined = F.gelu(combined)
@@ -404,7 +404,7 @@ class EtherealRNN(torch.nn.Module):
         return torch.zeros(batch_size, self.hidden_size, device=device, requires_grad=False)
 
     def apply_forget_step(self):
-        """Calls apply_forget_step on all HebbianLinear layers."""
+        """Calls apply_forget_step on all EphemeralLinear layers."""
         for layer in self.linear_layers:
             layer.apply_forget_step()
         self.i2h.apply_forget_step()
@@ -412,7 +412,7 @@ class EtherealRNN(torch.nn.Module):
         self.self_grad.apply_forget_step()
 
     def scale_gradients(self, plast_clip):
-        """Calls scale_gradients on all HebbianLinear layers."""
+        """Calls scale_gradients on all EphemeralLinear layers."""
         for layer in self.linear_layers:
             layer.scale_gradients(plast_clip)
         self.i2h.scale_gradients(plast_clip)
@@ -422,12 +422,12 @@ class EtherealRNN(torch.nn.Module):
 
     
     def get_all_norms(self):
-        """Aggregates norms from all HebbianLinear layers."""
+        """Aggregates norms from all EphemeralLinear layers."""
         all_norms = {}
         
         def _collect_norms(layers_list, prefix):
             for i, layer in enumerate(layers_list):
-                if isinstance(layer, HebbianLinear):
+                if isinstance(layer, EphemeralLinear):
                     layer_norms = layer.get_norms()
                     for key, value in layer_norms.items():
                         all_norms[f'{prefix}_{i}_{key}'] = value
@@ -441,7 +441,7 @@ class EtherealRNN(torch.nn.Module):
         return all_norms
 
     def store_all_grad_norms(self):
-        """Calls store_grad_norms on all HebbianLinear layers that are trained."""
+        """Calls store_grad_norms on all EphemeralLinear layers that are trained."""
         for layer in self.linear_layers:
             layer.store_grad_norms()
         self.i2h.store_grad_norms()
@@ -457,24 +457,24 @@ class EtherealRNN(torch.nn.Module):
         self.self_grad.wipe()
 
     def update_plasticity_clip(self, new_plast_clip):
-        """Updates plasticity clip values for all HebbianLinear layers."""
+        """Updates plasticity clip values for all EphemeralLinear layers."""
         print(f"Updating plasticity clip from checkpoint resume: {new_plast_clip}")
         
         # Update all linear layers
         for i, layer in enumerate(self.linear_layers):
-            if isinstance(layer, HebbianLinear):
+            if isinstance(layer, EphemeralLinear):
                 layer.update_plasticity_clip(new_plast_clip)
         
         # Update i2h layer
-        if isinstance(self.i2h, HebbianLinear):
+        if isinstance(self.i2h, EphemeralLinear):
             self.i2h.update_plasticity_clip(new_plast_clip)
         
         # Note: i2o and self_grad are last layers, so they don't use plasticity scaling
         # in the same way, but we'll update them for consistency
-        if isinstance(self.i2o, HebbianLinear) and not self.i2o.is_last_layer:
+        if isinstance(self.i2o, EphemeralLinear) and not self.i2o.is_last_layer:
             self.i2o.update_plasticity_clip(new_plast_clip)
         
-        if isinstance(self.self_grad, HebbianLinear) and not self.self_grad.is_last_layer:
+        if isinstance(self.self_grad, EphemeralLinear) and not self.self_grad.is_last_layer:
             self.self_grad.update_plasticity_clip(new_plast_clip)
 
 
@@ -487,7 +487,7 @@ class SimpleRNN(nn.Module):
         self.init_type = init_type
         self.enable_recurrence = enable_recurrence
 
-        # Replace HebbianLinear with standard Linear layers
+        # Replace EphemeralLinear with standard Linear layers
         self.linear_layers = nn.ModuleList([nn.Linear(input_size + hidden_size, hidden_size)])
         for _ in range(1, num_layers):
             self.linear_layers.append(nn.Linear(hidden_size, hidden_size))

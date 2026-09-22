@@ -13,7 +13,7 @@ import numpy as np
 # Add the current directory to the path so we can import our modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from hebbian_model import HebbyRNN
+from ephemeral_model import EphemeralRNN
 from utils import initialize_charset
 
 def create_simple_dataset(batch_size=4, seq_len=10, vocab_size=5, num_batches=100):
@@ -75,7 +75,7 @@ def train_model(model_type='dfa', num_epochs=50, learning_rate=0.01):
     print("=" * 40)
     
     # Create model
-    rnn = HebbyRNN(
+    rnn = EphemeralRNN(
         input_size=vocab_size,
         hidden_size=hidden_size,
         output_size=vocab_size,
@@ -163,7 +163,7 @@ def train_model(model_type='dfa', num_epochs=50, learning_rate=0.01):
                     
                     # Only backward and update on the last step to get full sequence gradients
                     if t == seq_len - 2:  # Last step
-                        # HebbyRNN with BPTT - backward through entire accumulated loss
+                        # EphemeralRNN with BPTT - backward through entire accumulated loss
                         total_loss = accumulated_loss.mean() if accumulated_loss.dim() > 0 else accumulated_loss
                         total_loss.backward(retain_graph=False)
                         
@@ -176,7 +176,7 @@ def train_model(model_type='dfa', num_epochs=50, learning_rate=0.01):
                         # Store gradient norms for logging
                         rnn.store_all_grad_norms()
                         
-                        # Manual optimizer step for HebbyRNN
+                        # Manual optimizer step for EphemeralRNN
                         with torch.no_grad():
                             for param in rnn.parameters():
                                 if param.grad is not None:
@@ -257,7 +257,7 @@ def main():
         print("   This is expected as BPTT uses true gradients through time.")
     else:
         print(f"\n⚠️  DFA performs as well or better than BPTT!")
-        print("   This suggests your ethereal weights approach is very effective.")
+        print("   This suggests your ephemeral weights approach is very effective.")
     
     print("=" * 60)
 

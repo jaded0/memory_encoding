@@ -2,7 +2,7 @@
 
 ## Problem Summary
 
-The original implementation had issues with NaN values when using backprop with the EtherealRNN architecture. The problem was caused by my attempt to unify the update mechanisms for DFA and backprop, which broke the original working approach.
+The original implementation had issues with NaN values when using backprop with the EphemeralRNN architecture. The problem was caused by my attempt to unify the update mechanisms for DFA and backprop, which broke the original working approach.
 
 ## Root Cause Analysis
 
@@ -21,7 +21,7 @@ I reverted to the original approach but fixed just the core issue. The key insig
 - **Backprop** uses standard PyTorch `backward()` and manual parameter updates
 - **BPTT** accumulates losses across the sequence and applies gradients once at the end
 
-## Key Differences in Ethereal Architecture
+## Key Differences in Ephemeral Architecture
 
 ### DFA (Direct Feedback Alignment)
 - **Per-step updates**: Updates weights immediately after each time step
@@ -42,7 +42,7 @@ I reverted to the original approach but fixed just the core issue. The key insig
 
 ## Implementation Details
 
-### EtherealRNN Specific Features
+### EphemeralRNN Specific Features
 1. **Per-batch weights**: Each sequence in batch has independent `candidate_weights` of shape `[batch_size, out_features, in_features]`
 2. **Plasticity mask**: Boolean mask determines high vs low plasticity weights (`plast_proportion` controls ratio)
 3. **Forgetting mechanism**: Applied via `forgetting_factor` parameter to high-plasticity weights
@@ -82,7 +82,7 @@ These parameters maintain the balance between:
 
 ## Short-term Memory Preservation
 
-The ethereal architecture's unique plasticity system means that:
+The ephemeral architecture's unique plasticity system means that:
 - All three methods interact differently with the high/low plasticity weight distinction
 - Per-batch weights ensure each sequence maintains independent short-term memory
 - Forgetting mechanism gradually decays high-plasticity weights between updates

@@ -7,7 +7,7 @@ import unittest
 import numpy as np
 import torch
 
-from hebbian_model import EtherealRNN
+from ephemeral_model import EphemeralRNN
 from reproducibility import capture_rng_state, seed_everything
 from utils import initialize_charset, load_checkpoint, save_checkpoint
 
@@ -26,7 +26,7 @@ class CheckpointBehaviorTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             checkpoint_path = os.path.join(temp_dir, "test_checkpoint.pth")
-            original = EtherealRNN(
+            original = EphemeralRNN(
                 n_characters,
                 hidden_size,
                 n_characters,
@@ -59,7 +59,7 @@ class CheckpointBehaviorTest(unittest.TestCase):
             expected_numpy = np.random.random(4)
             expected_torch = torch.rand(4)
 
-            restored = EtherealRNN(
+            restored = EphemeralRNN(
                 n_characters,
                 hidden_size,
                 n_characters,

@@ -1,14 +1,14 @@
 #!/bin/bash
-# Test script for backprop with EtherealRNN - stable parameters
+# Test script for backprop with EphemeralRNN - stable parameters
 
 # --- Experiment Identification ---
 EXPERIMENT_NAME="backprop_stable_test"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}"
 GROUP=$EXPERIMENT_NAME
-NOTES="Testing stable backprop with EtherealRNN"
+NOTES="Testing stable backprop with EphemeralRNN"
 
 # --- Training Parameters ---
-MODEL_TYPE='ethereal'           # ethereal | rnn
+MODEL_TYPE='ephemeral'           # ephemeral | rnn
 UPDATER='backprop'              # dfa | backprop | bptt
 INPUT_MODE='last_one'           # last_one | last_two
 
@@ -18,8 +18,8 @@ PLAST_LEARNING_RATE=1e-10       # Plasticity LR (for specific rules)
 PLAST_CLIP=1e3                  # Plasticity max value - was causing NaN with 1e4
 GRAD_CLIP=0                     # Max gradient norm
 
-# --- Hebbian / Plasticity Specifics (ignored by backprop) ---
-IMPRINT_RATE=0.3                # Hebbian imprint strength
+# --- Plasticity Specifics (ignored by backprop) ---
+IMPRINT_RATE=0.3                # Imprint strength (unused)
 FORGET_RATE=0.01                # Weight decay/forgetting factor - was causing NaN with 0.1
 SELF_GRAD=0                     # Experimental recurrent replacement
 PLAST_PROPORTION=0.2            # Proportion of weights that are plastic
@@ -54,7 +54,7 @@ mkdir -p "$CHECKPOINT_DIR"
 # Save a copy of this script for reproducibility
 cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
-python -u hebby.py \
+python -u train.py \
     --model_type $MODEL_TYPE \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \

@@ -1,6 +1,6 @@
 #!/bin/bash --login
 # ==============================================================================
-# sweep_whole_run.sh - SLURM submission script for running hebby.py sweeps
+# sweep_whole_run.sh - SLURM submission script for running train.py sweeps
 #                      using job arrays.
 # ==============================================================================
 
@@ -21,7 +21,7 @@
 # ======================== Parameter Definitions & Calculation ================
 echo "--- Preparing Sweep Parameters ---"
 # --- Define Hyperparameter Options for Architecture Sweep ---
-declare -a model_types=('ethereal' 'rnn')
+declare -a model_types=('ephemeral' 'rnn')
 declare -a updaters=('backprop' 'dfa')
 declare -a enable_recurrence=('true' 'false')
 
@@ -115,7 +115,7 @@ echo "  Output File: slurm_logs/hebby_sweep_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_
 echo "---"
 
 # Run the python script
-python -u hebby.py \
+python -u train.py \
     --model_type $MODEL_TYPE \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \

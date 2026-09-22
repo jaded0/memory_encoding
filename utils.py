@@ -119,7 +119,7 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
-# Place these functions near the top of hebby.py or in utils.py
+# Place these functions near the top of train.py or in utils.py
 
 def save_checkpoint(state_dict, checkpoint_dir, filename="checkpoint.pth"):
     """Saves checkpoint to disk"""

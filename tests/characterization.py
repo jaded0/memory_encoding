@@ -3,8 +3,8 @@ from io import StringIO
 
 import torch
 
-from hebbian_model import EtherealRNN
-from hebby import train
+from ephemeral_model import EphemeralRNN
+from train import train
 from reproducibility import seed_everything
 
 
@@ -35,7 +35,7 @@ def _tensor_summary(tensor):
     }
 
 
-def _named_hebbian_layers(model):
+def _named_ephemeral_layers(model):
     for index, layer in enumerate(model.linear_layers):
         yield f"linear_layers.{index}", layer
     yield "i2h", model.i2h
@@ -46,10 +46,10 @@ def _named_hebbian_layers(model):
 def _instrument_updates(model):
     events = {
         name: {"forget": [], "unified_update": []}
-        for name, _layer in _named_hebbian_layers(model)
+        for name, _layer in _named_ephemeral_layers(model)
     }
 
-    for name, layer in _named_hebbian_layers(model):
+    for name, layer in _named_ephemeral_layers(model):
         original_forget = layer.apply_forget_step
         original_update = layer.apply_unified_updates
 
@@ -95,7 +95,7 @@ def _instrument_updates(model):
                 if layer.candidate_weights.grad is not None
                 else None
             )
-            for name, layer in _named_hebbian_layers(model)
+            for name, layer in _named_ephemeral_layers(model)
         }
         original_scale(plast_clip)
         scaled = {
@@ -104,7 +104,7 @@ def _instrument_updates(model):
                 if layer.candidate_weights.grad is not None
                 else None
             )
-            for name, layer in _named_hebbian_layers(model)
+            for name, layer in _named_ephemeral_layers(model)
         }
         scale_events.append({"raw": raw, "scaled": scaled})
 
@@ -149,7 +149,7 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED):
     ).to(torch.float32)
 
     with redirect_stdout(StringIO()):
-        model = EtherealRNN(
+        model = EphemeralRNN(
             input_size=len(charset) * 2,
             hidden_size=4,
             output_size=len(charset),
@@ -224,7 +224,7 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED):
         "state": state,
         "modules": {
             name: _module_snapshot(layer)
-            for name, layer in _named_hebbian_layers(model)
+            for name, layer in _named_ephemeral_layers(model)
         },
         "events": events,
     }
