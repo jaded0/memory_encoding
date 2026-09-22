@@ -1,0 +1,105 @@
+import contextlib
+import io
+import os
+import tempfile
+import unittest
+from unittest.mock import patch
+
+import torch
+
+import train as train_module
+from ephemeral_model import EphemeralRNN
+from utils import load_checkpoint, save_checkpoint
+
+DATASET = "2_small_palindrome_dataset_vary_length"  # charset "23. " (4 symbols)
+CONFIG = {"n_hidden": 4, "n_layers": 1, "updater": "dfa", "charset_size": 4, "model_type": "ephemeral"}
+
+
+def tiny_batches():
+    """One in-memory batch in the (texts, index tensor, one-hot tensor) collate format."""
+    indices = torch.tensor([[0, 1, 2, 1, 0], [1, 0, 2, 0, 1]])
+    return [(["23.32", "32.23"], indices, torch.nn.functional.one_hot(indices, 4).float())]
+
+
+def build_model():
+    with contextlib.redirect_stdout(io.StringIO()):
+        return EphemeralRNN(8, 4, 4, 1, "23. ", normalize=False, clip_weights=0, batch_size=2)
+
+
+def run_main(*extra_args, checkpoint_dir):
+    argv = [
+        "train.py", "--dataset", DATASET, "--track", "False", "--n_iters", "3", "--print_freq", "1",
+        "--checkpoint_save_freq", "0", "--checkpoint_dir", checkpoint_dir, "--batch_size", "2",
+        "--hidden_size", "4", "--num_layers", "1", "--normalize", "False", "--input_mode", "last_one",
+        *extra_args,
+    ]
+    with patch("sys.argv", argv), \
+            patch.object(train_module, "load_and_preprocess_data", return_value=tiny_batches()), \
+            contextlib.redirect_stdout(io.StringIO()):
+        train_module.main()
+
+
+class CheckpointCompatibilityTest(unittest.TestCase):
+    def save(self, directory, config):
+        with contextlib.redirect_stdout(io.StringIO()):
+            save_checkpoint({"config": config, "model_state_dict": build_model().state_dict()}, directory, "c.pth")
+        return os.path.join(directory, "c.pth")
+
+    def load(self, path, config):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return load_checkpoint(path, build_model(), config)
+
+    def test_updater_mismatch_raises_configuration_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.save(directory, {**CONFIG, "updater": "backprop"})
+            with self.assertRaisesRegex(RuntimeError, "configuration mismatch"):
+                self.load(path, CONFIG)
+
+    def test_model_type_mismatch_raises_configuration_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.save(directory, {**CONFIG, "model_type": "rnn"})
+            with self.assertRaisesRegex(RuntimeError, "configuration mismatch"):
+                self.load(path, CONFIG)
+
+    def test_legacy_ethereal_checkpoint_loads_as_ephemeral(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.save(directory, {**CONFIG, "model_type": "ethereal"})
+            self.load(path, CONFIG)
+
+
+class MainFailurePathTest(unittest.TestCase):
+    def test_training_exception_propagates(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(train_module, "train", side_effect=RuntimeError("boom")):
+            with self.assertRaisesRegex(RuntimeError, "boom"):
+                run_main(checkpoint_dir=directory)
+
+    def test_infinite_loss_exits_nonzero(self):
+        infinite_step = (None, float("inf"), 0, 0, [], [])
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(train_module, "train", return_value=infinite_step):
+            with self.assertRaises(SystemExit) as raised:
+                run_main(checkpoint_dir=directory)
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_missing_explicit_checkpoint_raises(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = os.path.join(directory, "missing.pth")
+            with self.assertRaises(FileNotFoundError):
+                run_main("--no_resume", "False", "--resume_checkpoint", missing, checkpoint_dir=directory)
+
+    def test_unreadable_checkpoint_raises_instead_of_restarting(self):
+        with tempfile.TemporaryDirectory() as directory:
+            corrupt = os.path.join(directory, "latest_checkpoint.pth")
+            with open(corrupt, "wb") as handle:
+                handle.write(b"not a checkpoint")
+            with self.assertRaises(Exception):
+                run_main("--no_resume", "False", checkpoint_dir=directory)
+
+    def test_clean_run_completes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_main(checkpoint_dir=directory)
+
+
+if __name__ == "__main__":
+    unittest.main()

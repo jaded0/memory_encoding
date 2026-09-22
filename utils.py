@@ -150,6 +150,10 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
         for key, default in compatibility_defaults.items()
         if config.get(key, default) != loaded_config.get(key, default)
     ]
+    # Checkpoints written before the naming cleanup store model_type 'ethereal'.
+    loaded_model_type = {'ethereal': 'ephemeral'}.get(loaded_config.get('model_type'), loaded_config.get('model_type'))
+    if loaded_model_type is not None and loaded_model_type != config.get('model_type'):
+        mismatches.append(('model_type', config.get('model_type'), loaded_config.get('model_type')))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")

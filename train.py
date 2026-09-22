@@ -391,46 +391,6 @@ def main():
     # Define the path to the latest checkpoint
     latest_checkpoint_path = os.path.join(args.checkpoint_dir, "latest_checkpoint.pth")
 
-# --- WandB Run ID Management for Resumption ---
-    wandb_run_id = None
-    is_new_id = False # Flag to track if a new ID is generated
-    if args.track: # Only manage run ID if tracking is enabled
-        wandb_run_id_file_path = os.path.join(args.checkpoint_dir, "wandb_run_id.txt")
-
-        if args.resume_checkpoint or os.path.isfile(latest_checkpoint_path): # If we are potentially resuming
-            if os.path.exists(wandb_run_id_file_path):
-                # with open(wandb_run_id_file_path, "r") as f:
-                #     wandb_run_id = f.read().strip()
-                print(f"Found existing WandB run ID: {wandb_run_id}")
-            else:
-                # This case is tricky: we are resuming a model checkpoint,
-                # but no WandB ID was saved. This could happen if:
-                # 1. Tracking was off during the run that created the checkpoint.
-                # 2. The wandb_run_id.txt file was accidentally deleted.
-                # We'll generate a new ID and save it, effectively starting a "new" WandB run
-                # that continues the model's progress.
-                print(f"Warning: Resuming checkpoint but no WandB run ID file found in {args.checkpoint_dir}.")
-                print("A new WandB run will be started for this resumed session.")
-                is_new_id = True
-                # Fall through to generate new ID if wandb_run_id is still None
-        
-        if not wandb_run_id: # If it's the first run or ID was not found for a resume scenario
-            wandb_run_id = wandb.util.generate_id()
-            is_new_id = True # Set flag to indicate a new ID was generated
-            try:
-                with open(wandb_run_id_file_path, "w") as f:
-                    f.write(wandb_run_id)
-                print(f"Generated and saved new WandB run ID: {wandb_run_id}")
-            except IOError as e:
-                print(f"Warning: Could not write WandB run ID to {wandb_run_id_file_path}: {e}")
-                print("Resuming WandB run might not work correctly across restarts.")
-
-
-
-
-
-
-
     if not os.path.exists(args.checkpoint_dir):
         os.makedirs(args.checkpoint_dir, exist_ok=True) # exist_ok=True for robustness
 
@@ -519,17 +479,10 @@ def main():
     checkpoint_to_load = None
     if not args.no_resume:
         if args.resume_checkpoint:
-            if os.path.isfile(args.resume_checkpoint):
-                checkpoint_to_load = args.resume_checkpoint
-                print(f"Attempting to resume from explicit checkpoint: {checkpoint_to_load}")
-            else:
-                print(f"Warning: Explicit resume checkpoint {args.resume_checkpoint} not found.")
-                # Fallback to latest if explicit one is missing but latest exists
-                if os.path.isfile(latest_checkpoint_path):
-                    print(f"Falling back to latest checkpoint: {latest_checkpoint_path}")
-                    checkpoint_to_load = latest_checkpoint_path
-                else:
-                    print("No checkpoint found to resume from. Starting from scratch.")
+            if not os.path.isfile(args.resume_checkpoint):
+                raise FileNotFoundError(f"Explicit resume checkpoint not found: {args.resume_checkpoint}")
+            checkpoint_to_load = args.resume_checkpoint
+            print(f"Attempting to resume from explicit checkpoint: {checkpoint_to_load}")
 
         elif os.path.isfile(latest_checkpoint_path): # No explicit resume, but latest exists
             checkpoint_to_load = latest_checkpoint_path
@@ -541,64 +494,26 @@ def main():
 
 
     if checkpoint_to_load:
-        try:
-            # Pass device to load_checkpoint
-            rnn, optimizer, start_iter, loaded_main_state, loaded_config = load_checkpoint(
-                checkpoint_to_load, rnn, config, optimizer=optimizer, device=device
-            )
-            state.update(loaded_main_state) # Update your main program state
-            print(f"resumed, starting from iter: {start_iter}")
+        # Any load failure aborts the run: silently restarting from scratch hides
+        # the failure and mixes fresh weights into a "resumed" experiment.
+        rnn, optimizer, start_iter, loaded_main_state, loaded_config = load_checkpoint(
+            checkpoint_to_load, rnn, config, optimizer=optimizer, device=device
+        )
+        state.update(loaded_main_state) # Update your main program state
+        print(f"resumed, starting from iter: {start_iter}")
 
-            # Check if plast_clip has changed and update plasticity parameters if needed
-            if isinstance(rnn, EphemeralRNN):
-                loaded_plast_clip = loaded_config.get('plast_clip', 1.0)
-                current_plast_clip = config.get('plast_clip', 1.0)
-                
-                if loaded_plast_clip != current_plast_clip:
-                    print(f"Plasticity clip changed from {loaded_plast_clip} to {current_plast_clip}")
-                    print("Updating plasticity parameters in all layers...")
-                    rnn.update_plasticity_clip(current_plast_clip)
-                    print("Plasticity parameters updated successfully!")
-                else:
-                    print(f"Plasticity clip unchanged: {current_plast_clip}")
+        # Check if plast_clip has changed and update plasticity parameters if needed
+        if isinstance(rnn, EphemeralRNN):
+            loaded_plast_clip = loaded_config.get('plast_clip', 1.0)
+            current_plast_clip = config.get('plast_clip', 1.0)
 
-        except FileNotFoundError: # Should be rare due to os.path.isfile checks, but good for safety
-            print(f"Warning: Checkpoint file {checkpoint_to_load} not found during load attempt. Starting from scratch.")
-            start_iter = 1 # Reset start_iter
-            state = { # Reset state
-                "training_instance": 0,
-                "last_n_rewards": [0],
-                "last_n_reward_avg": 0,
-                "wandb_step": 0,  # Initialize wandb_step
-                "log_norms_now": False,
-            }
-        except Exception as e:
-            if isinstance(e, RuntimeError) and "configuration mismatch" in str(e):
-                raise  # abort run, no fallbacks
-            print(f"Error loading checkpoint {checkpoint_to_load}: {e}. Starting from scratch.")
-            import traceback
-            traceback.print_exc()
-            start_iter = 1 # Reset start_iter
-            state = { # Reset state
-                "training_instance": 0,
-                "last_n_rewards": [0],
-                "last_n_reward_avg": 0,
-                "wandb_step": 0,  # Initialize wandb_step
-                "log_norms_now": False,
-            }
-            if torch.cuda.is_available(): # If loading failed but cuda is an option
-                print("Fallback: Moving freshly initialized model to GPU after failed checkpoint load.")
-                rnn = rnn.to(device)
-                if optimizer: # If backprop and optimizer exists
-                    # Move optimizer states to device if it was re-initialized
-                    # This is more for general robustness if optimizer was somehow re-created
-                    # For the ephemeral DFA case, optimizer is None, so this part is less critical here.
-                    for state_val in optimizer.state.values():
-                        for k, v in state_val.items():
-                            if isinstance(v, torch.Tensor):
-                                state_val[k] = v.to(device)
+            if loaded_plast_clip != current_plast_clip:
+                print(f"Plasticity clip changed from {loaded_plast_clip} to {current_plast_clip}")
+                print("Updating plasticity parameters in all layers...")
+                rnn.update_plasticity_clip(current_plast_clip)
+                print("Plasticity parameters updated successfully!")
             else:
-                print("Fallback: Model remains on CPU after failed checkpoint load (no CUDA).")
+                print(f"Plasticity clip unchanged: {current_plast_clip}")
 
     elif torch.cuda.is_available(): # No checkpoint_to_load specified AT ALL, and cuda is available
         print("No checkpoint specified for loading. Moving model to GPU.")
@@ -637,32 +552,19 @@ def main():
             "seed": args.seed,
             "deterministic": args.deterministic,
         }
-        # Key change here: use the determined wandb_run_id and resume="allow"
+        # A resumed checkpoint always starts a new W&B run; record where it came from.
+        if checkpoint_to_load:
+            wandb_config["resumed_from_checkpoint"] = checkpoint_to_load
+            wandb_config["resumed_at_iter"] = start_iter
+            print("Resuming a checkpoint: starting a new W&B run (W&B run resumption is not supported).")
         print(f"tags given to wandb: {args.tags}")
-        if state['wandb_step'] == 0 or is_new_id: # If starting fresh or new ID generated
-            wandb.init(project="hebby",
-                    group=args.group,
-                    notes=args.notes,
-                    tags=args.tags,
-                    config=wandb_config,
-                    id=wandb_run_id,  # Use the persistent ID
-                    )
-        else:
-            print(f"WandB run ID: {wandb_run_id}, attempting to resume from iteration {start_iter}")
-            resume_from_string = f"{wandb_run_id}?_step={state['wandb_step'] -1}" if wandb_run_id else None
-            print(f"Resuming from: {resume_from_string}")
-            wandb.init(project="hebby",
-                    group=args.group,
-                    notes=args.notes,
-                    tags=args.tags,
-                    config=wandb_config,
-                    #    id=wandb_run_id, # Use the persistent ID
-                    #    resume="must",
-                    resume_from=resume_from_string)  # Allow resuming the run if ID exists on WandB server
-
-        print(f"Initialized WandB with Run ID: {wandb.run.id if wandb.run else 'None'}")
-        if wandb.run and wandb.run.resumed:
-            print(f"Successfully resumed WandB run: {wandb.run.id}")
+        wandb.init(project="hebby",
+                group=args.group,
+                notes=args.notes,
+                tags=args.tags,
+                config=wandb_config,
+                )
+        print(f"Initialized WandB with Run ID: {wandb.run.id}")
 
 
     # Training Loop
@@ -728,9 +630,9 @@ def main():
                 line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train
             )
             
-            # Check for NaN in loss and terminate if detected
-            if torch.isnan(torch.tensor(loss)).any():
-                print("NaN detected in loss. Terminating training.")
+            # Terminate on a non-finite loss (NaN or inf; isnan alone misses inf)
+            if not math.isfinite(loss):
+                print(f"Non-finite loss ({loss}) detected. Terminating training.")
                 nan_detected = True
                 wb_mark_end("nan_detected", tags=["end:nan", "NaN"], exit_code=1)
                 break  # Exit the training loop
@@ -989,7 +891,7 @@ def main():
 
     except KeyboardInterrupt:
         print("\nTraining interrupted by user. Attempting to save final checkpoint...")
-        wb_mark_end("user_interrupt", tags=["end:user_interrupt"], exit_code=0)
+        wb_mark_end("user_interrupt", tags=["end:user_interrupt"], exit_code=130)
         # Optionally save a final checkpoint on interrupt
         if args.checkpoint_dir and args.checkpoint_save_freq > 0: # Ensure dir is specified and checkpointing is enabled
             final_checkpoint_state = {
@@ -1005,10 +907,11 @@ def main():
         elif args.checkpoint_save_freq == 0:
             print("Checkpointing disabled (checkpoint_save_freq=0). No checkpoint saved on interrupt.")
         print("Finishing up...")
-    except Exception as e:
-        print(f"\nAn error occurred during training: {e}")
-        import traceback
-        traceback.print_exc() # Print detailed traceback
+        sys.exit(130)  # conventional exit code for SIGINT, so wrappers don't count this as success
+    except Exception:
+        # Re-raise so the process exits non-zero and wrapper scripts see the failure.
+        wb_mark_end("crashed", tags=["end:crashed"], exit_code=1)
+        raise
 
 
     finally: # Ensure wandb finishes even on error/interrupt
