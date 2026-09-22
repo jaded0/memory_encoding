@@ -186,7 +186,7 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED):
     state = {"training_instance": 0, "log_norms_now": True}
 
     with redirect_stdout(StringIO()):
-        output, loss, _og_loss, _reg_loss, step_outputs, step_labels = train(
+        output, loss, _step_preds, _step_losses, step_outputs, step_labels = train(
             sequence_indices,
             onehot_sequence,
             model,

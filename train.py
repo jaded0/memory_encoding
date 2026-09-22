@@ -5,6 +5,7 @@ import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
 from reproducibility import capture_rng_state, seed_everything
+from metrics import IntervalMetrics, recall_chance
 from utils import randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint
 import time
 import math
@@ -79,6 +80,7 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
 
     loss_total = 0.0
     losses = []  # For DFA (per-batch losses)
+    step_preds, step_losses = [], []  # [T-1] x [B], for per-interval metrics
     num_steps = 0
     all_outputs = []
     all_labels = []
@@ -268,6 +270,8 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                     optimizer.step()
 
         num_steps += 1
+        step_preds.append(output.detach().argmax(dim=1))
+        step_losses.append((loss if updater == 'dfa' else step_loss).detach())
 
         if log_outputs:
             if updater == 'dfa':
@@ -284,8 +288,7 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
     else:
         loss_avg = loss_total / num_steps if num_steps > 0 else 0.0
 
-    og_loss_avg, reg_loss_avg = 0, 0  # Legacy return values
-    return output, loss_avg, og_loss_avg, reg_loss_avg, all_outputs, all_labels
+    return output, loss_avg, torch.stack(step_preds), torch.stack(step_losses), all_outputs, all_labels
 
 
 def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
@@ -326,6 +329,7 @@ def main():
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
     parser.add_argument('--dataset', type=str, default='3_palindrome_dataset_vary_length', help='The dataset used for training.')
     parser.add_argument('--notes', type=str, default='nothing to say', help='talk about this run')
+    parser.add_argument('--wandb_project', type=str, default='ephemeral-weights', help='W&B project to log to.')
     parser.add_argument('--group', type=str, default="nothing_in_particular", help='Description of what sort of experiment is being run, here.')
     parser.add_argument('--tags', nargs='*', default=[], help="List of tags for WandB")
     parser.add_argument('--batch_size', type=int, default=16, help='how much to stuff in at once')
@@ -552,6 +556,7 @@ def main():
             "enable_recurrence": args.enable_recurrence,
             "seed": args.seed,
             "deterministic": args.deterministic,
+            "recall_chance": recall_chance(args.dataset),
         }
         # A resumed checkpoint always starts a new W&B run; record where it came from.
         if checkpoint_to_load:
@@ -559,7 +564,7 @@ def main():
             wandb_config["resumed_at_iter"] = start_iter
             print("Resuming a checkpoint: starting a new W&B run (W&B run resumption is not supported).")
         print(f"tags given to wandb: {args.tags}")
-        wandb.init(project="hebby",
+        wandb.init(project=args.wandb_project,
                 group=args.group,
                 notes=args.notes,
                 tags=args.tags,
@@ -569,9 +574,6 @@ def main():
 
 
     # Training Loop
-    current_loss = 0
-    current_correct = 0 # Using top-1 accuracy here for simplicity in aggregation
-    all_losses = []
     start = time.time()
     
     # Flag to track if NaN has been detected
@@ -592,12 +594,9 @@ def main():
     data_iterator = infinite_dataloader(dataloader)
 
     try:
-        # Initialize accumulators for the less frequent PLOT interval (averaging)
-        current_loss_plot_interval = 0.0
-        current_correct_plot_interval = 0 # For last character accuracy
-        current_step_acc_t1_plot_interval = 0.0 # For step-wise T1 accuracy
-        current_step_acc_t2_plot_interval = 0.0 # For step-wise Top-2 accuracy
-        num_detailed_calcs_in_plot_interval = 0
+        # Metrics accumulated over each print_freq interval (whole batch, every step)
+        interval = IntervalMetrics(args.dataset)
+        interval_start = time.time()
         
         # These will be populated per iteration if log_outputs_for_train is true
         # and then cleared after print_freq, as per your original logic.
@@ -627,7 +626,7 @@ def main():
             # --- Train Step ---
             state["log_norms_now"] = (iter % args.print_freq == 0)
             # The train function returns step-by-step outputs for the first batch item if log_outputs=True
-            output, loss, og_loss, reg_loss, current_iter_all_outputs, current_iter_all_labels = train(
+            output, loss, step_preds, step_losses, current_iter_all_outputs, current_iter_all_labels = train(
                 line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train
             )
             
@@ -643,17 +642,7 @@ def main():
                 all_outputs_for_print_freq = current_iter_all_outputs
                 all_labels_for_print_freq = current_iter_all_labels
 
-            # --- Accumulate Stats for the PLOT (Averaging) Interval ---
-            current_loss_plot_interval += loss # Use instantaneous loss (sequence average loss from train)
-
-            # Calculate correctness based on the *last* character prediction for print_freq
-            if output is not None and line_tensor.numel() > 0:
-                 output_detached = output.detach()
-                 last_output_first_item = output_detached[0] 
-                 last_target_idx_first_item = line_tensor[0, -1].item() 
-                 predicted_idx_last_char = torch.argmax(last_output_first_item).item()
-                 is_correct_last_char = (predicted_idx_last_char == last_target_idx_first_item)
-                 current_correct_plot_interval += 1 if is_correct_last_char else 0
+            interval.update(sequence, onehot_line_tensor, step_preds, step_losses)
 
             # ==============================================================
             # --- Frequent Detailed Console Logging Period (print_freq) ---
@@ -739,11 +728,6 @@ def main():
                     seq_step_accuracy_top2 = (num_correct_top2_for_seq / num_prediction_steps) if num_prediction_steps > 0 else 0.0
                     print(f'  Seq Acc: T1 {seq_step_accuracy_t1:.4f}, Top2 {seq_step_accuracy_top2:.4f}')
                     print("-" * 40) # Separator
-                    
-                    # Accumulate these sequence-specific accuracies for the print_freq interval
-                    current_step_acc_t1_plot_interval += seq_step_accuracy_t1
-                    current_step_acc_t2_plot_interval += seq_step_accuracy_top2
-                    num_detailed_calcs_in_plot_interval += 1
 
                     # Clear the detailed output lists after use for this print_freq iteration
                     all_outputs_for_print_freq.clear()
@@ -754,17 +738,13 @@ def main():
             # --- Averaged Console Print & WandB Log Period (print_freq) ---
             # ==============================================================
             if args.print_freq > 0 and iter % args.print_freq == 0:
-                avg_loss_plot = current_loss_plot_interval / args.print_freq
-                avg_acc_last_char_plot = current_correct_plot_interval / args.print_freq
+                metrics = interval.summary()
+                metrics["iters_per_sec"] = interval.iterations / (time.time() - interval_start)
+                avg_loss_plot = metrics.get("loss", float("nan"))
 
-                print(f'--- Avg Interval Data (ending @ iter {iter}) ---')
-                print(f'  Avg Loss ({args.print_freq} iters): {avg_loss_plot:.4f}')
-                print(f'  Avg Acc (last char, {args.print_freq} iters): {avg_acc_last_char_plot:.4f}')
-
-                avg_step_acc_t1_plot = (current_step_acc_t1_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
-                avg_step_acc_t2_plot = (current_step_acc_t2_plot_interval / num_detailed_calcs_in_plot_interval) if num_detailed_calcs_in_plot_interval > 0 else 0.0
-                print(f'  Avg Step Acc T1 ({num_detailed_calcs_in_plot_interval} seqs): {avg_step_acc_t1_plot:.4f}')
-                print(f'  Avg Step Acc Top2 ({num_detailed_calcs_in_plot_interval} seqs): {avg_step_acc_t2_plot:.4f}')
+                print(f'--- Interval metrics (ending @ iter {iter}, whole batch) ---')
+                for key, value in metrics.items():
+                    print(f'  {key}: {value:.4f}')
                 print(f'-------------------------------------------')
 
                 if args.track:
@@ -803,10 +783,7 @@ def main():
 
                     log_data = {
                         "iter": iter,
-                        "avg_loss": avg_loss_plot,
-                        "avg_accuracy": avg_acc_last_char_plot,
-                        "avg_step_acc_t1": avg_step_acc_t1_plot,
-                        "avg_step_acc_t2": avg_step_acc_t2_plot,
+                        **metrics,
                         "avg_weight_norm": avg_weight_norm, # Combined / Backprop
                         "avg_grad_update_norm": avg_grad_norm or (avg_hp_u_norm + avg_lp_u_norm), # Backprop or sum of ephemeral
                         "avg_high_plast_weight_norm": avg_hp_w_norm,
@@ -840,11 +817,8 @@ def main():
                     break  # Exit the training loop
                 
                 state["wandb_step"] += 1
-                current_loss_plot_interval = 0.0
-                current_correct_plot_interval = 0
-                current_step_acc_t1_plot_interval = 0.0
-                current_step_acc_t2_plot_interval = 0.0
-                num_detailed_calcs_in_plot_interval = 0
+                interval.reset()
+                interval_start = time.time()
 
             # ==============================================================
             # --- W&B Offline Sync Trigger ---
