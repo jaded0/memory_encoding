@@ -195,3 +195,8 @@ _minted-*
 tikz-cache/ 
 build/
 *.zip
+# Local archive of old runs (W&B export, offline run dirs, checkpoints); destined for homelab backup
+archive/
+
+# Debug dumps
+debug_output*.txt
