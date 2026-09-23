@@ -8,7 +8,7 @@
 # SMOKE=1 is for the cluster login node (internet, no GPU): it runs a few CPU
 # iterations with W&B disabled into checkpoints/_smoke, which downloads and
 # caches the dataset and fails fast on a broken environment. Never set it as
-# the default here. SLURM sweeps live in sweeps/ (see sweeps/whole_run.sh).
+# the default here. Cluster runs: slurm_run.sh. Sweeps: sweeps/.
 # Flag semantics and defaults: `python train.py --help`.
 # ==============================================================================
 

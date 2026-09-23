@@ -1,6 +1,19 @@
 #!/bin/bash --login
 # ==============================================================================
-# whole_run.sh - SLURM submission script for running train.py
+# slurm_run.sh - SLURM submission script for a single long train.py run
+#
+#   sbatch slurm_run.sh               # submit from the repo root (on the login node)
+#   SMOKE=1 ./slurm_run.sh            # login node: cache HF datasets + check env, then exit
+#
+# The job name (--job-name below) is the experiment's identity: it names the
+# checkpoint dir, and the run always passes --resume, so a requeue, a preemption
+# or sweeps/bulk_restart.sh continues from checkpoints/<job-name>/latest_checkpoint.pth.
+# Give each new experiment a new job name, or it will continue the old one.
+#
+# SMOKE=1 runs this exact config for a few CPU iterations with W&B disabled and
+# Hugging Face online, into checkpoints/_smoke, so the dataset is cached for the
+# offline compute nodes and a broken environment fails fast. Never set it as the
+# default here. Local runs: run_training.sh. Sweeps: sweeps/.
 # ==============================================================================
 
 # --- SLURM Directives ---
@@ -18,24 +31,29 @@
 #SBATCH --requeue          # Requeue on preemption or failure
 
 # Resolve repo root regardless of how this script was launched: sbatch runs a
-# spooled copy of this file, so $0 won't point at sweeps/ under sbatch, but
+# spooled copy of this file, so $0 won't point here under sbatch, but
 # SLURM_SUBMIT_DIR (the directory sbatch was invoked from) does.
-cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}" || exit 1
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")}" || exit 1
+SMOKE=${SMOKE:-0}
 
 # ======================== Environment Setup ===================================
 echo "--- Setting up Environment ---"
 # Load Conda environment
 # source /path/to/your/miniconda3/etc/profile.d/conda.sh # Adjust path if needed
-conda activate hebby
+conda activate hebby || { [[ $SMOKE == 1 ]] && { echo "conda activate hebby failed"; exit 1; }; }
 echo "Activated Conda environment: $CONDA_DEFAULT_ENV"
 
 # Configure W&B and HuggingFace for offline use (if needed)
 export WANDB_MODE=offline
 export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python # Ensure W&B uses the conda python
-export HF_OFFLINE=1
-export HF_DATASETS_OFFLINE=1
+if [[ $SMOKE == 1 ]]; then
+    export WANDB_MODE=disabled   # login node has internet: let HF download and cache
+else
+    export HF_OFFLINE=1
+    export HF_DATASETS_OFFLINE=1
+    echo "HF Offline mode enabled."
+fi
 echo "WANDB_MODE set to: $WANDB_MODE"
-echo "HF Offline mode enabled."
 
 # Optional: Check GPU status
 # nvidia-smi
@@ -45,40 +63,30 @@ echo "--- Environment Setup Complete ---"
 # ======================== Experiment Identification ===========================
 
 # --- Checkpointing ---
-# CHECKPOINT_DIR needs to be persistent and accessible by all requeued jobs.
-# Using SLURM_JOB_NAME or a fixed experiment name can be better than SLURM_JOB_ID if you want
-# the *same* checkpoint directory to be used across requeues of the *same conceptual experiment*.
-# Let's assume you have a base experiment name.
+# The checkpoint dir is keyed by job name so every requeue (same job ID) and
+# every bulk_restart.sh resubmission (new job ID, same name) finds it.
 EXPERIMENT_NAME="$SLURM_JOB_NAME"
-# EXPERIMENT_NAME="big_recreate_phenomenon"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
+RESUME=true                  # Continue latest_checkpoint.pth if present (see header)
 
-# --- add to run list and refuse duplicate ---
-RUN_LIST="current_runs.txt"
-grep -qxF "$EXPERIMENT_NAME" "$RUN_LIST" 2>/dev/null || echo "$EXPERIMENT_NAME" >> "$RUN_LIST"
-if squeue -h -n "$EXPERIMENT_NAME" -o "%A" \
-       | grep -v "^${SLURM_JOB_ID}$" \
-       | grep -q .; then
-  echo "⏩  $EXPERIMENT_NAME already RUNNING or PENDING – aborting."; exit 0
+if [[ $SMOKE != 1 ]]; then
+    # --- add to run list (for bulk_restart.sh) and refuse duplicates ---
+    RUN_LIST="current_runs.txt"
+    grep -qxF "$EXPERIMENT_NAME" "$RUN_LIST" 2>/dev/null || echo "$EXPERIMENT_NAME" >> "$RUN_LIST"
+    if squeue -h -n "$EXPERIMENT_NAME" -o "%A" \
+           | grep -v "^${SLURM_JOB_ID}$" \
+           | grep -q .; then
+      echo "⏩  $EXPERIMENT_NAME already RUNNING or PENDING – aborting."; exit 0
+    fi
 fi
 
-
 # --- Experiment Identification (W&B) ---
-# It's good practice to include SLURM_JOB_ID in group/notes if you want to trace requeues in W&B
-# However, a requeued job gets a NEW SLURM_JOB_ID.
-# To maintain a single WandB run across preemptions, you'd need to:
-# 1. Generate a unique run ID *once* (e.g., on the first submission).
-# 2. Save this ID to a file in the CHECKPOINT_DIR.
-# 3. On subsequent (requeued) runs, read this ID and use wandb.init(resume="allow", id=...)
-# This is more advanced, for now, each requeue might start a new WandB run unless you handle this.
-# For simplicity with --requeue, you might let WandB create new runs and correlate them manually by group/notes.
-
+# Each resume starts a new W&B run that records resumed_from_checkpoint and
+# resumed_at_iter (W&B run resumption is not supported); group by experiment.
 GROUP=$EXPERIMENT_NAME
 NOTES="an attempt to scale prematurely"
 TAGS=(mega big_scale)
 
-# RESUME_FROM is NOT set here for automatic requeue. Python script will find "latest_checkpoint.pth".
-# RESUME_FROM=""
 CHECKPOINT_SAVE_FREQ=500
 
 # ======================== Core Training Parameters ============================
@@ -96,13 +104,11 @@ INPUT_MODE='last_one'        # last_one | last_two
 
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-5           # Base learning rate
-PLAST_LEARNING_RATE=1e-10    # Plasticity LR (for specific rules)
-PLAST_CLIP=1e3               # Plasticity max value (for specific rules)
-GRAD_CLIP=0                  # Max gradient
+PLAST_CLIP=1e3               # Plasticity (learning-rate multiplier) of ephemeral weights, alpha
+GRAD_CLIP=0                  # Element-wise clip on ephemeral-weight updates (0 = off)
 
-# --- Plasticity Specifics (ignored by backprop) ---
-IMPRINT_RATE=0.3             # Imprint strength (unused)
-FORGET_RATE=0.1             # Weight decay/forgetting factor
+# --- Ephemeral Weights (ignored by the rnn baseline) ---
+FORGET_RATE=0.1              # Fraction of each ephemeral weight removed per step: w <- (1 - FORGET_RATE) w
 SELF_GRAD=0                  # Experimental recurrent replacement
 PLAST_PROPORTION=0.1         # Proportion of weights that are plastic in ephemeral layers  # <-- Add this line
 ENABLE_RECURRENCE=false       # Whether to enable recurrent hidden state connections
@@ -127,32 +133,42 @@ N_ITERS=10000000           # Total training steps (iterations)
 PRINT_FREQ=50                # Console print basic avg loss/acc frequency
 LOG_FREQ=500              # W&B sync frequency for offline mode
 
+# ======================== Smoke Mode ==========================================
+TRACK=true
+if [[ $SMOKE == 1 ]]; then
+    TRACK=false
+    EXPERIMENT_NAME="_smoke"
+    GROUP="_smoke"
+    CHECKPOINT_DIR="./checkpoints/_smoke"
+    RESUME=false
+    N_ITERS=20
+    PRINT_FREQ=10
+    CHECKPOINT_SAVE_FREQ=$N_ITERS
+fi
+
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"
 echo "SLURM Job ID: $SLURM_JOB_ID"
 echo "SLURM Job Name: $SLURM_JOB_NAME"
-echo "  Group: $GROUP | Rule: $UPDATE_RULE | Input: $INPUT_MODE | LR: $LEARNING_RATE"
+[[ $SMOKE == 1 ]] && echo "  SMOKE mode: $N_ITERS iterations, W&B disabled, HF online"
+echo "  Group: $GROUP | Model: $MODEL_TYPE | Updater: $UPDATER | Input: $INPUT_MODE | LR: $LEARNING_RATE"
 echo "  Dataset: $DATASET | Batch: $BATCH_SIZE | Hidden: $HIDDEN_SIZE | PosEnc: $POS_ENCODING"
-echo "  Checkpoint Dir: $CHECKPOINT_DIR"
-echo "  Checkpoint Save Freq: $CHECKPOINT_SAVE_FREQ"
+echo "  Checkpoint Dir: $CHECKPOINT_DIR (resume: $RESUME, save every $CHECKPOINT_SAVE_FREQ)"
 
 # Create checkpoint directory if it doesn't exist
 mkdir -p "$CHECKPOINT_DIR"
 
-# Save a copy of this script for reproducibility
-cp "$0" "$CHECKPOINT_DIR/run_used.sh"
+# Save a copy of this script for reproducibility (bulk_restart.sh resubmits it)
+[[ $SMOKE == 1 ]] || cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
-# The Python script will now automatically look for $CHECKPOINT_DIR/latest_checkpoint.pth
 source ./sweeps/forward_signals.sh
 forward_signals python -u train.py \
     --model_type $MODEL_TYPE \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
-    --plast_learning_rate $PLAST_LEARNING_RATE \
     --plast_clip $PLAST_CLIP \
     --grad_clip $GRAD_CLIP \
-    --imprint_rate $IMPRINT_RATE \
     --forget_rate $FORGET_RATE \
     --self_grad $SELF_GRAD \
     --normalize $NORMALIZE \
@@ -168,22 +184,17 @@ forward_signals python -u train.py \
     --log_freq $LOG_FREQ \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
-    --track true \
+    --resume $RESUME \
+    --track $TRACK \
     --group "$GROUP" \
     --tags "${TAGS[@]}" \
     --notes "$NOTES" \
     --plast_proportion $PLAST_PROPORTION \
     --enable_recurrence $ENABLE_RECURRENCE
 
-echo "--- Training Finished ---"
-
-# ======================== Post-Run (Optional) =================================
-# Generate memory profile plot if mprof was used during the python run
-# mprof plot --output=memory_profile_${SLURM_JOB_ID}.png
-
-# Clean up model data directory
-echo "Cleaning up model data..."
-rm -f model_data/* # Use -f to force remove without prompts
-echo "Cleanup complete."
+status=$?
+echo "--- Training Finished (exit $status) ---"
+# Smoke runs must fail loudly; normal runs keep the original always-0 exit.
+[[ $SMOKE == 1 ]] && exit $status
 
 # ==============================================================================
