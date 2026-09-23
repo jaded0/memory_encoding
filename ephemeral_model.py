@@ -10,7 +10,10 @@ import torch.nn.utils.parametrize as parametrize
 
 
 class EphemeralLinear(nn.Linear):
-    def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, updater='dfa', requires_grad=False, is_last_layer=False, plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2):
+    def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, updater='dfa', requires_grad=False, is_last_layer=False, plast_clip=1, batch_size=1, forget_rate=0.01, plast_proportion=0.2):
+        """forget_rate: fraction of each ephemeral weight removed per forget step,
+        w <- (1 - forget_rate) * w (see apply_forget_step). It is the paper's 1 - gamma:
+        the paper's gamma = 0.7 retention is forget_rate = 0.3. Same meaning as --forget_rate."""
         super(EphemeralLinear, self).__init__(in_features, out_features, bias)
 
         # Set requires_grad for the base class parameters
@@ -45,6 +48,10 @@ class EphemeralLinear(nn.Linear):
         self.mask = nn.Parameter((rand_vals < plast_proportion).bool(), requires_grad=False)
         distribution[self.mask] = plast_clip
 
+        # forgetting_factor holds the per-entry forget rate (fraction removed per step, not a
+        # multiplier): forget_rate on the mask, 0 elsewhere. mask_tier_two reuses rand_vals, so
+        # it lies inside the mask when plast_proportion >= 0.01 and changes nothing; below
+        # 0.01 it also puts forget_rate on slow entries with rand_vals in [plast_proportion, 0.01).
         mask_tier_two = rand_vals < 0.01
         forget_dist = torch.zeros_like(self.weight)
         forget_dist[self.mask] = forget_rate
@@ -219,8 +226,10 @@ class EphemeralLinear(nn.Linear):
 
 
     def apply_forget_step(self):
-        """Applies forgetting factor to high-plasticity weights.
-        This is done with no_grad to prevent interference with backprop."""
+        """Decays the ephemeral entries: w <- (1 - forgetting_factor) * w, element-wise, where
+        forgetting_factor is forget_rate on the mask and 0 elsewhere (a retention of
+        gamma = 1 - forget_rate per call). train.py calls this before each update; the paper
+        applies gamma after. This is done with no_grad to prevent interference with backprop."""
         with torch.no_grad():
             # Use non-inplace multiplication to avoid RuntimeError during backprop.
             # The original `mul_` was an inplace operation that corrupted the
@@ -308,9 +317,11 @@ class EphemeralRNN(torch.nn.Module):
         self, input_size, hidden_size, output_size, num_layers, charset,
         dropout_rate=0, residual_connection=False, init_type='zero',
         normalize=True, clip_weights=False, updater='dfa',
-        plast_clip=1, batch_size=1, forget_rate=0.7, plast_proportion=0.2,
+        plast_clip=1, batch_size=1, forget_rate=0.01, plast_proportion=0.2,
         enable_recurrence=True
     ):
+        """forget_rate: fraction of each ephemeral weight removed per forget step,
+        w <- (1 - forget_rate) * w; the paper's gamma is 1 - forget_rate (see EphemeralLinear)."""
         super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
