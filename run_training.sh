@@ -40,7 +40,8 @@ INPUT_MODE='last_one'        # last_one | last_two
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-3           # Base learning rate
 PLAST_CLIP=1e3               # Plasticity (learning-rate multiplier) of ephemeral weights, alpha
-GRAD_CLIP=0                  # Element-wise clip on ephemeral-weight updates (0 = off)
+GRAD_CLIP=0                  # ephemeral: element-wise clamp on ephemeral-weight updates; rnn: grad-norm clip (0 = off)
+GRAD_CLIP_FLAG=$([[ $MODEL_TYPE == rnn ]] && echo --grad_norm_clip || echo --ephemeral_update_clamp)
 
 # --- Ephemeral Weights (ignored by the rnn baseline) ---
 FORGET_RATE=0.01             # Fraction of each ephemeral weight removed per step: w <- (1 - FORGET_RATE) w
@@ -83,12 +84,12 @@ python -u train.py \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
-    --plast_clip $PLAST_CLIP \
-    --grad_clip $GRAD_CLIP \
+    --plasticity $PLAST_CLIP \
+    $GRAD_CLIP_FLAG $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
     --self_grad $SELF_GRAD \
-    --normalize $NORMALIZE \
-    --clip_weights $CLIP_WEIGHTS \
+    --unit_norm_weights $NORMALIZE \
+    --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \
     --num_layers $NUM_LAYERS \
     --residual_connection $RESIDUAL_CONNECTION \
@@ -104,7 +105,7 @@ python -u train.py \
     --group "$GROUP" \
     --tags "${TAGS[@]}" \
     --notes "$NOTES" \
-    --plast_proportion $PLAST_PROPORTION \
+    --ephemeral_fraction $PLAST_PROPORTION \
     --enable_recurrence $ENABLE_RECURRENCE
 
 echo "--- Training Finished ---"
