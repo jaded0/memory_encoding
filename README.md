@@ -196,18 +196,35 @@ python train.py --updater bptt --model_type ephemeral
 - `--forget_rate`: Fraction of each ephemeral weight removed per step
 - `--resume` / `--resume_checkpoint PATH`: Resume from `latest_checkpoint.pth`, or from an explicit checkpoint
 - `--batch_size`: Number of sequences processed together
-- `--seed`: Seed Python, NumPy, Torch, dataset shuffling, and DataLoader sampling
-- `--deterministic`: Require deterministic Torch operations; requires `--seed`
+- `--seed`: Seed Python, NumPy, Torch, dataset shuffling, and DataLoader sampling (unset = drawn from the OS; see below)
+- `--deterministic`: Require deterministic Torch operations
 
 Resuming is opt-in: without `--resume` or `--resume_checkpoint`, training starts from
 scratch even if `latest_checkpoint.pth` exists. `--resume` with no checkpoint present starts
 from scratch; a missing explicit `--resume_checkpoint` is an error. Once a checkpoint is
 chosen, any load failure aborts the run, including a mismatch in hidden size, layer count,
-updater, model type, charset size, seed or `--deterministic` (`utils.py:139-163`).
+updater, model type or charset size (`utils.py`, `load_checkpoint`). The seed and `--deterministic`
+come from the checkpoint; passing a different value is an error.
 
 ### Seeds & reproducibility
 
-<!-- Section text to follow with the seeding changes. -->
+Every run is seeded. On a fresh start without `--seed`, `train.py` draws a 63-bit seed from the OS
+(`secrets.randbits`; never from time or job ID, so array tasks that start together get independent
+seeds) and prints it near the top of the log: `Seed: 8338083689295822420 (generated), deterministic: False`.
+`--seed N` picks it yourself (`(from --seed)`). The seed is saved in every checkpoint and in the W&B
+config (`seed`, `seed_source`). Under SLURM it is also written to the job comment (best effort), so
+`squeue -o "%i %j %k"` or `sacct -o JobID,Comment` shows it.
+
+On resume the checkpoint is the source of truth: the seed and `--deterministic` are read from it
+(`(from checkpoint)`) and need not be passed again. Checkpoints also store the Python, NumPy and Torch
+RNG states and the DataLoader's position (`DataStream` in `reproducibility.py`), so preemption, requeue
+or `sweeps/bulk_restart.sh` (a new SLURM job ID) continues the same random and data stream: N steps,
+resume, M steps equals N+M uninterrupted steps (`tests/test_seed_resume.py`). Checkpoints from before
+this change with `seed: None` resume unseeded, with a warning. A job preempted before its first
+checkpoint starts fresh with a new seed.
+
+To rerun an experiment exactly, start fresh with `--seed <logged seed>` (plus `--deterministic True`
+for bitwise-deterministic Torch ops; on GPU this sets `CUBLAS_WORKSPACE_CONFIG`).
 
 ### SLURM time limits
 
@@ -246,7 +263,7 @@ regenerate them.
 - `train.py`: Main training script with unified training loop
 - `ephemeral_model.py`: Implementation of EphemeralRNN and EphemeralLinear layers
 - `preprocess.py`: Data loading and preprocessing utilities
-- `reproducibility.py`: Opt-in seeding and checkpoint RNG state helpers
+- `reproducibility.py`: Seed resolution, RNG and data-stream checkpoint state
 - `utils.py`: Helper functions and utilities
 - `tests/`: Test suite; `tests/README.md` has the golden-trace contract, pinned known behaviours and regeneration log
 - `tests/fixtures/training_traces.json`: CPU golden traces for all update paths
