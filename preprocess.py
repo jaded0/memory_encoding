@@ -6,8 +6,11 @@ resequence) load from synth_datasets/ and are preprocessed on the fly; they are 
 Hugging Face datasets (e.g. roneneldan/tinystories) are preprocessed once, by
 `python preprocess.py <name>` (on the cluster: setup_cluster/prepare_datasets.sbatch),
 and saved to the processed-data directory ($EPHEMERAL_DATA_DIR, default
-./processed_datasets/). Training only loads that saved copy; if it is missing it
-fails rather than spend the better part of an hour preprocessing inside a job.
+./processed_datasets/). Training loads that saved copy. If it is missing, a local run
+(no SLURM_JOB_ID) prints a notice and prepares it first, exactly as
+`python preprocess.py <name>` would; a SLURM job fails with the setup hint instead,
+because compute nodes have no internet and a job must not be spent preprocessing.
+EPHEMERAL_AUTO_PREPROCESS=1 or 0 overrides that choice (see auto_preprocess_enabled).
 
 Rows store the filtered text and the character indices (uint8). The one-hot tensors
 the model consumes are built per batch by OneHotCollate, since storing them costs
@@ -64,8 +67,10 @@ SETUP_HINT = (
     "Prepare it once before training:\n"
     "  cluster: setup_cluster/download_datasets.sh on the login node, then\n"
     "           sbatch setup_cluster/prepare_datasets.sbatch   (see setup_cluster/README.md)\n"
-    "  local:   python preprocess.py {name}"
+    "  local:   python preprocess.py {name}\n"
+    "(A run outside SLURM prepares it automatically unless EPHEMERAL_AUTO_PREPROCESS=0.)"
 )
+AUTO_PREPROCESS_ENV = "EPHEMERAL_AUTO_PREPROCESS"
 
 
 class ProcessedDatasetMissing(FileNotFoundError):
@@ -74,6 +79,22 @@ class ProcessedDatasetMissing(FileNotFoundError):
 
 def is_synthetic(dataset_name):
     return any(tag in dataset_name for tag in ("palindrome_dataset", "long_range_memory_dataset", "resequence"))
+
+
+def auto_preprocess_enabled():
+    """Whether training prepares a missing processed dataset itself.
+
+    EPHEMERAL_AUTO_PREPROCESS=1 (or true/yes) always does, =0 (or false/no) never does. Unset
+    or empty: only outside SLURM (no SLURM_JOB_ID), since compute nodes have no internet and
+    a training job must not be spent preprocessing."""
+    value = os.environ.get(AUTO_PREPROCESS_ENV, "").strip().lower()
+    if value in ("1", "true", "yes"):
+        return True
+    if value in ("0", "false", "no"):
+        return False
+    if value:
+        raise ValueError(f"{AUTO_PREPROCESS_ENV}={os.environ[AUTO_PREPROCESS_ENV]!r}: use 1 or 0 (or leave it unset)")
+    return not os.environ.get("SLURM_JOB_ID")
 
 
 def processed_data_dir():
@@ -189,6 +210,11 @@ def prepare_dataset(dataset_name, limit=None, num_proc=None, data_dir=None, over
 
 def load_processed_dataset(dataset_name, data_dir=None):
     path = processed_dataset_path(dataset_name, data_dir=data_dir)
+    if not os.path.isdir(path) and auto_preprocess_enabled():
+        print(f"Processed dataset for {dataset_name} not found at {path}.\n"
+              f"Preparing it now, as `python preprocess.py {dataset_name}` would (not under SLURM, "
+              f"or {AUTO_PREPROCESS_ENV}=1; set {AUTO_PREPROCESS_ENV}=0 to fail instead).")
+        path = prepare_dataset(dataset_name, data_dir=data_dir)
     if not os.path.isdir(path):
         parent = os.path.dirname(path)
         prefix = dataset_name.replace("/", "--") + "__"

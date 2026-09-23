@@ -34,8 +34,10 @@ synthetic datasets in `synth_datasets/` need no setup.
   `./processed_datasets/`. Each dataset gets one directory, and its name
   includes the split, the row count, a hash of the charset, a hash of the
   preprocessing code and `PREPROCESS_VERSION`. When any of these changes,
-  training can't find the directory and stops, telling you to rerun setup.
-  It never loads stale rows, and it never preprocesses inside a training job.
+  a training job can't find the directory and stops, telling you to rerun
+  setup. It never loads stale rows, and it never preprocesses inside a SLURM
+  job (unless `EPHEMERAL_AUTO_PREPROCESS=1` is set). A local run outside
+  SLURM prepares the missing directory itself; see the main README.
 
 The saved rows hold text and uint8 character indices. The one-hot tensors are
 built per batch, and the batches are identical to the old stored one-hot

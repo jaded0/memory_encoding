@@ -1,4 +1,4 @@
-"""Processed-dataset naming, the missing-data error, and old-vs-new batch equivalence (network-free)."""
+"""Processed-dataset naming, missing data (auto-prepared locally, an error under SLURM), and old-vs-new batch equivalence (network-free)."""
 import contextlib
 import io
 import os
@@ -56,19 +56,70 @@ class ProcessedNameTest(unittest.TestCase):
             self.assertEqual(preprocess.default_num_proc(cap=16), 16)
 
 
+@contextlib.contextmanager
+def environment(data_dir, **variables):
+    """os.environ with EPHEMERAL_DATA_DIR=data_dir and the given variables, and without
+    SLURM_JOB_ID or EPHEMERAL_AUTO_PREPROCESS unless given."""
+    with patch.dict(os.environ, {"EPHEMERAL_DATA_DIR": data_dir}):
+        for name in ("SLURM_JOB_ID", preprocess.AUTO_PREPROCESS_ENV):
+            os.environ.pop(name, None)
+        os.environ.update(variables)
+        yield
+
+
 class MissingDataTest(unittest.TestCase):
-    def test_training_fails_with_setup_hint_instead_of_preprocessing(self):
-        with tempfile.TemporaryDirectory() as data_dir, \
-                patch.dict(os.environ, {"EPHEMERAL_DATA_DIR": data_dir}), \
+    def assert_fails_with_setup_hint(self, **variables):
+        with tempfile.TemporaryDirectory() as data_dir, environment(data_dir, **variables), \
                 patch.object(preprocess, "load_dataset", side_effect=AssertionError("must not preprocess")):
             os.mkdir(os.path.join(data_dir, "jbrazzy--baby_names__train__rows-all__charset-x__code-y__v0"))
             with self.assertRaises(preprocess.ProcessedDatasetMissing) as caught, contextlib.redirect_stdout(io.StringIO()):
                 preprocess.load_and_preprocess_data(HF_NAME, batch_size=2, seed=1)
+            self.assertEqual(os.listdir(data_dir), ["jbrazzy--baby_names__train__rows-all__charset-x__code-y__v0"])
         message = str(caught.exception)
         self.assertIn(preprocess.processed_dataset_name(HF_NAME), message)
         self.assertIn("setup_cluster/prepare_datasets.sbatch", message)
         self.assertIn("python preprocess.py jbrazzy/baby_names", message)
         self.assertIn("stale", message)
+
+    def test_a_slurm_job_fails_with_setup_hint_instead_of_preprocessing(self):
+        self.assert_fails_with_setup_hint(SLURM_JOB_ID="12345")
+        self.assert_fails_with_setup_hint(SLURM_JOB_ID="12345", EPHEMERAL_AUTO_PREPROCESS="")
+
+    def test_auto_preprocess_0_fails_locally_too(self):
+        self.assert_fails_with_setup_hint(EPHEMERAL_AUTO_PREPROCESS="0")
+
+    def assert_prepares_then_loads(self, **variables):
+        raw = Dataset.from_dict({"Names": TEXTS})
+        with tempfile.TemporaryDirectory() as data_dir, environment(data_dir, **variables), \
+                patch.object(preprocess, "load_dataset", return_value=raw) as load_raw:
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                loader = preprocess.load_and_preprocess_data(HF_NAME, batch_size=2, seed=1)
+            # The same preparation as `python preprocess.py <name>`: the raw split, saved under
+            # the processed name in the processed-data directory.
+            load_raw.assert_called_once_with(HF_NAME, split=preprocess.dataset_keys[HF_NAME])
+            path = preprocess.processed_dataset_path(HF_NAME)
+            self.assertEqual(os.listdir(data_dir), [preprocess.processed_dataset_name(HF_NAME)])
+            self.assertTrue(os.path.isfile(os.path.join(path, "preprocess_info.json")))
+            self.assertIn("Preparing it now", printed.getvalue())
+            loader.num_workers = 0
+            self.assertEqual(sum(len(texts) for texts, _, _ in loader), len(TEXTS))
+            # Present now, so the next run only loads it.
+            load_raw.reset_mock()
+            with contextlib.redirect_stdout(io.StringIO()):
+                preprocess.load_and_preprocess_data(HF_NAME, batch_size=2, seed=1)
+            load_raw.assert_not_called()
+
+    def test_a_local_run_prepares_the_missing_dataset_and_continues(self):
+        self.assert_prepares_then_loads()
+
+    def test_auto_preprocess_1_prepares_even_under_slurm(self):
+        self.assert_prepares_then_loads(SLURM_JOB_ID="12345", EPHEMERAL_AUTO_PREPROCESS="1")
+
+    def test_auto_preprocess_rejects_other_values(self):
+        with environment("/unused", EPHEMERAL_AUTO_PREPROCESS="maybe"):
+            with self.assertRaises(ValueError):
+                preprocess.auto_preprocess_enabled()
 
     def test_synthetic_datasets_are_not_prepared(self):
         with self.assertRaises(ValueError):

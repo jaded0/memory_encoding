@@ -335,9 +335,10 @@ for bitwise-deterministic Torch ops; on GPU this sets `CUBLAS_WORKSPACE_CONFIG`)
 
 ### First-time cluster setup
 
-Compute nodes have no internet, and training never preprocesses Hugging Face
-datasets itself. Before the first `sbatch slurm_run.sh`, run this once from the
-repo root on the login node:
+Compute nodes have no internet, so a SLURM job never preprocesses Hugging Face
+datasets itself: if the processed copy is missing, training stops with a setup
+hint. Before the first `sbatch slurm_run.sh`, run this once from the repo root on
+the login node:
 
 ```bash
 setup_cluster/setup.sh          # add --redo to re-download and overwrite the processed data
@@ -346,8 +347,16 @@ setup_cluster/setup.sh          # add --redo to re-download and overwrite the pr
 This command downloads the raw datasets on the login node. It then submits a
 short test-QOS job that preprocesses them offline into `$EPHEMERAL_DATA_DIR`
 (default `./processed_datasets/`) and smoke-tests the `slurm_run.sh` config on a
-GPU. See [setup_cluster/README.md](setup_cluster/README.md). For local runs on
-a Hugging Face dataset, run `python preprocess.py roneneldan/tinystories` once.
+GPU. See [setup_cluster/README.md](setup_cluster/README.md).
+
+Local runs (no `SLURM_JOB_ID`) need no setup step: when the processed copy of a
+Hugging Face dataset is missing, `train.py` prints a notice, runs the same
+preparation as `python preprocess.py <name>` (downloading the raw split if it is
+not in the HF cache; about a minute for TinyStories), saves it to the
+processed-data directory and continues. `EPHEMERAL_AUTO_PREPROCESS=0` makes a
+local run fail with the setup hint instead, and `EPHEMERAL_AUTO_PREPROCESS=1`
+makes even a SLURM job prepare it (only useful where the job has the raw data
+and time to spare).
 
 ### SLURM time limits
 
