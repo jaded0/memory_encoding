@@ -69,6 +69,27 @@ class CheckpointCompatibilityTest(unittest.TestCase):
                 self.load(path, {**CONFIG, "forget_rate": 0.3})
             self.load(path, {**CONFIG, "forget_rate": 0.01})
 
+    def test_dataset_or_learning_rate_change_raises_configuration_error(self):
+        saved = {**CONFIG, "dataset": DATASET, "learning_rate": 1e-4}
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.save(directory, saved)
+            for change in ({"dataset": "palindrome_dataset"}, {"learning_rate": 2e-4}):
+                with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, "configuration mismatch"):
+                    self.load(path, {**saved, **change})
+
+    def test_other_config_differences_print_but_load(self):
+        saved = {**CONFIG, "print_freq": 50, "n_iters": 100, "plast_clip": 10.0}
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.save(directory, saved)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                load_checkpoint(path, build_model(), {**saved, "print_freq": 5, "plast_clip": 20.0, "notes": "x"})
+        printed = output.getvalue()
+        self.assertIn("print_freq: 50 -> 5", printed)
+        self.assertIn("plast_clip: 10.0 -> 20.0", printed)
+        self.assertIn("notes: (not in checkpoint) -> 'x'", printed)
+        self.assertNotIn("n_iters", printed)
+
     def test_legacy_ethereal_checkpoint_loads_as_ephemeral(self):
         with tempfile.TemporaryDirectory() as directory:
             path = self.save(directory, {**CONFIG, "model_type": "ethereal"})
@@ -111,6 +132,12 @@ class MainFailurePathTest(unittest.TestCase):
             with patch.object(train_module, "load_checkpoint", wraps=train_module.load_checkpoint) as loader:
                 run_main("--resume_checkpoint", latest, "--n_iters", "5", checkpoint_dir=directory)
             loader.assert_called_once()
+
+    def test_resume_with_new_learning_rate_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_main("--checkpoint_save_freq", "3", checkpoint_dir=directory)
+            with self.assertRaisesRegex(RuntimeError, "configuration mismatch"):
+                run_main("--resume", "--learning_rate", "0.5", checkpoint_dir=directory)
 
     def run_with_signal(self, signum, directory, *extra_args):
         real_train, calls = train_module.train, []

@@ -14,7 +14,7 @@ CUDA_VISIBLE_DEVICES="" python -m pytest tests/ -q
 | `test_characterization.py` | Golden traces for DFA, backprop and BPTT, in a base case and a `normalize_clip_2seq` case; a different seed changes the plasticity mask |
 | `test_smoke_updaters.py` | All three updaters produce a finite loss, finite outputs and non-zero, finite `i2o` weights |
 | `test_reproducibility.py` | Seeding, strict deterministic mode, RNG capture/restore, seeded data order and workers |
-| `test_failure_paths.py` | Checkpoint compatibility (including a changed `forget_rate`), missing or unreadable checkpoints, explicit resume, non-finite loss, time-limit (124) and SIGTERM (143) exits |
+| `test_failure_paths.py` | Checkpoint compatibility (including a changed `forget_rate`, `dataset` or `learning_rate`), the resume config diff, missing or unreadable checkpoints, explicit resume, non-finite loss, time-limit (124) and SIGTERM (143) exits |
 | `test_metrics.py` | Interval metrics, recall targets and chance levels |
 | `legacy/test_plast_clip_update.py` | Changing `--plast_clip` on resume updates checkpoint plasticity; RNG round-trip |
 

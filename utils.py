@@ -134,12 +134,34 @@ def read_checkpoint(checkpoint_path):
     # Load checkpoint to CPU first to avoid GPU OOM issues with mismatched models/devices
     return torch.load(checkpoint_path, map_location='cpu', weights_only=False)
 
+# Config entries that are objects rather than settings, so they are not diffed on resume.
+_UNDIFFED_CONFIG_KEYS = {'criterion', 'pe_matrix'}
+
+def print_config_diff(config, loaded_config):
+    """Prints every config field that differs between the checkpoint and this run."""
+    missing = object()
+    keys = sorted((set(config) | set(loaded_config)) - _UNDIFFED_CONFIG_KEYS)
+    diffs = [
+        (key, loaded_config.get(key, missing), config.get(key, missing))
+        for key in keys
+        if loaded_config.get(key, missing) != config.get(key, missing)
+    ]
+    if not diffs:
+        print("Config matches the checkpoint.")
+        return
+    print("Config differences (checkpoint -> this run):")
+    for key, loaded_value, current_value in diffs:
+        loaded_text = "(not in checkpoint)" if loaded_value is missing else repr(loaded_value)
+        current_text = "(not in this run)" if current_value is missing else repr(current_value)
+        print(f"  {key}: {loaded_text} -> {current_text}")
+
 def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu', checkpoint=None):
     """Loads checkpoint from disk (or from `checkpoint`, if it was already read)"""
     print(f"=> Loading checkpoint '{checkpoint_path}'")
     if checkpoint is None:
         checkpoint = read_checkpoint(checkpoint_path)
     loaded_config = checkpoint.get('config', {}) # The config used for this checkpoint
+    print_config_diff(config, loaded_config)
 
     compatibility_defaults = {
         'n_hidden': None,
@@ -162,6 +184,12 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     # silently ignored (while W&B records it). Checked only if the checkpoint recorded it.
     if 'forget_rate' in loaded_config and config.get('forget_rate') != loaded_config['forget_rate']:
         mismatches.append(('forget_rate', config.get('forget_rate'), loaded_config['forget_rate']))
+    # slurm_run.sh keys checkpoints by job name and always resumes, so a reused job name for a
+    # new experiment would silently continue an old checkpoint. A different dataset or
+    # learning rate means a different experiment. Checked only if the checkpoint recorded them.
+    for key in ('dataset', 'learning_rate'):
+        if key in loaded_config and config.get(key) != loaded_config[key]:
+            mismatches.append((key, config.get(key), loaded_config[key]))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")

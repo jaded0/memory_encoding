@@ -424,6 +424,8 @@ def main():
         "seed": seed,
         "deterministic": deterministic,
     }
+    # Record every other CLI argument too, so checkpoints carry it and a resume can diff it.
+    config.update({key: value for key, value in vars(args).items() if key not in config})
     print(f"Input mode selected: {args.input_mode}") # Inform user
 
     if not os.path.exists(args.checkpoint_dir):

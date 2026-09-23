@@ -235,9 +235,17 @@ Resuming is opt-in: without `--resume` or `--resume_checkpoint`, training starts
 scratch even if `latest_checkpoint.pth` exists. `--resume` with no checkpoint present starts
 from scratch; a missing explicit `--resume_checkpoint` is an error. Once a checkpoint is
 chosen, any load failure aborts the run, including a mismatch in hidden size, layer count,
-updater, model type, charset size or `--forget_rate` (`utils.py`, `load_checkpoint`). A
-changed `--forget_rate` is refused because the per-entry `forgetting_factor` comes from the
-checkpoint's state dict, so the new value would otherwise be silently ignored. The seed and `--deterministic`
+updater, model type, charset size, `--forget_rate`, `--dataset` or `--learning_rate`
+(`utils.py`, `load_checkpoint`). A changed `--forget_rate` is refused because the per-entry
+`forgetting_factor` comes from the checkpoint's state dict, so the new value would
+otherwise be silently ignored. A changed dataset or learning rate is refused because it
+means a different experiment: `slurm_run.sh` keys checkpoints by SLURM job name and always
+passes `--resume true`, so a reused job name would otherwise silently continue an old
+checkpoint. Every CLI argument is saved in the checkpoint's config, and on resume
+`load_checkpoint` prints every field that differs (`checkpoint -> this run`) before these
+checks. Other differences, such as `--n_iters` or `--print_freq`, are only printed;
+`--plast_clip` is printed and then applied to the loaded plasticity as before. Checkpoints
+that did not record a field (older runs) are not checked on it. The seed and `--deterministic`
 come from the checkpoint; passing a different value is an error.
 
 ### Seeds & reproducibility
