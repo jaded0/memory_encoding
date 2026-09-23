@@ -114,7 +114,14 @@ class EphemeralLinear(nn.Linear):
         self.out_traces.data = output
 
     def populate_dfa_gradients(self, error_signal):
-        """Populate gradients using DFA feedback weights for gradient-based update."""
+        """Populate gradients using DFA feedback weights for gradient-based update.
+
+        error_signal is train.py's output_error, [B, vocab], the same object for every layer.
+        Last layers use it as is: _last_projected_error is then that shared object, not a copy,
+        and _update_bias_from_grad reads it. Other layers project it with feedback_weights into a
+        new tensor. Nothing here modifies error_signal. The gradient is a new tensor, and
+        .grad gets its own copy of it (train.py's zero_grad() leaves .grad None, so the clone()
+        branch is the one that runs there)."""
         input = self.in_traces.data
         input_expanded = input.unsqueeze(1)  # Shape: [batch_size, 1, in_features]
         

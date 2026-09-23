@@ -130,22 +130,27 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             loss = criterion(output, final_char)
             losses.append(loss.detach())
             
-            # Convert loss to reward signal
-            global_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
-            reward_update = global_error
+            # Per-sequence output error dL/d(output), [B, vocab]: a new tensor (not a view of
+            # output or of grad_outputs) that needs no grad. It was two names, global_error and
+            # reward_update, bound to this one object; there was never a second tensor.
+            output_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
             rnn.zero_grad()
-            
-            # Add self_grad if configured
+
+            # --self_grad > 0 adds the clamped self_grad output to the same tensor, in place, so
+            # from here on output_error is the error plus that term.
             if config.get("self_grad", 0) > 0:
-                reward_update += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
-            
+                output_error += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
+
             # Apply DFA updates
             if isinstance(rnn, EphemeralRNN):
-                # Populate gradients using DFA feedback weights
+                # Every layer is given this same object, and all of them are populated before any
+                # update runs. i2o and self_grad keep a reference to it (as _last_projected_error,
+                # for the bias update), so it must not be modified in place until the updates
+                # below are done: tests/test_dfa_error_signals.py checks that.
                 for layer in rnn.linear_layers:
-                    layer.populate_dfa_gradients(reward_update)
-                rnn.i2o.populate_dfa_gradients(reward_update)
-                rnn.self_grad.populate_dfa_gradients(reward_update)
+                    layer.populate_dfa_gradients(output_error)
+                rnn.i2o.populate_dfa_gradients(output_error)
+                rnn.self_grad.populate_dfa_gradients(output_error)
                 
                 # Apply the updates using the DFA-populated gradients
                 for layer in rnn.linear_layers:
