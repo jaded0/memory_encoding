@@ -103,6 +103,7 @@ under review". A fix to any of them is expected to fail the golden test.
 | `ephemeral_update_clamp` clamps the α-scaled update on masked entries only; it binds in the DFA trace at 0.2 | `apply_update` | DFA |
 | Ephemeral BPTT ignores `ephemeral_update_clamp`, `weight_clamp` and `unit_norm_weights` | `train.py` BPTT branch | `bptt/normalize_clip_2seq` if weight clamping or unit-norm rescaling is added; `bptt` (base) if the update clamp is |
 | Elman layout, `y_t = i2o(h_t)`: approved, but pending full before/after benchmark runs (main README) | `EphemeralRNN.forward`, `SimpleRNN.forward`; `train.py` DFA branch | all seven, if it is reverted |
+| DFA omits the activation derivative: hidden layers and `i2h` use `output_error @ feedback_weights` without ⊙ f′(a) (Nøkland 2016 includes it); under review, not a confirmed bug (main README) | `ephemeral_model.py` `dfa_projected_error`, shared by `EphemeralLinear` and `DFALinear` | `dfa`, `dfa/normalize_clip_2seq`, `dfa/rnn` |
 | Ephemeral BPTT never increments `training_instance` | `train.py` BPTT branch | BPTT |
 
 The 1/B factor in backprop and BPTT (batch-mean loss before `backward()`) is

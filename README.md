@@ -188,6 +188,22 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   drifted from the CLI values after the first update). Layers whose update is skipped
   (`self_grad` under backprop, which is not trained there) are not rescaled. `--weight_clamp` is applied after the
   normalization, so a clamp of 1 or more never binds when `--unit_norm_weights` is on.
+- **DFA omits the activation derivative f′ (to examine; not changed).** Every non-output
+  layer's DFA error is the output error projected straight through its feedback matrix,
+  `projected = output_error @ feedback_weights` (`dfa_projected_error`,
+  `ephemeral_model.py:21-27`), and that is used as is for the weight step (outer product with
+  the input) and the bias step. It is never multiplied by the derivative of the layer's
+  activation: gelu′ for the ephemeral model's hidden layers (`ephemeral_model.py:440`),
+  relu′ for SimpleRNN's (`:633`), and tanh′ for `i2h` in both (`:452`, `:638`). This differs
+  from Nøkland's formulation (2016, "Direct Feedback Alignment Provides Learning in Deep
+  Neural Networks"), where a hidden layer's update is δa_l = (B_l·e) ⊙ f′(a_l), with a_l the
+  layer's pre-activation, e the output error, and δW_l = −δa_l·h_{l−1}ᵀ. Only the output
+  layer takes e directly, as `i2o` and `self_grad` do here. Jaden wants to examine whether the
+  update *should* include f′. The SimpleRNN DFA baseline (`DFALinear`, 2026-09) omits it too,
+  on purpose, so that the two models' DFA is the same computation. Any future change must be
+  applied to both, most simply in the shared `dfa_*` helpers (`EphemeralLinear` already records
+  each step's pre-activation as `out_traces`; `DFALinear` records only its input). It would
+  change every DFA golden trace.
 - **`EphemeralLinear._update_bias` is dead code with a flipped sign.** Nothing calls it,
   and it adds `+lr·projected_error` (`ephemeral_model.py:243-250`). The live bias update is
   `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:215-226`).
