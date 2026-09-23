@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
 from reproducibility import DataStream, capture_rng_state, record_seed_in_slurm, resolve_seed, seed_everything
 from metrics import IntervalMetrics, recall_chance
-from utils import randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint
+from utils import randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint, check_checkpoint_code_version, CHECKPOINT_CODE_VERSION
 import time
 import math
 import argparse
@@ -460,6 +460,9 @@ def main():
         print("Starting from scratch (pass --resume or --resume_checkpoint to resume).")
     # Read the checkpoint before anything consumes randomness: it decides the seed.
     checkpoint = read_checkpoint(checkpoint_to_load) if checkpoint_to_load else None
+    if checkpoint is not None:
+        # Refuse a checkpoint from other training mechanics before it decides anything.
+        check_checkpoint_code_version(checkpoint, checkpoint_to_load)
 
     try:
         seed, deterministic, seed_source = resolve_seed(args.seed, args.deterministic, checkpoint)
@@ -607,12 +610,6 @@ def main():
 
         # Check if --plasticity has changed and update plasticity parameters if needed
         if isinstance(rnn, EphemeralRNN):
-            # The mask comes from the state dict. Checkpoints saved before last layers lost
-            # their ephemeral entries keep them; left as saved so the run continues unchanged.
-            stale = [name for name in ('i2o', 'self_grad') if getattr(rnn, name).ephemeral_mask.any()]
-            if stale:
-                print(f"WARNING: checkpoint predates empty last-layer masks: {', '.join(stale)} keep "
-                      "their saved ephemeral entries (decayed and wiped). Start fresh for the current behaviour.")
             # load_checkpoint maps an old checkpoint's plast_clip to plasticity.
             loaded_plasticity = loaded_config.get('plasticity', 1.0)
             current_plasticity = config.get('plasticity', 1.0)
@@ -702,6 +699,7 @@ def main():
     def checkpoint_state(next_iter):
         return {
             'iter': next_iter,
+            'code_version': CHECKPOINT_CODE_VERSION,
             'model_state_dict': rnn.state_dict(),
             'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
             'main_program_state': state,

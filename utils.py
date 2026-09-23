@@ -119,12 +119,41 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
-# Place these functions near the top of train.py or in utils.py
+# Version of the training mechanics, saved in every checkpoint as 'code_version'. A resume
+# refuses a checkpoint whose version differs from this one (or that has none), so the run
+# must start fresh.
+#
+# BUMP THIS whenever training mechanics change in a way that makes an in-flight run's
+# continuation meaningless: the forward pass or layer layout, what an updater changes or by
+# how much, forgetting, wiping, normalization or clamping, the loss, or the meaning of a
+# saved tensor. Pure renames that load_checkpoint maps, logging and refactors that keep the
+# golden trace (tests/fixtures/training_traces.json) identical do not need a bump. As a rule
+# of thumb, a commit that regenerates the golden trace with changed values bumps it.
+#
+# History: 1 was never written (checkpoints before versioning have no code_version and are
+# refused like any other mismatch). 2: introduced, 2026-09.
+CHECKPOINT_CODE_VERSION = 2
+
+
+def check_checkpoint_code_version(checkpoint, checkpoint_path="<checkpoint>"):
+    """Raises unless the checkpoint was written by code with this CHECKPOINT_CODE_VERSION."""
+    saved = checkpoint.get('code_version')
+    if saved == CHECKPOINT_CODE_VERSION:
+        return
+    found = "has no code_version (written before checkpoints were versioned)" if saved is None \
+        else f"has code_version {saved}"
+    raise RuntimeError(
+        f"Checkpoint {checkpoint_path} {found}, but this code is CHECKPOINT_CODE_VERSION "
+        f"{CHECKPOINT_CODE_VERSION}. The training mechanics changed in between, so continuing that "
+        "run would not be meaningful: start the run fresh (use a new --checkpoint_dir or delete the "
+        "old checkpoint, and do not pass --resume/--resume_checkpoint for it).")
+
 
 def save_checkpoint(state_dict, checkpoint_dir, filename="checkpoint.pth"):
-    """Saves checkpoint to disk"""
+    """Saves checkpoint to disk, stamped with code_version = CHECKPOINT_CODE_VERSION
+    unless the caller already set it."""
     filepath = os.path.join(checkpoint_dir, filename)
-    torch.save(state_dict, filepath)
+    torch.save({**state_dict, 'code_version': state_dict.get('code_version', CHECKPOINT_CODE_VERSION)}, filepath)
     print(f"Checkpoint saved to {filepath}")
 
 def read_checkpoint(checkpoint_path):
@@ -270,6 +299,8 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     print(f"=> Loading checkpoint '{checkpoint_path}'")
     if checkpoint is None:
         checkpoint = read_checkpoint(checkpoint_path)
+    # Before anything else: a checkpoint from other training mechanics is never continued.
+    check_checkpoint_code_version(checkpoint, checkpoint_path)
     # The config used for this checkpoint, with pre-2026-09 CLI names mapped to today's
     loaded_config = upgrade_legacy_config(checkpoint.get('config', {}))
     print_config_diff(config, loaded_config)

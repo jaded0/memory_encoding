@@ -142,12 +142,6 @@ the 2026-09 naming cleanup.
   drifted from the CLI values after the first update). Layers whose update returns early
   (`i2h` under backprop) are not rescaled. `--weight_clamp` is applied after the
   normalization, so a clamp of 1 or more never binds when `--unit_norm_weights` is on.
-- **Old checkpoints keep ephemeral entries in the output layers.** `ephemeral_mask` is a
-  state-dict parameter, so a checkpoint saved before the output layers' masks were emptied
-  (2026-09) restores its old non-empty `i2o`/`self_grad` mask. Those entries keep being
-  decayed (the forget rate is `forget_rate` on the mask) and wiped. This is deliberate: re-deriving the mask on
-  load would silently change a resumed run's dynamics. `train.py` prints a warning on such
-  a resume; start fresh to get the current behaviour.
 - **`EphemeralLinear._update_bias` is dead code with a flipped sign.** Nothing calls it,
   and it adds `+lr·projected_error` (`ephemeral_model.py:224-231`). The live bias update is
   `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:193-207`).
@@ -264,21 +258,29 @@ checks. Other differences, such as `--n_iters` or `--print_freq`, are only print
 that did not record a field (older runs) are not checked on it. The seed and `--deterministic`
 come from the checkpoint; passing a different value is an error.
 
+Every checkpoint records `code_version`, the value of `CHECKPOINT_CODE_VERSION` in
+`utils.py` when it was written. A resume first checks it and refuses, with an error saying
+the run must start fresh, if it differs from the current value or is missing (every
+checkpoint written before 2026-09 has none). `CHECKPOINT_CODE_VERSION` is bumped whenever the
+training mechanics change in a way that makes an in-flight run's continuation meaningless
+(see the comment on it); continuing such a run would mix two different algorithms in one
+experiment. To continue work from a refused checkpoint, start a new run.
+
 The state dict must match the model exactly: a missing or unexpected tensor is an error,
-not a freshly initialised tensor. Checkpoints saved before the 2026-09 naming cleanup load
-through a mapping of the old names (`candidate_weights` → `per_sample_weights`, `mask` →
+not a freshly initialised tensor. `load_checkpoint` still maps the tensor names used before
+the 2026-09 naming cleanup (`candidate_weights` → `per_sample_weights`, `mask` →
 `ephemeral_mask`, `last_high_plast_update_norm` / `last_low_plast_update_norm` →
-`last_ephemeral_step_norm` / `last_slow_step_norm`). Their stored `forgetting_factor` must
-equal `forget_rate` on the mask, and is then dropped. A checkpoint where it does not is refused:
-one trained with `--normalize` before 2026-09 (which rescaled it), or with
-`--plast_proportion` below 0.01 before `mask_tier_two` was removed. Their config keys are
-mapped too (see below), so the diff and the checks compare old and new names correctly.
+`last_ephemeral_step_norm` / `last_slow_step_norm`), checks that a stored `forgetting_factor`
+equals `forget_rate` on the mask and drops it, and maps old config keys (see below). Those
+checkpoints have no `code_version`, so a resume refuses them before the mapping runs; the
+mapping is kept, and unit-tested, for reading old checkpoints outside a resume.
 
 ### Renamed flags (2026-09)
 
 The old names still work. Each prints a one-line `DEPRECATED:` note, so old scripts and the
 frozen `checkpoints/<run>/run_used.sh` copies that `sweeps/bulk_restart.sh` resubmits run
-unchanged. Configs, checkpoints and W&B record only the new names. Giving an old and a new
+unchanged. (A resume of the checkpoints written next to those copies is refused by the
+`code_version` check, since they predate it; such runs have to start fresh.) Configs, checkpoints and W&B record only the new names. Giving an old and a new
 name with different values is an error.
 
 | Old flag | New flag | Notes |
@@ -308,7 +310,8 @@ On resume the checkpoint is the source of truth: the seed and `--deterministic` 
 RNG states and the DataLoader's position (`DataStream` in `reproducibility.py`), so preemption, requeue
 or `sweeps/bulk_restart.sh` (a new SLURM job ID) continues the same random and data stream: N steps,
 resume, M steps equals N+M uninterrupted steps (`tests/test_seed_resume.py`). Checkpoints from before
-this change with `seed: None` resume unseeded, with a warning. A job preempted before its first
+this change have `seed: None` and no `code_version`, so a resume refuses them; the code still resumes a
+checkpoint with `seed: None` unseeded, with a warning. A job preempted before its first
 checkpoint starts fresh with a new seed.
 
 To rerun an experiment exactly, start fresh with `--seed <logged seed>` (plus `--deterministic True`

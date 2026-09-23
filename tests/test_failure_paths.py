@@ -10,7 +10,7 @@ import torch
 
 import train as train_module
 from ephemeral_model import EphemeralRNN
-from utils import load_checkpoint, save_checkpoint
+from utils import CHECKPOINT_CODE_VERSION, load_checkpoint, save_checkpoint
 
 DATASET = "2_small_palindrome_dataset_vary_length"  # charset "23. " (4 symbols)
 CONFIG = {"n_hidden": 4, "n_layers": 1, "updater": "dfa", "charset_size": 4, "model_type": "ephemeral"}
@@ -92,6 +92,24 @@ class CheckpointCompatibilityTest(unittest.TestCase):
         self.assertIn("notes: (not in checkpoint) -> 'x'", printed)
         self.assertNotIn("n_iters", printed)
 
+    def test_other_or_missing_code_version_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.save(directory, CONFIG)
+            self.assertEqual(torch.load(path, weights_only=False)["code_version"], CHECKPOINT_CODE_VERSION)
+            self.load(path, CONFIG)
+            for version in (CHECKPOINT_CODE_VERSION - 1, CHECKPOINT_CODE_VERSION + 1, None):
+                with self.subTest(code_version=version):
+                    checkpoint = torch.load(path, weights_only=False)
+                    if version is None:
+                        del checkpoint["code_version"]
+                        expected = "has no code_version"
+                    else:
+                        checkpoint["code_version"] = version
+                        expected = f"has code_version {version}"
+                    torch.save(checkpoint, path)
+                    with self.assertRaisesRegex(RuntimeError, f"{expected}.*start the run fresh"):
+                        self.load(path, CONFIG)
+
     def test_legacy_ethereal_checkpoint_loads_as_ephemeral(self):
         with tempfile.TemporaryDirectory() as directory:
             path = self.save(directory, {**CONFIG, "model_type": "ethereal"})
@@ -140,6 +158,19 @@ class MainFailurePathTest(unittest.TestCase):
             run_main("--checkpoint_save_freq", "3", checkpoint_dir=directory)
             with self.assertRaisesRegex(RuntimeError, "configuration mismatch"):
                 run_main("--resume", "--learning_rate", "0.5", checkpoint_dir=directory)
+
+    def test_resume_of_another_code_version_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            run_main("--checkpoint_save_freq", "3", checkpoint_dir=directory)
+            latest = os.path.join(directory, "latest_checkpoint.pth")
+            checkpoint = torch.load(latest, weights_only=False)
+            self.assertEqual(checkpoint["code_version"], CHECKPOINT_CODE_VERSION)
+            checkpoint["code_version"] = CHECKPOINT_CODE_VERSION - 1
+            torch.save(checkpoint, latest)
+            with patch.object(train_module, "train") as train:
+                with self.assertRaisesRegex(RuntimeError, "start the run fresh"):
+                    run_main("--resume", "--n_iters", "5", checkpoint_dir=directory)
+            train.assert_not_called()
 
     def run_with_signal(self, signum, directory, *extra_args):
         real_train, calls = train_module.train, []
