@@ -136,8 +136,9 @@ def str2bool(v):
 # (i2o takes hidden_size inputs; i2h learns under DFA and per-step backprop).
 # 5: DFA for the SimpleRNN baseline (--model_type rnn --updater dfa now trains every layer,
 # and its state dict holds the DFA feedback matrices). 6: the self_grad head and --self_grad
-# are removed (its layer is gone from the state dict).
-CHECKPOINT_CODE_VERSION = 6
+# are removed (its layer is gone from the state dict). 7: EphemeralLinear slow entries start
+# from nn.Linear's default weight initialization; fast entries still start at zero.
+CHECKPOINT_CODE_VERSION = 7
 
 
 def check_checkpoint_code_version(checkpoint, checkpoint_path="<checkpoint>"):

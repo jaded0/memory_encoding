@@ -44,9 +44,11 @@ every combination as the code behaves today.
 ## Updaters
 
 Each EphemeralLinear layer holds `per_sample_weights` of shape `[batch, out, in]`, one copy
-per sequence, starting at zero (slow entries included; see `docs/next_steps.md` §1). A fixed random `ephemeral_mask` marks `--ephemeral_fraction`
-of each layer's entries as ephemeral, with plasticity α = `--plasticity`. The rest are slow
-weights with plasticity 1. The output layer `i2o` has no ephemeral entries:
+per sequence. Slow entries start from the layer's standard `nn.Linear` initialization, copied
+identically to every sequence without an additional RNG draw; fast entries start at zero. A
+fixed random `ephemeral_mask` marks `--ephemeral_fraction` of each layer's entries as
+ephemeral, with plasticity α = `--plasticity`. The rest are slow weights with plasticity 1.
+The output layer `i2o` has no ephemeral entries, so all of its weights use the standard init:
 its mask is empty, so it has plasticity 1 everywhere and is never decayed or wiped
 (the W&B `nominal_ephemeral_lr` and `nominal_mean_lr` config values therefore describe the
 hidden layers and `i2h` only). At the start of every sequence, `start_sequence_wipe()`
@@ -126,8 +128,8 @@ The entries that differ between columns are explained, with evidence, in the nex
 
 ## Known issues / behaviours under review
 
-Planned, decided-but-unimplemented work (weight initialisation, baseline architecture
-matching, hyperparameter parity) is listed in `docs/next_steps.md`.
+Planned, decided-but-unimplemented work (baseline architecture matching and hyperparameter
+parity) is listed in `docs/next_steps.md`.
 
 These describe the current code. They are recorded here, not changed, until they can be
 re-examined with full training runs before and after. Line numbers were last checked after
@@ -153,18 +155,16 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   (`ephemeral_model.py:452-457`, `:638-640`); before, `h_t` and `y_t` were both read off
   `combined`, and `h_t` fed only the next step. Under DFA and per-step backprop, which
   detach the hidden state every step (`train.py:91-92`), `i2h` therefore never received a
-  gradient or an error, and its `per_sample_weights` stayed at their initial zeros, so the
-  hidden state was the constant `tanh(i2h.bias)` and recurrence carried no information. Now
+  gradient or an error, and at the time its `per_sample_weights` stayed at their initial zeros,
+  so the hidden state was the constant `tanh(i2h.bias)` and recurrence carried no information. Now
   `i2h` learns every step under backprop, gets its own DFA error projection through its
   `feedback_weights` like the hidden layers (`train.py:152-164`), and still learns under
   BPTT. Jaden approved this ("option A"), but it changes every updater's dynamics and the
   model's shapes, so it **needs full before/after benchmark runs** against its parent commit
-  before it is relied on. Things to watch: all `per_sample_weights` still start at zero, so
-  under backprop and BPTT the gradient reaches each layer one step (or, for BPTT, one
-  sequence) later per layer of depth, and `i2h` is now one more layer between the hidden
-  layers and the output; the initial output is still `i2o.bias`, but `i2o.bias` is now
-  drawn with bound 1/√hidden_size instead of 1/√(input + hidden); and the W&B averages of
-  update norms now include a real `i2h` value instead of 0. Checkpoints from before the
+  before it is relied on. Things to watch: `i2h` is now one more layer between the hidden
+  layers and the output; `i2o.bias` is drawn with bound 1/√hidden_size instead of
+  1/√(input + hidden); and the W&B averages of update norms now include a real `i2h` value
+  instead of 0. Checkpoints from before the
   change are refused (`CHECKPOINT_CODE_VERSION` 4). (DFA trained nothing in the SimpleRNN
   baseline until the next change; it now trains every layer, see Updaters.)
 - **Ephemeral + BPTT: fast weights are frozen within a sequence.** BPTT is the contrast to

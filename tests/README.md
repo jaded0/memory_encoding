@@ -64,26 +64,22 @@ version differs from the one recorded in the fixture; it does not check Python
 or NumPy versions. The loss alone is a weak signal: the three base losses sit
 near ln 4, and the tensor comparison is what catches changes.
 
-Not covered: positional encoding, more than one layer, the SimpleRNN
-baseline under backprop and BPTT, and metric outputs. In the base case's single call BPTT moves only
-`i2o` and the biases, and its other `per_sample_weights` are still zero
-afterwards. The second call of `normalize_clip_2seq` also moves `i2h`. Under
-BPTT the hidden layer's gradient passes through `i2h`'s weights (Elman layout),
-which are still zero during the second sequence, so moving it would take a
-third. DFA updates `i2h` from the first step; backprop's first `i2h` gradient
-is zero (it goes through `i2o`'s weights, which start at zero) and is non-zero
-from the second step on.
+Not covered: positional encoding, more than one layer, the SimpleRNN baseline under backprop
+and BPTT, and metric outputs. The focused mechanics tests cover the initialization invariant:
+slow entries use the already-drawn `nn.Linear.weight` values in every per-sequence copy, while
+fast entries start at zero. The output head has no fast entries and therefore starts entirely
+from the default initialization.
 
 ## Behaviour the trace currently freezes
 
 | Updater | Loss | Forget calls | Gradient-scale calls | `apply_update` calls (linear / `i2h`) | `training_instance` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| DFA | 1.4558221102 | 4 | 0 | 4 / 4 | 4 |
-| Backprop | 1.4556038678 | 4 | 4 | 4 / 4 (the first `i2h` gradient is zero) | 4 |
-| BPTT | 1.4538696706 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
-| DFA, `normalize_clip_2seq` | 1.6720900536, 1.6015992165 | 8 | 0 | 8 / 8 | 8 |
-| Backprop, `normalize_clip_2seq` | 1.5847793221, 1.5525134802 | 8 | 8 | 8 / 8 | 8 |
-| BPTT, `normalize_clip_2seq` | 1.4538696706, 1.3888572156 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
+| DFA | 1.4533847570 | 4 | 0 | 4 / 4 | 4 |
+| Backprop | 1.4529994428 | 4 | 4 | 4 / 4 | 4 |
+| BPTT | 1.4507343173 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
+| DFA, `normalize_clip_2seq` | 1.6769639254, 1.6150780916 | 8 | 0 | 8 / 8 | 8 |
+| Backprop, `normalize_clip_2seq` | 1.6607914269, 1.5241357386 | 8 | 8 | 8 / 8 | 8 |
+| BPTT, `normalize_clip_2seq` | 1.4507343173, 1.3846578598 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
 | DFA, `rnn` (SimpleRNN) | 1.4804580212, 1.4799426794 | 0 | 0 | 8 / 8 (`apply_dfa_update`; `i2o` 8 too) | 8 |
 
 In `normalize_clip_2seq`, BPTT's first loss equals the base case's, because the
@@ -136,3 +132,4 @@ Pass `--output PATH` to write somewhere else for comparison.
 | 2026-09-23 | 59db471 | **Elman layout ("option A", approved by Jaden). Needs full before/after benchmark runs; compare against its parent.** Both models now compute `h_t = tanh(i2h(combined))` and `y_t = i2o(h_t)` (before, `i2o` read `combined`); `self_grad` also reads `h_t`, so `i2o` and `self_grad` are `[B, vocab, hidden]` instead of `[B, vocab, input + hidden]`, and `i2h` gets a DFA error projection and update like the hidden layers. All six traces change. `i2h` is now updated in DFA (4 / 8 calls, non-zero from the first step) and backprop (non-zero from the second step), and BPTT's second `normalize_clip_2seq` sequence moves `i2h` instead of the hidden layer. Losses: DFA 1.4016 → 1.4558, backprop 1.4014 → 1.4556, BPTT 1.3995 → 1.4539; `normalize_clip_2seq` DFA 1.6381 → 1.6721 and 1.5860 → 1.6016, backprop 1.6136 → 1.5848 and 1.5339 → 1.5525, BPTT 1.3995 → 1.4539 and 1.3863 → 1.3889. Most of the base rise is initialisation, not learning: BPTT's first loss is the untrained model's, whose output is `i2o.bias`, and that bias is now drawn with bound 1/√4 instead of 1/√12 (and the RNG stream after `i2o` shifts). `CHECKPOINT_CODE_VERSION` 3 → 4 |
 | 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Added case `dfa/rnn`: the SimpleRNN baseline under DFA, which until now changed no parameters and now takes the ephemeral model's DFA step without ephemeral weights (every layer, `i2h` included, every step; see the main README's Updaters). The six existing entries are byte-identical (each dumped the same, and the fixture's patience diff is additions only); `generated_with` is unchanged (same machine and versions). Losses 1.4805 and 1.4799. SimpleRNN under backprop and BPTT was also checked outside the fixture: bit-identical losses, state dicts and RNG afterwards against the parent commit. `CHECKPOINT_CODE_VERSION` 4 → 5 |
 | 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Removed the `self_grad` head and `--self_grad` (an abandoned experiment; see `docs/self_grad.md`). The traces only lose the `self_grad` layer's entries; everything else, losses included, is identical (it was the last layer built and consumed no RNG afterwards, and `--self_grad 0` never touched the error). `CHECKPOINT_CODE_VERSION` 5 → 6 |
+| 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Slow entries of every `EphemeralLinear.per_sample_weights` now start from the layer's already-drawn default `nn.Linear.weight`, repeated over the batch; fast entries remain zero. All six ephemeral traces change from the first forward pass. Masks and feedback matrices are identical because initialization adds no RNG draws, and `dfa/rnn` is byte-identical. Base losses: DFA 1.4558 → 1.4534, backprop 1.4556 → 1.4530, BPTT 1.4539 → 1.4507. `normalize_clip_2seq`: DFA 1.6721 → 1.6770 and 1.6016 → 1.6151; backprop 1.5848 → 1.6608 and 1.5525 → 1.5241; BPTT 1.4539 → 1.4507 and 1.3889 → 1.3847. `CHECKPOINT_CODE_VERSION` 6 → 7 |

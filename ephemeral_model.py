@@ -78,7 +78,7 @@ class EphemeralLinear(nn.Linear):
         # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
         # per_sample_weights hold one copy of the layer's weights per sequence in the batch,
-        # with both the ephemeral and the slow entries.
+        # with both the ephemeral and the slow entries. They are filled after the mask is drawn.
         # They require gradients only if we are using the backprop or bptt updater.
         self.per_sample_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=(updater in ['backprop', 'bptt']))
         distribution = torch.ones_like(self.weight)
@@ -91,6 +91,13 @@ class EphemeralLinear(nn.Linear):
         else:
             ephemeral = rand_vals < ephemeral_fraction
         self.ephemeral_mask = nn.Parameter(ephemeral, requires_grad=False)
+        # Reuse nn.Linear's already-drawn default initialization for slow weights, without
+        # consuming more RNG. Fast weights intentionally begin at zero and are wiped there at
+        # the start of every sequence.
+        with torch.no_grad():
+            initial_weights = self.weight.unsqueeze(0).expand_as(self.per_sample_weights)
+            self.per_sample_weights.copy_(initial_weights)
+            self.per_sample_weights.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
         distribution[self.ephemeral_mask] = plasticity
 
         # A plain attribute, not state: the per-entry forget rate is forget_rate on the ephemeral

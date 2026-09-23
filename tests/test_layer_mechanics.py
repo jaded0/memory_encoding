@@ -41,6 +41,30 @@ def build_layer(batch_size=3, unit_norm_weights=True):
                                ephemeral_fraction=0.5)
 
 
+class WeightInitializationTest(unittest.TestCase):
+    def test_slow_weights_use_default_init_and_fast_weights_start_at_zero(self):
+        torch.manual_seed(0)
+        layer = build_layer()
+        mask = layer.ephemeral_mask
+
+        self.assertTrue(mask.any())
+        self.assertTrue((~mask).any())
+        for weights in layer.per_sample_weights:
+            torch.testing.assert_close(weights[~mask], layer.weight[~mask], rtol=0, atol=0)
+            torch.testing.assert_close(weights[mask], torch.zeros_like(weights[mask]), rtol=0, atol=0)
+
+        torch.testing.assert_close(layer.per_sample_weights[0], layer.per_sample_weights[1], rtol=0, atol=0)
+
+    def test_last_layer_has_only_default_initialized_slow_weights(self):
+        torch.manual_seed(0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            layer = EphemeralLinear(5, 4, CHARSET, batch_size=2, is_last_layer=True)
+
+        self.assertFalse(layer.ephemeral_mask.any())
+        for weights in layer.per_sample_weights:
+            torch.testing.assert_close(weights, layer.weight, rtol=0, atol=0)
+
+
 class UnitNormWeightsTest(unittest.TestCase):
     def test_each_sequence_is_normalised_on_its_own(self):
         torch.manual_seed(0)
@@ -88,12 +112,13 @@ class ElmanLayoutTest(unittest.TestCase):
                     update(learning_rate, update_clamp, state)
 
                 model.i2h.apply_update = record
+                weight_before = model.i2h.per_sample_weights.detach().clone()
                 bias_before = model.i2h.bias.detach().clone()
                 run_one_sequence(model, updater)
                 self.assertEqual(len(grads), SEQUENCE.shape[1] - 1)  # updated every step
                 self.assertTrue(all(g is not None for g in grads), grads)
                 self.assertGreater(max(grads), 0.0)
-                self.assertGreater(model.i2h.per_sample_weights.abs().sum().item(), 0.0)  # started at zero
+                self.assertFalse(torch.equal(model.i2h.per_sample_weights.detach(), weight_before))
                 self.assertFalse(torch.equal(model.i2h.bias.detach(), bias_before))
 
         with self.subTest(model="rnn", updater="backprop"):
@@ -129,7 +154,7 @@ class ElmanLayoutTest(unittest.TestCase):
                     i2h = on.i2h.per_sample_weights if model_type == "ephemeral" else on.i2h.weight
                     i2h.normal_()  # so the output visibly depends on i2h
                     if model_type == "ephemeral":
-                        on.i2o.per_sample_weights.normal_()  # starts at zero, which would hide i2h
+                        on.i2o.per_sample_weights.normal_()
                     off.load_state_dict(on.state_dict())
                     x, h = torch.randn(2, 2 * len(CHARSET)), torch.randn(2, HIDDEN)
                     out_on, hidden_on = on(x, h)
