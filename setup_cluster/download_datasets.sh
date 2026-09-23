@@ -3,7 +3,7 @@
 # download_datasets.sh - LOGIN NODE ONLY: download raw Hugging Face datasets into
 # the HF cache (~/.cache/huggingface). No preprocessing; that runs on a compute
 # node in prepare_datasets.sbatch. Network-bound; the only CPU work is HF's
-# one-time parquet -> arrow conversion (about a minute for TinyStories).
+# one-time parquet -> arrow conversion (about 11 s of CPU for TinyStories).
 #
 #   setup_cluster/download_datasets.sh [--redo] [dataset ...]
 #

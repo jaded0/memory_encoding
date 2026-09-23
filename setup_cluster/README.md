@@ -16,7 +16,7 @@ synthetic datasets in `synth_datasets/` need no setup.
 
 1. `setup_cluster/download_datasets.sh [--redo] [dataset ...]` (login node).
    This only downloads the raw datasets into `~/.cache/huggingface`. The only
-   CPU work is HF's parquet-to-arrow conversion, which takes about a minute, so
+   CPU work is HF's parquet-to-arrow conversion, which takes about 11 s of CPU, so
    it stays well inside the login node's 1 CPU-hour limit.
 2. `sbatch setup_cluster/prepare_datasets.sbatch [dataset ...]` (from the repo
    root; `REDO=1` in the environment overwrites). This is a `--qos=test` job
