@@ -14,6 +14,7 @@ import sys
 import itertools
 import os
 import psutil
+import signal
 try:
     from wandb_osh.hooks import TriggerWandbSyncHook  # <-- New!
 except ImportError:
@@ -586,6 +587,24 @@ def main():
     high_loss_count = 0  # Count of consecutive intervals with loss > threshold
     early_stopped = False
 
+    # SLURM sends SIGUSR1 shortly before the wall-time limit (#SBATCH --signal=B:USR1@600, forwarded by
+    # forward_signals.sh) and SIGTERM at the limit. Stop cleanly at the next iteration boundary.
+    stop_signals = []
+    def request_stop(signum, frame):
+        stop_signals.append(signum)
+    previous_handlers = {sig: signal.signal(sig, request_stop) for sig in (signal.SIGUSR1, signal.SIGTERM)}
+    stopped_by_signal = None
+
+    def checkpoint_state(next_iter):
+        return {
+            'iter': next_iter,
+            'model_state_dict': rnn.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
+            'main_program_state': state,
+            'config': config,
+            **capture_rng_state(),
+        }
+
     def infinite_dataloader(dataloader):
         while True:
             for batch in dataloader:
@@ -604,6 +623,19 @@ def main():
         all_labels_for_print_freq = []
 
         for iter in range(start_iter, args.n_iters + 1):
+            if stop_signals:
+                stopped_by_signal = signal.Signals(stop_signals[0])
+                print(f"Received {stopped_by_signal.name}: stopping before iteration {iter}.")
+                if args.checkpoint_save_freq > 0:
+                    save_checkpoint(checkpoint_state(iter), args.checkpoint_dir, "latest_checkpoint.pth")
+                else:
+                    print("Checkpointing disabled (checkpoint_save_freq=0). No checkpoint saved.")
+                if stopped_by_signal == signal.SIGUSR1:
+                    wb_mark_end("time_limit", tags=["end:time_limit"], exit_code=124)
+                else:
+                    wb_mark_end("terminated", tags=["end:terminated"], exit_code=143)
+                break
+
             # Fetch next batch
             try:
                  sequence, line_tensor, onehot_line_tensor = next(data_iterator)
@@ -841,18 +873,10 @@ def main():
             # --- Checkpointing ---
             # ==============================================================
             if args.checkpoint_save_freq > 0 and iter % args.checkpoint_save_freq == 0:
-                checkpoint_state = {
-                    'iter': iter + 1,
-                    'model_state_dict': rnn.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
-                    'main_program_state': state,
-                    'config': config,
-                    **capture_rng_state(),
-                }
-                save_checkpoint(checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
+                save_checkpoint(checkpoint_state(iter + 1), args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
 
         # End of training loop - mark normal completion if no early stopping occurred
-        if args.track and wandb.run and not nan_detected and not early_stopped:
+        if args.track and wandb.run and not nan_detected and not early_stopped and not stopped_by_signal:
             wb_mark_end("completed", tags=["end:completed"], exit_code=0)
 
         # If NaN was detected, we should not log the normal completion
@@ -862,6 +886,9 @@ def main():
         elif early_stopped:
             print("Training terminated due to high loss early stopping.")
             sys.exit(1)
+        elif stopped_by_signal:
+            # 124 = timeout convention (SLURM's pre-limit warning); 143 = 128 + SIGTERM
+            sys.exit(124 if stopped_by_signal == signal.SIGUSR1 else 143)
 
 
     except KeyboardInterrupt:
@@ -869,14 +896,7 @@ def main():
         wb_mark_end("user_interrupt", tags=["end:user_interrupt"], exit_code=130)
         # Optionally save a final checkpoint on interrupt
         if args.checkpoint_dir and args.checkpoint_save_freq > 0: # Ensure dir is specified and checkpointing is enabled
-            final_checkpoint_state = {
-                'iter': iter + 1 if 'iter' in locals() else start_iter,
-                'model_state_dict': rnn.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
-                'main_program_state': state,
-                'config': config,
-                **capture_rng_state(),
-            }
+            final_checkpoint_state = checkpoint_state(iter + 1 if 'iter' in locals() else start_iter)
             save_checkpoint(final_checkpoint_state, args.checkpoint_dir, "interrupt_checkpoint.pth")
             save_checkpoint(final_checkpoint_state, args.checkpoint_dir, "latest_checkpoint.pth") # also update latest
         elif args.checkpoint_save_freq == 0:
@@ -890,6 +910,8 @@ def main():
 
 
     finally: # Ensure wandb finishes even on error/interrupt
+        for sig, handler in previous_handlers.items():
+            signal.signal(sig, handler)
         if args.track and wandb.run is not None:
             print("Finishing W&B run...")
             wandb.finish()

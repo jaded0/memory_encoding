@@ -6,6 +6,7 @@
 
 # --- SLURM Directives (MUST NEAR AT THE TOP) ---
 #SBATCH --time=48:00:00        # Max walltime per task
+#SBATCH --signal=B:USR1@600    # warn training 10 min before the limit (see forward_signals.sh)
 #SBATCH --nodes=1              # Request 1 node per task
 #SBATCH --ntasks=10             # Request 1 task per job array instance
 #SBATCH --cpus-per-task=1      # Explicitly request 1 CPU core for that task
@@ -131,7 +132,8 @@ echo "  Output File: slurm_logs/bench_sweep_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_
 echo "---"
 
 # Run the python script
-python -u train.py \
+source ./forward_signals.sh
+forward_signals python -u train.py \
     --model_type $MODEL_TYPE \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \

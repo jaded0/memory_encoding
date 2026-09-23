@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import signal
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -103,6 +104,35 @@ class MainFailurePathTest(unittest.TestCase):
             with patch.object(train_module, "load_checkpoint", wraps=train_module.load_checkpoint) as loader:
                 run_main("--resume_checkpoint", latest, "--n_iters", "5", checkpoint_dir=directory)
             loader.assert_called_once()
+
+    def run_with_signal(self, signum, directory, *extra_args):
+        real_train, calls = train_module.train, []
+
+        def train_then_signal(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                os.kill(os.getpid(), signum)  # arrives mid-run, like SLURM's warning
+            return real_train(*args, **kwargs)
+
+        with patch.object(train_module, "train", side_effect=train_then_signal):
+            with self.assertRaises(SystemExit) as raised:
+                run_main("--n_iters", "10", *extra_args, checkpoint_dir=directory)
+        return raised.exception.code, len(calls)
+
+    def test_time_limit_signal_checkpoints_and_exits_124(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, calls = self.run_with_signal(signal.SIGUSR1, directory, "--checkpoint_save_freq", "1000")
+            self.assertEqual(code, 124)
+            self.assertEqual(calls, 2)  # stops at the next iteration boundary
+            checkpoint = torch.load(os.path.join(directory, "latest_checkpoint.pth"), weights_only=False)
+            self.assertEqual(checkpoint["iter"], 3)  # resumes at the first iteration not yet run
+        self.assertIs(signal.getsignal(signal.SIGUSR1), signal.SIG_DFL)  # handlers restored
+
+    def test_sigterm_exits_143(self):
+        with tempfile.TemporaryDirectory() as directory:
+            code, _ = self.run_with_signal(signal.SIGTERM, directory)
+        self.assertEqual(code, 143)
+        self.assertIs(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
 
     def test_clean_run_completes(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -5,6 +5,7 @@
 
 # --- SLURM Directives ---
 #SBATCH --time=16-00:00:00        # Max walltime (HH:MM:SS)
+#SBATCH --signal=B:USR1@600    # warn training 10 min before the limit (see forward_signals.sh)
 #SBATCH --ntasks=10            # Number of CPU cores requested
 #SBATCH --nodes=1              # Number of nodes requested
 #SBATCH --gpus=1               # Number of GPUs requested
@@ -137,7 +138,8 @@ mkdir -p "$CHECKPOINT_DIR"
 cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
 # The Python script will now automatically look for $CHECKPOINT_DIR/latest_checkpoint.pth
-python -u train.py \
+source ./forward_signals.sh
+forward_signals python -u train.py \
     --model_type $MODEL_TYPE \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \
