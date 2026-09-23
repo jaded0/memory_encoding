@@ -16,9 +16,9 @@ class UpdaterSmokeTest(unittest.TestCase):
                 output_values = trace["final_output"]["values"]
                 self.assertTrue(all(math.isfinite(value) for value in output_values))
 
-                candidate_values = trace["modules"]["i2o"]["candidate_weights"]["values"]
-                self.assertTrue(all(math.isfinite(value) for value in candidate_values))
-                self.assertGreater(sum(abs(value) for value in candidate_values), 0.0)
+                weight_values = trace["modules"]["i2o"]["per_sample_weights"]["values"]
+                self.assertTrue(all(math.isfinite(value) for value in weight_values))
+                self.assertGreater(sum(abs(value) for value in weight_values), 0.0)
 
 
 if __name__ == "__main__":

@@ -155,6 +155,82 @@ def print_config_diff(config, loaded_config):
         current_text = "(not in this run)" if current_value is missing else repr(current_value)
         print(f"  {key}: {loaded_text} -> {current_text}")
 
+# State-dict names of EphemeralLinear tensors before the naming cleanup (2026-09).
+LEGACY_STATE_DICT_NAMES = {
+    'candidate_weights': 'per_sample_weights',
+    'mask': 'ephemeral_mask',
+    'last_high_plast_update_norm': 'last_ephemeral_step_norm',
+    'last_low_plast_update_norm': 'last_slow_step_norm',
+}
+# Stored by old checkpoints, now computed as forget_rate * ephemeral_mask.
+LEGACY_FORGETTING_FACTOR = 'forgetting_factor'
+
+def upgrade_legacy_state_dict(state_dict, model):
+    """Maps a checkpoint's old EphemeralLinear tensor names to the current ones.
+
+    Only keys whose module is an EphemeralLinear in `model` are renamed. An old
+    forgetting_factor tensor must equal forget_rate * mask for that layer (anything else is
+    an unexpected state and raises), and is then dropped. Returns the new state dict and the
+    dropped forgetting_factor keys, in checkpoint order.
+    """
+    from ephemeral_model import EphemeralLinear  # utils is imported by ephemeral_model
+
+    modules = dict(model.named_modules())
+    upgraded, dropped = {}, []
+    for key, value in state_dict.items():
+        prefix, _, name = key.rpartition('.')
+        if not isinstance(modules.get(prefix), EphemeralLinear):
+            upgraded[key] = value
+        elif name in LEGACY_STATE_DICT_NAMES:
+            new_key = f"{prefix}.{LEGACY_STATE_DICT_NAMES[name]}"
+            if new_key in state_dict:
+                raise RuntimeError(f"Checkpoint has both {key} and {new_key}.")
+            upgraded[new_key] = value
+        elif name == LEGACY_FORGETTING_FACTOR:
+            mask = state_dict.get(f"{prefix}.mask", state_dict.get(f"{prefix}.ephemeral_mask"))
+            if mask is None:
+                raise RuntimeError(f"Checkpoint has {key} but no mask for {prefix}.")
+            forget_rate = modules[prefix].forget_rate
+            expected = forget_rate * mask.to(value.device)
+            if value.shape != expected.shape or not torch.equal(value, expected.to(value.dtype)):
+                raise RuntimeError(
+                    f"Checkpoint {key} is not forget_rate ({forget_rate}) on the mask, so it cannot be "
+                    "dropped safely. It may come from a run with --normalize before 2026-09 (which "
+                    "rescaled it), from plast_proportion < 0.01 before mask_tier_two was removed, or "
+                    "from a different --forget_rate.")
+            dropped.append(key)
+        else:
+            upgraded[key] = value
+    return upgraded, dropped
+
+def _drop_optimizer_params(optimizer_state, saved_state_dict, dropped_keys, model):
+    """Removes the dropped parameters from a saved optimizer state dict.
+
+    The optimizer was built from model.parameters(), whose order is the state dict's
+    parameter order (buffers excluded), so each dropped key's position there is its index in
+    the optimizer's flattened param groups.
+    """
+    if not dropped_keys:
+        return optimizer_state
+    buffer_names = {name for name, _ in model.named_buffers()}
+    parameter_keys = [key for key in saved_state_dict if key not in buffer_names]
+    drop_positions = {parameter_keys.index(key) for key in dropped_keys}
+    position, groups, state = 0, [], dict(optimizer_state['state'])
+    for group in optimizer_state['param_groups']:
+        kept = []
+        for param_id in group['params']:
+            if position in drop_positions:
+                if state.pop(param_id, None) is not None:
+                    raise RuntimeError(f"Optimizer holds state for a dropped parameter at position {position}.")
+            else:
+                kept.append(param_id)
+            position += 1
+        groups.append({**group, 'params': kept})
+    if position != len(parameter_keys):
+        raise RuntimeError(
+            f"Optimizer state has {position} parameters but the checkpoint's model has {len(parameter_keys)}.")
+    return {'state': state, 'param_groups': groups}
+
 def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu', checkpoint=None):
     """Loads checkpoint from disk (or from `checkpoint`, if it was already read)"""
     print(f"=> Loading checkpoint '{checkpoint_path}'")
@@ -180,8 +256,9 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     loaded_model_type = {'ethereal': 'ephemeral'}.get(loaded_config.get('model_type'), loaded_config.get('model_type'))
     if loaded_model_type is not None and loaded_model_type != config.get('model_type'):
         mismatches.append(('model_type', config.get('model_type'), loaded_config.get('model_type')))
-    # forgetting_factor is restored from the state dict, so a new --forget_rate would be
-    # silently ignored (while W&B records it). Checked only if the checkpoint recorded it.
+    # A new --forget_rate would change a resumed run's decay mid-run (checkpoints from before
+    # the rename stored the per-entry rate as forgetting_factor, which was restored and so
+    # silently ignored the new value). Checked only if the checkpoint recorded it.
     if 'forget_rate' in loaded_config and config.get('forget_rate') != loaded_config['forget_rate']:
         mismatches.append(('forget_rate', config.get('forget_rate'), loaded_config['forget_rate']))
     # slurm_run.sh keys checkpoints by job name and always resumes, so a reused job name for a
@@ -206,18 +283,22 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     #     "old checkpoints will not load."
     # )
 
-    # allow new logging-only parameters to remain at their default values
-    missing, unexpected = model.load_state_dict(
-        checkpoint["model_state_dict"], strict=False
-    )
-    if missing:
-        print(f"✔  missing keys initialised fresh: {missing}")
-    if unexpected:
-        print(f"⚠️  unexpected keys in checkpoint: {unexpected}")
+    # Map old tensor names first. Then every key must match: a missing key would leave a
+    # freshly initialised tensor in a "resumed" model, and an unexpected one would be ignored.
+    saved_state_dict = checkpoint["model_state_dict"]
+    state_dict, dropped_keys = upgrade_legacy_state_dict(saved_state_dict, model)
+    if dropped_keys:
+        print(f"Dropped stored forgetting_factor (checked equal to forget_rate * mask): {dropped_keys}")
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing or unexpected:
+        raise RuntimeError(
+            "Checkpoint state dict does not match the model after mapping old names: "
+            f"missing keys {missing}, unexpected keys {unexpected}.")
     model.to(device) # Move model to target device after loading
 
     if optimizer and 'optimizer_state_dict' in checkpoint and checkpoint['optimizer_state_dict']:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        optimizer.load_state_dict(_drop_optimizer_params(
+            checkpoint['optimizer_state_dict'], saved_state_dict, dropped_keys, model))
         # Move optimizer states to device
         for state in optimizer.state.values():
             for k, v in state.items():

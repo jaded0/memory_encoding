@@ -98,8 +98,8 @@ class CheckpointBehaviorTest(unittest.TestCase):
             ephemeral_plasticity_values = []
             slow_plasticity_values = []
             for layer in restored.linear_layers:
-                ephemeral_plasticity_values.extend(layer.plasticity[layer.mask].tolist())
-                slow_plasticity_values.extend(layer.plasticity[~layer.mask].tolist())
+                ephemeral_plasticity_values.extend(layer.plasticity[layer.ephemeral_mask].tolist())
+                slow_plasticity_values.extend(layer.plasticity[~layer.ephemeral_mask].tolist())
 
             self.assertTrue(ephemeral_plasticity_values)
             self.assertTrue(slow_plasticity_values)

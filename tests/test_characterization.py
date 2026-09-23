@@ -59,8 +59,8 @@ class TrainingCharacterizationTest(unittest.TestCase):
         first = run_characterization("dfa", seed=1729)
         second = run_characterization("dfa", seed=1730)
         self.assertNotEqual(
-            first["modules"]["linear_layers.0"]["mask"]["values"],
-            second["modules"]["linear_layers.0"]["mask"]["values"],
+            first["modules"]["linear_layers.0"]["ephemeral_mask"]["values"],
+            second["modules"]["linear_layers.0"]["ephemeral_mask"]["values"],
         )
 
 

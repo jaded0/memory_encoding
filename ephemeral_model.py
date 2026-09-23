@@ -30,8 +30,8 @@ class EphemeralLinear(nn.Linear):
         self.in_traces = nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
         self.out_traces = nn.Parameter(torch.zeros(batch_size, out_features), requires_grad=requires_grad)
 
-        self.last_high_plast_update_norm = nn.Parameter(torch.tensor(0.0), requires_grad=False)
-        self.last_low_plast_update_norm = nn.Parameter(torch.tensor(0.0), requires_grad=False)
+        self.last_ephemeral_step_norm = nn.Parameter(torch.tensor(0.0), requires_grad=False)
+        self.last_slow_step_norm = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.register_buffer('t', torch.tensor(1.0))
         self.batch_size = batch_size
 
@@ -40,10 +40,10 @@ class EphemeralLinear(nn.Linear):
         self.feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
         # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
-        # Candidate weights are per-sample (one copy per sequence) and hold both the ephemeral
-        # and the slow entries.
+        # per_sample_weights hold one copy of the layer's weights per sequence in the batch,
+        # with both the ephemeral and the slow entries.
         # They require gradients only if we are using the backprop or bptt updater.
-        self.candidate_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=(updater in ['backprop', 'bptt']))
+        self.per_sample_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=(updater in ['backprop', 'bptt']))
         distribution = torch.ones_like(self.weight)
         rand_vals = torch.rand_like(self.weight)
         # The mask marks the ephemeral entries. Last layers (i2o, self_grad) have none, so
@@ -53,14 +53,13 @@ class EphemeralLinear(nn.Linear):
             ephemeral = torch.zeros_like(self.weight, dtype=torch.bool)
         else:
             ephemeral = rand_vals < plast_proportion
-        self.mask = nn.Parameter(ephemeral, requires_grad=False)
-        distribution[self.mask] = plast_clip
+        self.ephemeral_mask = nn.Parameter(ephemeral, requires_grad=False)
+        distribution[self.ephemeral_mask] = plast_clip
 
-        # forgetting_factor holds the per-entry forget rate (fraction removed per step, not a
-        # multiplier): forget_rate on the ephemeral mask, 0 elsewhere.
-        forget_dist = torch.zeros_like(self.weight)
-        forget_dist[self.mask] = forget_rate
-        self.forgetting_factor = nn.Parameter(forget_dist, requires_grad=False)
+        # A plain attribute, not state: the per-entry forget rate is forget_rate on the ephemeral
+        # mask and 0 elsewhere, computed in apply_forget_step. (Checkpoints from before the
+        # rename stored it as the tensor forgetting_factor; utils.load_checkpoint checks and drops it.)
+        self.forget_rate = forget_rate
 
         # Initialize plasticity parameters with the generated values
         if self.is_last_layer == False:
@@ -72,21 +71,21 @@ class EphemeralLinear(nn.Linear):
         self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
 
     def start_sequence_wipe(self):
-        """Start of a sequence: set every sequence's candidate weights to the batch mean, then
+        """Start of a sequence: set every sequence's per_sample_weights to the batch mean, then
         zero the ephemeral entries (also in the unused base weight) and reset the time counter."""
-        # Suppose candidate_weights is of shape [B, out_features, in_features]
+        # Suppose per_sample_weights is of shape [B, out_features, in_features]
         # Aggregate across the batch (e.g., average) to get a single copy:
-        aggregated = self.candidate_weights.mean(dim=0, keepdim=True)
-        # Then set every candidate weight in the batch to this aggregated value:
-        self.candidate_weights.data.copy_(aggregated.repeat(self.batch_size, 1, 1))
+        aggregated = self.per_sample_weights.mean(dim=0, keepdim=True)
+        # Then set every sequence's copy in the batch to this aggregated value:
+        self.per_sample_weights.data.copy_(aggregated.repeat(self.batch_size, 1, 1))
         
         # Ensure the mask is broadcastable or repeated along the batch dimension
-        batch_mask = self.mask.unsqueeze(0).repeat(self.batch_size, 1, 1)  # Shape: [B, out_features, in_features]
+        batch_mask = self.ephemeral_mask.unsqueeze(0).repeat(self.batch_size, 1, 1)  # Shape: [B, out_features, in_features]
 
         # Apply the mask
-        self.weight[self.mask] = 0
+        self.weight[self.ephemeral_mask] = 0
         # Use .data to modify the tensor in-place without interfering with autograd
-        self.candidate_weights.data[batch_mask] = 0
+        self.per_sample_weights.data[batch_mask] = 0
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
 
@@ -98,7 +97,7 @@ class EphemeralLinear(nn.Linear):
         input_unsq = input.unsqueeze(2)
 
         # The output will be [B, out_features, 1] and then we can squeeze the last dimension.
-        output = torch.bmm(self.candidate_weights, input_unsq).squeeze(2)
+        output = torch.bmm(self.per_sample_weights, input_unsq).squeeze(2)
         
         # Optionally add a bias if needed.
         if self.bias is not None:
@@ -133,11 +132,11 @@ class EphemeralLinear(nn.Linear):
         out = projected_error.unsqueeze(2)  # [batch_size, out_features, 1]
         gradient = out * input_expanded  # [batch_size, out_features, in_features]
         
-        # Populate candidate_weights.grad
-        if self.candidate_weights.grad is None:
-            self.candidate_weights.grad = gradient.clone()
+        # Populate per_sample_weights.grad
+        if self.per_sample_weights.grad is None:
+            self.per_sample_weights.grad = gradient.clone()
         else:
-            self.candidate_weights.grad.copy_(gradient)
+            self.per_sample_weights.grad.copy_(gradient)
 
     def apply_update(self, learning_rate, grad_clip, state):
         """Update step shared by DFA and backprop.
@@ -147,16 +146,16 @@ class EphemeralLinear(nn.Linear):
             grad_clip: Gradient clipping value
             state: Training state dictionary for logging
         """
-        if self.candidate_weights.grad is None:
+        if self.per_sample_weights.grad is None:
             return
             
         # Get the gradient (already populated by either DFA or backprop)
-        update = -self.candidate_weights.grad.clone()
+        update = -self.per_sample_weights.grad.clone()
         
         # Apply plasticity scaling and masking (same for both methods)
         if not self.is_last_layer:
             plasticity_expanded = self.plasticity.unsqueeze(0)  # [1, out_features, in_features]
-            mask_expanded = self.mask.unsqueeze(0)  # [1, out_features, in_features]
+            mask_expanded = self.ephemeral_mask.unsqueeze(0)  # [1, out_features, in_features]
             
             # Scale by plasticity and mask
             update = update * plasticity_expanded
@@ -168,7 +167,7 @@ class EphemeralLinear(nn.Linear):
                                     torch.clamp(update, -grad_clip, grad_clip), 
                                     update)
         
-        self.candidate_weights.data = self.candidate_weights.data + learning_rate * update
+        self.per_sample_weights.data = self.per_sample_weights.data + learning_rate * update
         
         # Log norms if requested
         if state.get("log_norms_now", False):
@@ -199,16 +198,16 @@ class EphemeralLinear(nn.Linear):
     def _log_update_norms(self, update):
         """Helper method to log update norms."""
         with torch.no_grad():
-            mask_expanded = self.mask.unsqueeze(0).expand_as(update)
+            mask_expanded = self.ephemeral_mask.unsqueeze(0).expand_as(update)
             
             ephemeral_update = update[mask_expanded]
             slow_update = update[~mask_expanded]
             
             ephemeral_norm = torch.norm(ephemeral_update).item() if ephemeral_update.numel() > 0 else 0.0
-            self.last_high_plast_update_norm.data.fill_(ephemeral_norm)
+            self.last_ephemeral_step_norm.data.fill_(ephemeral_norm)
             
             slow_norm = torch.norm(slow_update).item() if slow_update.numel() > 0 else 0.0
-            self.last_low_plast_update_norm.data.fill_(slow_norm)
+            self.last_slow_step_norm.data.fill_(slow_norm)
     
     def _update_bias(self, projected_error, learning_rate):
         """Helper method to update bias consistently."""
@@ -222,17 +221,17 @@ class EphemeralLinear(nn.Linear):
     def _apply_regularization(self):
         """Helper method to apply normalization and weight clipping."""
         if self.normalize:
-            # Only the weights forward() uses. plasticity, forgetting_factor, the bias, the
+            # Only the weights forward() uses. plasticity, the bias, the
             # feedback weights, the traces and the logged update norms are left alone.
-            self.candidate_weights.data = self.candidate_weights.data / (self.candidate_weights.data.norm(2) + 1e-6)
+            self.per_sample_weights.data = self.per_sample_weights.data / (self.per_sample_weights.data.norm(2) + 1e-6)
         
         if self.clip_weights != 0:
-            self.candidate_weights.data.clamp_(-self.clip_weights, self.clip_weights)
+            self.per_sample_weights.data.clamp_(-self.clip_weights, self.clip_weights)
 
 
     def apply_forget_step(self):
-        """Decays the ephemeral entries: w <- (1 - forgetting_factor) * w, element-wise, where
-        forgetting_factor is forget_rate on the mask and 0 elsewhere, so each call keeps
+        """Decays the ephemeral entries: w <- (1 - forget_rate * ephemeral_mask) * w, element-wise,
+        so each call keeps
         1 - forget_rate of every ephemeral weight. train.py calls this after each update (after
         the clamp and normalization too), as in the paper: w <- (1 - forget_rate) * (w - lr*alpha*g).
         This is done with no_grad to prevent interference with backprop."""
@@ -240,11 +239,13 @@ class EphemeralLinear(nn.Linear):
             # Use non-inplace multiplication to avoid RuntimeError during backprop.
             # The original `mul_` was an inplace operation that corrupted the
             # computation graph needed by autograd for the backward pass.
-            self.candidate_weights.data = self.candidate_weights.data * (1 - self.forgetting_factor)
+            # forget_rate * bool mask is float32 forget_rate on the mask and 0 elsewhere, the same
+            # values the old stored forgetting_factor tensor held.
+            self.per_sample_weights.data = self.per_sample_weights.data * (1 - self.forget_rate * self.ephemeral_mask)
 
     def scale_ephemeral_grads(self, plast_clip):
         """Scales the gradients of the ephemeral weights by plast_clip (alpha) before the update."""
-        if self.candidate_weights.grad is None:
+        if self.per_sample_weights.grad is None:
             return
 
         # Do not scale gradients for the final layer, mirroring the DFA update rule.
@@ -257,19 +258,19 @@ class EphemeralLinear(nn.Linear):
             # for ephemeral weights `learning_rate * plast_clip`, which
             # mirrors the logic in the DFA updater.
             lr_scale = plast_clip
-            # self.mask is [out, in], grad is [B, out, in]
-            scaling_factor = torch.ones_like(self.mask, dtype=torch.float)
-            scaling_factor[self.mask] = lr_scale
+            # self.ephemeral_mask is [out, in], grad is [B, out, in]
+            scaling_factor = torch.ones_like(self.ephemeral_mask, dtype=torch.float)
+            scaling_factor[self.ephemeral_mask] = lr_scale
             
             # Apply scaling
-            self.candidate_weights.grad *= scaling_factor.unsqueeze(0)
+            self.per_sample_weights.grad *= scaling_factor.unsqueeze(0)
 
     def get_norms(self):
         """Calculates and returns weight and last update norms."""
         with torch.no_grad():
-            weights = self.candidate_weights.data
+            weights = self.per_sample_weights.data
             # Ensure mask is broadcastable for indexing
-            mask_expanded = self.mask.unsqueeze(0).expand_as(weights)
+            mask_expanded = self.ephemeral_mask.unsqueeze(0).expand_as(weights)
 
             combined_weight_norm = torch.norm(weights).item()
 
@@ -287,10 +288,10 @@ class EphemeralLinear(nn.Linear):
             'weight_norm': combined_weight_norm,
             'ephemeral_weight_norm': ephemeral_norm,
             'slow_weight_norm': slow_norm,
-            'ephemeral_update_norm': self.last_high_plast_update_norm.item(),
-            'slow_update_norm': self.last_low_plast_update_norm.item(),
+            'ephemeral_update_norm': self.last_ephemeral_step_norm.item(),
+            'slow_update_norm': self.last_slow_step_norm.item(),
         }
-        if not self.mask.any():
+        if not self.ephemeral_mask.any():
             # No ephemeral entries (last layers): report no ephemeral norms rather than
             # zeros, so they do not pull down the averages logged to W&B.
             del norms['ephemeral_weight_norm'], norms['ephemeral_update_norm']
@@ -298,30 +299,30 @@ class EphemeralLinear(nn.Linear):
 
     def store_grad_norms(self):
         """Calculates the norm of the current gradient and stores it."""
-        if self.candidate_weights.grad is None:
-            self.last_high_plast_update_norm.data.fill_(0.0)
-            self.last_low_plast_update_norm.data.fill_(0.0)
+        if self.per_sample_weights.grad is None:
+            self.last_ephemeral_step_norm.data.fill_(0.0)
+            self.last_slow_step_norm.data.fill_(0.0)
             return
 
         with torch.no_grad():
-            grad = self.candidate_weights.grad
-            mask_expanded = self.mask.unsqueeze(0).expand_as(grad)
+            grad = self.per_sample_weights.grad
+            mask_expanded = self.ephemeral_mask.unsqueeze(0).expand_as(grad)
 
             ephemeral_grad = grad[mask_expanded]
             slow_grad = grad[~mask_expanded]
 
             ephemeral_norm = torch.norm(ephemeral_grad).item() if ephemeral_grad.numel() > 0 else 0.0
-            self.last_high_plast_update_norm.data.fill_(ephemeral_norm)
+            self.last_ephemeral_step_norm.data.fill_(ephemeral_norm)
 
             slow_norm = torch.norm(slow_grad).item() if slow_grad.numel() > 0 else 0.0
-            self.last_low_plast_update_norm.data.fill_(slow_norm)
+            self.last_slow_step_norm.data.fill_(slow_norm)
 
     def set_plasticity(self, new_plast_clip):
         """Sets the plasticity (alpha) of the ephemeral weights; slow weights keep 1."""
         with torch.no_grad():
             # Only update plasticity values where the mask is True (ephemeral weights)
-            self.plasticity.data[self.mask] = new_plast_clip
-            print(f"Set plasticity to {new_plast_clip} for {torch.sum(self.mask).item()} ephemeral weights")
+            self.plasticity.data[self.ephemeral_mask] = new_plast_clip
+            print(f"Set plasticity to {new_plast_clip} for {torch.sum(self.ephemeral_mask).item()} ephemeral weights")
 
 class EphemeralRNN(torch.nn.Module):
     def __init__(

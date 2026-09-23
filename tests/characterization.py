@@ -89,11 +89,11 @@ def _instrument_updates(model):
         original_update = layer.apply_update
 
         def record_forget(original=original_forget, event_log=events[name]["forget"], layer=layer):
-            before = _tensor_summary(layer.candidate_weights)
+            before = _tensor_summary(layer.per_sample_weights)
             original()
             event_log.append({
                 "before": before,
-                "after": _tensor_summary(layer.candidate_weights),
+                "after": _tensor_summary(layer.per_sample_weights),
             })
 
         def record_update(
@@ -104,17 +104,17 @@ def _instrument_updates(model):
             event_log=events[name]["update"],
             layer=layer,
         ):
-            before = _tensor_summary(layer.candidate_weights)
+            before = _tensor_summary(layer.per_sample_weights)
             gradient = (
-                _tensor_summary(layer.candidate_weights.grad)
-                if layer.candidate_weights.grad is not None
+                _tensor_summary(layer.per_sample_weights.grad)
+                if layer.per_sample_weights.grad is not None
                 else None
             )
             original(learning_rate, grad_clip, state)
             event_log.append({
                 "before": before,
                 "gradient": gradient,
-                "after": _tensor_summary(layer.candidate_weights),
+                "after": _tensor_summary(layer.per_sample_weights),
             })
 
         layer.apply_forget_step = record_forget
@@ -126,8 +126,8 @@ def _instrument_updates(model):
     def record_scale(plast_clip):
         raw = {
             name: (
-                _tensor_summary(layer.candidate_weights.grad)
-                if layer.candidate_weights.grad is not None
+                _tensor_summary(layer.per_sample_weights.grad)
+                if layer.per_sample_weights.grad is not None
                 else None
             )
             for name, layer in _named_ephemeral_layers(model)
@@ -135,8 +135,8 @@ def _instrument_updates(model):
         original_scale(plast_clip)
         scaled = {
             name: (
-                _tensor_summary(layer.candidate_weights.grad)
-                if layer.candidate_weights.grad is not None
+                _tensor_summary(layer.per_sample_weights.grad)
+                if layer.per_sample_weights.grad is not None
                 else None
             )
             for name, layer in _named_ephemeral_layers(model)
@@ -148,21 +148,22 @@ def _instrument_updates(model):
 
 
 def _module_snapshot(layer):
-    gradient = layer.candidate_weights.grad
+    gradient = layer.per_sample_weights.grad
     return {
         "weight": _tensor_summary(layer.weight),
-        "candidate_weights": _tensor_values(layer.candidate_weights),
-        "candidate_gradient": _tensor_values(gradient) if gradient is not None else None,
+        "per_sample_weights": _tensor_values(layer.per_sample_weights),
+        "per_sample_gradient": _tensor_values(gradient) if gradient is not None else None,
         "bias": _tensor_values(layer.bias) if layer.bias is not None else None,
-        "mask": _tensor_values(layer.mask),
+        "ephemeral_mask": _tensor_values(layer.ephemeral_mask),
         "plasticity": _tensor_values(layer.plasticity),
-        "forgetting_factor": _tensor_values(layer.forgetting_factor),
+        # Derived, no longer stored: the per-entry forget rate apply_forget_step uses.
+        "forgetting_factor": _tensor_values(layer.forget_rate * layer.ephemeral_mask),
         "feedback_weights": _tensor_summary(layer.feedback_weights),
         "plasticity_feedback_weights": _tensor_summary(layer.plasticity_feedback_weights),
         "in_traces": _tensor_values(layer.in_traces),
         "out_traces": _tensor_values(layer.out_traces),
-        "last_high_plast_update_norm": layer.last_high_plast_update_norm.item(),
-        "last_low_plast_update_norm": layer.last_low_plast_update_norm.item(),
+        "last_ephemeral_step_norm": layer.last_ephemeral_step_norm.item(),
+        "last_slow_step_norm": layer.last_slow_step_norm.item(),
         "t": layer.t.item(),
     }
 
