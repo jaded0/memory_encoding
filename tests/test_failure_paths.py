@@ -62,6 +62,13 @@ class CheckpointCompatibilityTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "configuration mismatch"):
                 self.load(path, CONFIG)
 
+    def test_forget_rate_change_raises_configuration_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.save(directory, {**CONFIG, "forget_rate": 0.01})
+            with self.assertRaisesRegex(RuntimeError, "configuration mismatch"):
+                self.load(path, {**CONFIG, "forget_rate": 0.3})
+            self.load(path, {**CONFIG, "forget_rate": 0.01})
+
     def test_legacy_ethereal_checkpoint_loads_as_ephemeral(self):
         with tempfile.TemporaryDirectory() as directory:
             path = self.save(directory, {**CONFIG, "model_type": "ethereal"})

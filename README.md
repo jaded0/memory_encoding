@@ -235,7 +235,9 @@ Resuming is opt-in: without `--resume` or `--resume_checkpoint`, training starts
 scratch even if `latest_checkpoint.pth` exists. `--resume` with no checkpoint present starts
 from scratch; a missing explicit `--resume_checkpoint` is an error. Once a checkpoint is
 chosen, any load failure aborts the run, including a mismatch in hidden size, layer count,
-updater, model type or charset size (`utils.py`, `load_checkpoint`). The seed and `--deterministic`
+updater, model type, charset size or `--forget_rate` (`utils.py`, `load_checkpoint`). A
+changed `--forget_rate` is refused because the per-entry `forgetting_factor` comes from the
+checkpoint's state dict, so the new value would otherwise be silently ignored. The seed and `--deterministic`
 come from the checkpoint; passing a different value is an error.
 
 ### Seeds & reproducibility

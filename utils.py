@@ -158,6 +158,10 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     loaded_model_type = {'ethereal': 'ephemeral'}.get(loaded_config.get('model_type'), loaded_config.get('model_type'))
     if loaded_model_type is not None and loaded_model_type != config.get('model_type'):
         mismatches.append(('model_type', config.get('model_type'), loaded_config.get('model_type')))
+    # forgetting_factor is restored from the state dict, so a new --forget_rate would be
+    # silently ignored (while W&B records it). Checked only if the checkpoint recorded it.
+    if 'forget_rate' in loaded_config and config.get('forget_rate') != loaded_config['forget_rate']:
+        mismatches.append(('forget_rate', config.get('forget_rate'), loaded_config['forget_rate']))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")
