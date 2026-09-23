@@ -68,16 +68,16 @@ def wb_mark_end(reason: str, tags=None, exit_code: int | None = None):
         current = set(getattr(wandb.run, "tags", []))
         wandb.run.tags = list(current.union(set(tags)))
 
-def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
-    """Unified training function for DFA, backprop, and BPTT."""
+def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
+    """Trains on one batch of sequences with DFA, backprop or BPTT."""
     updater = config['updater']
     criterion = config['criterion']
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
 
-    # For EphemeralRNN, reset high-plasticity weights at the start of the sequence
+    # For EphemeralRNN, reset the ephemeral weights at the start of the sequence
     if isinstance(rnn, EphemeralRNN):
-        rnn.wipe()
+        rnn.start_sequence_wipe()
 
     loss_total = 0.0
     losses = []  # For DFA (per-batch losses)
@@ -139,7 +139,7 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
             if config.get("self_grad", 0) > 0:
                 reward_update += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
             
-            # Apply DFA updates using unified approach
+            # Apply DFA updates
             if isinstance(rnn, EphemeralRNN):
                 # Populate gradients using DFA feedback weights
                 for layer in rnn.linear_layers:
@@ -147,16 +147,16 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                 rnn.i2o.populate_dfa_gradients(reward_update)
                 rnn.self_grad.populate_dfa_gradients(reward_update)
                 
-                # Apply unified updates using the DFA-populated gradients
+                # Apply the updates using the DFA-populated gradients
                 for layer in rnn.linear_layers:
-                    layer.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
-                rnn.i2o.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
-                rnn.self_grad.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
+                    layer.apply_update(config["learning_rate"], config["grad_clip"], state)
+                rnn.i2o.apply_update(config["learning_rate"], config["grad_clip"], state)
+                rnn.self_grad.apply_update(config["learning_rate"], config["grad_clip"], state)
                 
                 # Forget after the whole update (incl. clamp/normalize), as in the paper
                 rnn.apply_forget_step()
                 
-                # Clear gradients after unified updates
+                # Clear gradients after the updates
                 rnn.zero_grad()
             
             state['training_instance'] += 1
@@ -176,8 +176,8 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                 total_loss = step_loss.mean() if step_loss.dim() > 0 else step_loss
                 total_loss.backward(retain_graph=False)
                 
-                # Scale gradients for high-plasticity weights
-                rnn.scale_gradients(config["plast_clip"])
+                # Scale the ephemeral weights' gradients
+                rnn.scale_ephemeral_grads(config["plast_clip"])
                 
                 # Store gradient norms for logging
                 if state.get('log_norms_now', False):
@@ -194,16 +194,16 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                 #     rnn.i2h._last_projected_error = bias_grad.unsqueeze(0)
                 #     rnn.i2o._last_projected_error = bias_grad.unsqueeze(0)
                 
-                # Apply unified updates using the gradients computed by backprop
+                # Apply the updates using the gradients computed by backprop
                 for layer in rnn.linear_layers:
-                    layer.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
-                rnn.i2h.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
-                rnn.i2o.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
+                    layer.apply_update(config["learning_rate"], config["grad_clip"], state)
+                rnn.i2h.apply_update(config["learning_rate"], config["grad_clip"], state)
+                rnn.i2o.apply_update(config["learning_rate"], config["grad_clip"], state)
                 
                 # Forget after the whole update (incl. clamp/normalize), as in the paper
                 rnn.apply_forget_step()
                 
-                # Clear gradients after unified updates
+                # Clear gradients after the updates
                 rnn.zero_grad()
                 
                 state['training_instance'] += 1
@@ -243,8 +243,8 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                     total_loss = accumulated_loss.mean() if accumulated_loss.dim() > 0 else accumulated_loss
                     total_loss.backward(retain_graph=False)
                     
-                    # Scale gradients for high-plasticity weights
-                    rnn.scale_gradients(config["plast_clip"])
+                    # Scale the ephemeral weights' gradients
+                    rnn.scale_ephemeral_grads(config["plast_clip"])
                     
                     # Store gradient norms for logging
                     if state.get('log_norms_now', False):
@@ -293,7 +293,7 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
 
 
 def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
-    """Main training function that sets up criterion and calls unified trainer."""
+    """Main training function that sets up criterion and calls train_batch."""
     # For ALL updaters, use 'none' reduction to preserve per-example gradients
     # This allows independent weight updates per sequence in the batch
     # This is critical for ephemeral weights to adapt independently per sequence
@@ -301,7 +301,7 @@ def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, l
         print(f"Warning: Overriding criterion reduction to 'none' for {config['updater']} training.")
         config['criterion'] = type(config['criterion'])(reduction='none')
     
-    return train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
+    return train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
 
 def main():
     # Parse command-line arguments
@@ -343,7 +343,7 @@ def main():
                         help='Directory to save checkpoints.')
     parser.add_argument('--resume_checkpoint', type=str, default=None,
                         help='Resume from this checkpoint (always resumes; errors if missing).')
-    parser.add_argument('--plast_proportion', type=float, default=0.1, help='Proportion of weights that are ephemeral (high-plasticity) in each layer.')
+    parser.add_argument('--plast_proportion', type=float, default=0.1, help='Proportion of weights that are ephemeral in each layer.')
     parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=False, help='Whether to enable recurrent hidden state connections')
     parser.add_argument('--log_freq', type=int, default=None, help='Frequency for W&B sync triggers (overrides LOG_FREQ environment variable)')
     parser.add_argument('--resume', type=str2bool, nargs='?', const=True, default=False, help='Resume from <checkpoint_dir>/latest_checkpoint.pth if it exists.')
@@ -537,12 +537,12 @@ def main():
             current_plast_clip = config.get('plast_clip', 1.0)
 
             if loaded_plast_clip != current_plast_clip:
-                print(f"Plasticity clip changed from {loaded_plast_clip} to {current_plast_clip}")
+                print(f"Plasticity changed from {loaded_plast_clip} to {current_plast_clip}")
                 print("Updating plasticity parameters in all layers...")
-                rnn.update_plasticity_clip(current_plast_clip)
+                rnn.set_plasticity(current_plast_clip)
                 print("Plasticity parameters updated successfully!")
             else:
-                print(f"Plasticity clip unchanged: {current_plast_clip}")
+                print(f"Plasticity unchanged: {current_plast_clip}")
 
     elif torch.cuda.is_available(): # No checkpoint_to_load specified AT ALL, and cuda is available
         print("No checkpoint specified for loading. Moving model to GPU.")
@@ -555,8 +555,8 @@ def main():
             "learning_rate": args.learning_rate,
             "plast_learning_rate": args.plast_learning_rate,
             "plast_clip": args.plast_clip,
-            "effective_lr": args.learning_rate * (1-args.plast_proportion + args.plast_proportion * args.plast_clip),
-            "high_lr": args.learning_rate * args.plast_clip,
+            "nominal_mean_lr": args.learning_rate * (1-args.plast_proportion + args.plast_proportion * args.plast_clip),
+            "nominal_ephemeral_lr": args.learning_rate * args.plast_clip,
             "architecture": args.model_type,
             "updater": args.updater,
             "residual_connection": args.residual_connection,
@@ -797,32 +797,32 @@ def main():
                     model_norms = rnn.get_all_norms()
 
                     # --- ASCII Bar Graph for Gradient/Update Norms ---
-                    hp_update_norms = {
-                        k.replace('_high_plast_update_norm', ''): v
+                    ephemeral_update_norms = {
+                        k.replace('_ephemeral_update_norm', ''): v
                         for k, v in model_norms.items()
-                        if 'high_plast_update_norm' in k
+                        if 'ephemeral_update_norm' in k
                     }
-                    lp_update_norms = {
-                        k.replace('_low_plast_update_norm', ''): v
+                    slow_update_norms = {
+                        k.replace('_slow_update_norm', ''): v
                         for k, v in model_norms.items()
-                        if 'low_plast_update_norm' in k
+                        if 'slow_update_norm' in k
                     }
-                    plot_ascii_bar_graph(hp_update_norms, "High-Plast Update/Grad Norms")
-                    plot_ascii_bar_graph(lp_update_norms, "Low-Plast Update/Grad Norms")
+                    plot_ascii_bar_graph(ephemeral_update_norms, "Ephemeral Update/Grad Norms")
+                    plot_ascii_bar_graph(slow_update_norms, "Slow Update/Grad Norms")
                     
                     # Calculate averages for each type
-                    high_plast_weights = [v for k, v in model_norms.items() if 'high_plast_weight_norm' in k]
-                    low_plast_weights = [v for k, v in model_norms.items() if 'low_plast_weight_norm' in k]
-                    high_plast_updates = [v for k, v in model_norms.items() if 'high_plast_update_norm' in k]
-                    low_plast_updates = [v for k, v in model_norms.items() if 'low_plast_update_norm' in k]
+                    ephemeral_weights = [v for k, v in model_norms.items() if 'ephemeral_weight_norm' in k]
+                    slow_weights = [v for k, v in model_norms.items() if 'slow_weight_norm' in k]
+                    ephemeral_updates = [v for k, v in model_norms.items() if 'ephemeral_update_norm' in k]
+                    slow_updates = [v for k, v in model_norms.items() if 'slow_update_norm' in k]
                     # Also keep track of backprop norms if needed (check if 'grad_norm' exists)
                     grad_norms = [v for k, v in model_norms.items() if 'grad_norm' in k]
                     all_weights = [v for k, v in model_norms.items() if 'weight_norm' in k] # For backprop or combined ephemeral
 
-                    avg_hp_w_norm = sum(high_plast_weights) / len(high_plast_weights) if high_plast_weights else 0.0
-                    avg_lp_w_norm = sum(low_plast_weights) / len(low_plast_weights) if low_plast_weights else 0.0
-                    avg_hp_u_norm = sum(high_plast_updates) / len(high_plast_updates) if high_plast_updates else 0.0
-                    avg_lp_u_norm = sum(low_plast_updates) / len(low_plast_updates) if low_plast_updates else 0.0
+                    avg_ephemeral_w_norm = sum(ephemeral_weights) / len(ephemeral_weights) if ephemeral_weights else 0.0
+                    avg_slow_w_norm = sum(slow_weights) / len(slow_weights) if slow_weights else 0.0
+                    avg_ephemeral_u_norm = sum(ephemeral_updates) / len(ephemeral_updates) if ephemeral_updates else 0.0
+                    avg_slow_u_norm = sum(slow_updates) / len(slow_updates) if slow_updates else 0.0
                     avg_grad_norm = sum(grad_norms) / len(grad_norms) if grad_norms else 0.0 # For backprop
                     avg_weight_norm = sum(all_weights) / len(all_weights) if all_weights else 0.0 # For backprop/combined
 
@@ -830,11 +830,11 @@ def main():
                         "iter": iter,
                         **metrics,
                         "avg_weight_norm": avg_weight_norm, # Combined / Backprop
-                        "avg_grad_update_norm": avg_grad_norm or (avg_hp_u_norm + avg_lp_u_norm), # Backprop or sum of ephemeral
-                        "avg_high_plast_weight_norm": avg_hp_w_norm,
-                        "avg_low_plast_weight_norm": avg_lp_w_norm,
-                        "avg_high_plast_update_norm": avg_hp_u_norm,
-                        "avg_low_plast_update_norm": avg_lp_u_norm,
+                        "avg_grad_update_norm": avg_grad_norm or (avg_ephemeral_u_norm + avg_slow_u_norm), # Backprop, or ephemeral + slow
+                        "avg_ephemeral_weight_norm": avg_ephemeral_w_norm,
+                        "avg_slow_weight_norm": avg_slow_w_norm,
+                        "avg_ephemeral_update_norm": avg_ephemeral_u_norm,
+                        "avg_slow_update_norm": avg_slow_u_norm,
                         # **model_norms # Log all individual norms too
                     }
                     wandb.log(log_data, step=state["wandb_step"], commit=True)

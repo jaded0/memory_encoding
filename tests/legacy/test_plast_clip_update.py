@@ -93,20 +93,20 @@ class CheckpointBehaviorTest(unittest.TestCase):
                     )
 
             if loaded_config["plast_clip"] != new_config["plast_clip"]:
-                restored.update_plasticity_clip(new_config["plast_clip"])
+                restored.set_plasticity(new_config["plast_clip"])
 
-            high_plasticity_values = []
-            low_plasticity_values = []
+            ephemeral_plasticity_values = []
+            slow_plasticity_values = []
             for layer in restored.linear_layers:
-                high_plasticity_values.extend(layer.plasticity[layer.mask].tolist())
-                low_plasticity_values.extend(layer.plasticity[~layer.mask].tolist())
+                ephemeral_plasticity_values.extend(layer.plasticity[layer.mask].tolist())
+                slow_plasticity_values.extend(layer.plasticity[~layer.mask].tolist())
 
-            self.assertTrue(high_plasticity_values)
-            self.assertTrue(low_plasticity_values)
+            self.assertTrue(ephemeral_plasticity_values)
+            self.assertTrue(slow_plasticity_values)
             self.assertTrue(
-                all(value == new_plast_clip for value in high_plasticity_values)
+                all(value == new_plast_clip for value in ephemeral_plasticity_values)
             )
-            self.assertTrue(all(value == 1.0 for value in low_plasticity_values))
+            self.assertTrue(all(value == 1.0 for value in slow_plasticity_values))
 
 
 if __name__ == "__main__":

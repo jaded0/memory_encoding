@@ -80,13 +80,13 @@ def _named_ephemeral_layers(model):
 
 def _instrument_updates(model):
     events = {
-        name: {"forget": [], "unified_update": []}
+        name: {"forget": [], "update": []}
         for name, _layer in _named_ephemeral_layers(model)
     }
 
     for name, layer in _named_ephemeral_layers(model):
         original_forget = layer.apply_forget_step
-        original_update = layer.apply_unified_updates
+        original_update = layer.apply_update
 
         def record_forget(original=original_forget, event_log=events[name]["forget"], layer=layer):
             before = _tensor_summary(layer.candidate_weights)
@@ -101,7 +101,7 @@ def _instrument_updates(model):
             grad_clip,
             state,
             original=original_update,
-            event_log=events[name]["unified_update"],
+            event_log=events[name]["update"],
             layer=layer,
         ):
             before = _tensor_summary(layer.candidate_weights)
@@ -118,10 +118,10 @@ def _instrument_updates(model):
             })
 
         layer.apply_forget_step = record_forget
-        layer.apply_unified_updates = record_update
+        layer.apply_update = record_update
 
     scale_events = []
-    original_scale = model.scale_gradients
+    original_scale = model.scale_ephemeral_grads
 
     def record_scale(plast_clip):
         raw = {
@@ -143,7 +143,7 @@ def _instrument_updates(model):
         }
         scale_events.append({"raw": raw, "scaled": scaled})
 
-    model.scale_gradients = record_scale
+    model.scale_ephemeral_grads = record_scale
     return {"layers": events, "gradient_scaling": scale_events}
 
 
