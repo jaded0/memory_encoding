@@ -5,7 +5,7 @@ import unittest
 from tests.characterization import UPDATERS, run_characterization
 
 
-class UnifiedUpdatesSmokeTest(unittest.TestCase):
+class UpdaterSmokeTest(unittest.TestCase):
     def test_real_training_paths_produce_finite_updates(self):
         for updater in UPDATERS:
             with self.subTest(updater=updater):
