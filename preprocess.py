@@ -1,6 +1,6 @@
 from datasets import load_dataset, load_from_disk
 import torch.utils.data
-from reproducibility import make_torch_generator, seed_data_worker
+from reproducibility import ResumableRandomSampler, make_torch_generator, seed_data_worker
 from utils import filter_text, text_to_indices, text_to_indices_and_one_hot, collate_fn
 
 dataset_keys = {
@@ -71,19 +71,25 @@ def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True, seed=No
     # Create a DataLoader
     if not "roneneldan/tinystories" in dataset_name:
         dataset = list(dataset)
+    return make_dataloader(dataset, batch_size, drop_last=drop_last, seed=seed)
+
+
+def make_dataloader(dataset, batch_size, drop_last=True, seed=None, num_workers=10):
+    """Shuffling DataLoader; when seeded, its position can be checkpointed (see DataStream)."""
     dataloader_kwargs = {
         "batch_size": batch_size,
-        "shuffle": True,
         "collate_fn": collate_fn,
         "drop_last": drop_last,
-        "num_workers": 10,
+        "num_workers": num_workers,
         "pin_memory": True,
     }
-    if seed is not None:
-        dataloader_kwargs["generator"] = make_torch_generator(seed)
+    if seed is None:
+        dataloader_kwargs["shuffle"] = True
+    else:
+        # Same draws as shuffle=True with this generator, but resumable mid-epoch.
+        generator = make_torch_generator(seed)
+        dataloader_kwargs["generator"] = generator
+        dataloader_kwargs["sampler"] = ResumableRandomSampler(dataset, generator=generator)
         dataloader_kwargs["worker_init_fn"] = seed_data_worker
 
-    dataloader = torch.utils.data.DataLoader(dataset, **dataloader_kwargs)
-
-
-    return dataloader
+    return torch.utils.data.DataLoader(dataset, **dataloader_kwargs)

@@ -127,14 +127,18 @@ def save_checkpoint(state_dict, checkpoint_dir, filename="checkpoint.pth"):
     torch.save(state_dict, filepath)
     print(f"Checkpoint saved to {filepath}")
 
-def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'):
-    """Loads checkpoint from disk"""
+def read_checkpoint(checkpoint_path):
+    """Reads a checkpoint dict from disk onto the CPU."""
     if not os.path.isfile(checkpoint_path):
         raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
-
-    print(f"=> Loading checkpoint '{checkpoint_path}'")
     # Load checkpoint to CPU first to avoid GPU OOM issues with mismatched models/devices
-    checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    return torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+
+def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu', checkpoint=None):
+    """Loads checkpoint from disk (or from `checkpoint`, if it was already read)"""
+    print(f"=> Loading checkpoint '{checkpoint_path}'")
+    if checkpoint is None:
+        checkpoint = read_checkpoint(checkpoint_path)
     loaded_config = checkpoint.get('config', {}) # The config used for this checkpoint
 
     compatibility_defaults = {

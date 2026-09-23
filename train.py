@@ -4,9 +4,9 @@ from ephemeral_model import EphemeralRNN, SimpleRNN
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
-from reproducibility import capture_rng_state, seed_everything
+from reproducibility import DataStream, capture_rng_state, record_seed_in_slurm, resolve_seed, seed_everything
 from metrics import IntervalMetrics, recall_chance
-from utils import randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint
+from utils import randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint
 import time
 import math
 import argparse
@@ -347,9 +347,12 @@ def main():
     parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=False, help='Whether to enable recurrent hidden state connections')
     parser.add_argument('--log_freq', type=int, default=None, help='Frequency for W&B sync triggers (overrides LOG_FREQ environment variable)')
     parser.add_argument('--resume', type=str2bool, nargs='?', const=True, default=False, help='Resume from <checkpoint_dir>/latest_checkpoint.pth if it exists.')
-    parser.add_argument('--seed', type=int, default=None, help='Seed Python, NumPy, Torch, and data loading (unset = unseeded).')
-    parser.add_argument('--deterministic', type=str2bool, nargs='?', const=True, default=False,
-                        help='Require deterministic Torch operations; requires --seed.')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Seed Python, NumPy, Torch, and data loading (unset = drawn from the OS on a fresh run, '
+                             'read from the checkpoint on resume).')
+    parser.add_argument('--deterministic', type=str2bool, nargs='?', const=True, default=None,
+                        help='Require deterministic Torch operations (unset = off on a fresh run, '
+                             'the checkpoint\'s value on resume).')
 
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
@@ -357,10 +360,36 @@ def main():
     
     args = parser.parse_args()
 
+    # Define the path to the latest checkpoint
+    latest_checkpoint_path = os.path.join(args.checkpoint_dir, "latest_checkpoint.pth")
+
+    # An explicit --resume_checkpoint always resumes; --resume picks up latest_checkpoint.pth if present.
+    checkpoint_to_load = None
+    if args.resume_checkpoint:
+        if not os.path.isfile(args.resume_checkpoint):
+            raise FileNotFoundError(f"Explicit resume checkpoint not found: {args.resume_checkpoint}")
+        checkpoint_to_load = args.resume_checkpoint
+        print(f"Attempting to resume from explicit checkpoint: {checkpoint_to_load}")
+    elif args.resume and os.path.isfile(latest_checkpoint_path):
+        checkpoint_to_load = latest_checkpoint_path
+        print(f"Found latest checkpoint. Attempting to resume from: {checkpoint_to_load}")
+    elif args.resume:
+        print(f"--resume given but no checkpoint at {latest_checkpoint_path}. Starting from scratch.")
+    else:
+        print("Starting from scratch (pass --resume or --resume_checkpoint to resume).")
+    # Read the checkpoint before anything consumes randomness: it decides the seed.
+    checkpoint = read_checkpoint(checkpoint_to_load) if checkpoint_to_load else None
+
     try:
-        seed_everything(args.seed, deterministic=args.deterministic)
+        seed, deterministic, seed_source = resolve_seed(args.seed, args.deterministic, checkpoint)
+        seed_everything(seed, deterministic=deterministic)
     except ValueError as exc:
         parser.error(str(exc))
+    print(f"Seed: {seed} ({seed_source}), deterministic: {deterministic}")
+    if seed is None:
+        print("WARNING: resumed legacy unseeded run: no seed is set; the checkpoint's RNG states are "
+              "restored, but data order does not continue exactly.")
+    record_seed_in_slurm(seed)
     
     # Set log_freq: command line arg takes precedence over environment variable
     if args.log_freq is not None:
@@ -392,13 +421,10 @@ def main():
         "input_mode": args.input_mode,
         "plast_proportion": args.plast_proportion,
         "enable_recurrence": args.enable_recurrence,
-        "seed": args.seed,
-        "deterministic": args.deterministic,
+        "seed": seed,
+        "deterministic": deterministic,
     }
     print(f"Input mode selected: {args.input_mode}") # Inform user
-
-    # Define the path to the latest checkpoint
-    latest_checkpoint_path = os.path.join(args.checkpoint_dir, "latest_checkpoint.pth")
 
     if not os.path.exists(args.checkpoint_dir):
         os.makedirs(args.checkpoint_dir, exist_ok=True) # exist_ok=True for robustness
@@ -412,7 +438,7 @@ def main():
 
     # Use drop_last=True if batch size doesn't divide dataset size evenly
     dataloader = load_and_preprocess_data(
-        args.dataset, args.batch_size, drop_last=True, seed=args.seed
+        args.dataset, args.batch_size, drop_last=True, seed=seed
     )
 
     # Decide a max sequence length to support
@@ -482,29 +508,18 @@ def main():
     }
 
     # --- Resume from Checkpoint ---
-
-    # An explicit --resume_checkpoint always resumes; --resume picks up latest_checkpoint.pth if present.
-    checkpoint_to_load = None
-    if args.resume_checkpoint:
-        if not os.path.isfile(args.resume_checkpoint):
-            raise FileNotFoundError(f"Explicit resume checkpoint not found: {args.resume_checkpoint}")
-        checkpoint_to_load = args.resume_checkpoint
-        print(f"Attempting to resume from explicit checkpoint: {checkpoint_to_load}")
-    elif args.resume and os.path.isfile(latest_checkpoint_path):
-        checkpoint_to_load = latest_checkpoint_path
-        print(f"Found latest checkpoint. Attempting to resume from: {checkpoint_to_load}")
-    elif args.resume:
-        print(f"--resume given but no checkpoint at {latest_checkpoint_path}. Starting from scratch.")
-    else:
-        print("Starting from scratch (pass --resume or --resume_checkpoint to resume).")
-
-
+    # The model and data stream are built (consuming seeded randomness exactly as the original
+    # run did) before load_checkpoint overwrites the weights and restores the RNG states.
+    data_stream = DataStream(dataloader)
     if checkpoint_to_load:
         # Any load failure aborts the run: silently restarting from scratch hides
         # the failure and mixes fresh weights into a "resumed" experiment.
         rnn, optimizer, start_iter, loaded_main_state, loaded_config = load_checkpoint(
-            checkpoint_to_load, rnn, config, optimizer=optimizer, device=device
+            checkpoint_to_load, rnn, config, optimizer=optimizer, device=device, checkpoint=checkpoint
         )
+        if not data_stream.load_state_dict(checkpoint.get("data_stream_state")) and seed is not None:
+            print("WARNING: checkpoint has no data-stream position; data order restarts from the seed's first epoch.")
+        checkpoint = None  # everything needed has been copied out; free the CPU copy
         state.update(loaded_main_state) # Update your main program state
         print(f"resumed, starting from iter: {start_iter}")
 
@@ -555,8 +570,9 @@ def main():
             "input_mode": args.input_mode,
             "plast_proportion": args.plast_proportion,
             "enable_recurrence": args.enable_recurrence,
-            "seed": args.seed,
-            "deterministic": args.deterministic,
+            "seed": seed,
+            "seed_source": seed_source,
+            "deterministic": deterministic,
             "recall_chance": recall_chance(args.dataset),
         }
         # A resumed checkpoint always starts a new W&B run; record where it came from.
@@ -602,15 +618,9 @@ def main():
             'optimizer_state_dict': optimizer.state_dict() if optimizer else None,
             'main_program_state': state,
             'config': config,
+            'data_stream_state': data_stream.state_dict(),
             **capture_rng_state(),
         }
-
-    def infinite_dataloader(dataloader):
-        while True:
-            for batch in dataloader:
-                yield batch
-
-    data_iterator = infinite_dataloader(dataloader)
 
     try:
         # Metrics accumulated over each print_freq interval (whole batch, every step)
@@ -636,13 +646,8 @@ def main():
                     wb_mark_end("terminated", tags=["end:terminated"], exit_code=143)
                 break
 
-            # Fetch next batch
-            try:
-                 sequence, line_tensor, onehot_line_tensor = next(data_iterator)
-            except StopIteration: # Should not happen with infinite_dataloader, but good practice
-                 print("DataLoader exhausted and restarted.") # Info message
-                 data_iterator = infinite_dataloader(dataloader)
-                 sequence, line_tensor, onehot_line_tensor = next(data_iterator)
+            # Fetch next batch (the stream is endless and tracks its own position)
+            sequence, line_tensor, onehot_line_tensor = next(data_stream)
 
             line_tensor = line_tensor.to(device)
             onehot_line_tensor = onehot_line_tensor.to(device)
