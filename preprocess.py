@@ -17,12 +17,14 @@ the model consumes are built per batch by OneHotCollate, since storing them cost
 ~n_characters * 4 bytes per character (~274 GB for TinyStories).
 """
 import argparse
+import ast
 import hashlib
 import inspect
 import json
 import os
 import shutil
 import sys
+import textwrap
 import time
 
 import torch.utils.data
@@ -55,8 +57,8 @@ dataset_keys = {
 }
 
 # Bump whenever this file changes what a processed dataset contains. The saved name also
-# carries a hash of the charset and of the utils.py preprocessing functions, so edits there
-# invalidate old saves automatically.
+# carries a hash of the charset and of the code of the utils.py preprocessing functions
+# (comments and docstrings excluded), so code edits there invalidate old saves automatically.
 PREPROCESS_VERSION = 1
 
 # Rows kept from the start of the split, before preprocessing.
@@ -105,9 +107,27 @@ def _short_hash(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:10]
 
 
+def normalised_function_source(source):
+    """The code of one function's source, without its comments and docstring.
+
+    ast.parse drops comments; the docstring (a leading string statement) is removed; and
+    ast.dump without line and column attributes ignores formatting. Any other edit, including
+    a renamed variable or a changed string constant, changes the result. The dump format
+    belongs to the Python version, so the same code can hash differently under another one."""
+    tree = ast.parse(textwrap.dedent(source))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body:
+            first = node.body[0]
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+                node.body = node.body[1:] or [ast.Pass()]
+    return ast.dump(tree, include_attributes=False)
+
+
 def preprocessing_code_hash():
-    """Hash of the utils.py functions whose output is saved."""
-    return _short_hash("".join(inspect.getsource(fn) for fn in (filter_text, text_to_indices)))
+    """Hash of the code (not the comments or docstrings) of the utils.py functions whose
+    output is saved."""
+    return _short_hash("".join(
+        normalised_function_source(inspect.getsource(fn)) for fn in (filter_text, text_to_indices)))
 
 
 def processed_dataset_name(dataset_name, limit=None):

@@ -358,6 +358,17 @@ local run fail with the setup hint instead, and `EPHEMERAL_AUTO_PREPROCESS=1`
 makes even a SLURM job prepare it (only useful where the job has the raw data
 and time to spare).
 
+The processed directory's name includes a hash of the code of `utils.filter_text`
+and `utils.text_to_indices` (`preprocess.preprocessing_code_hash`), so a real code
+change there makes every saved copy stale. The hash is taken over the functions'
+AST with the docstrings removed, so comment-only and docstring-only edits keep it.
+**That change (2026-09) itself changed the hash once**, from `code-e0abe65b67` to
+`code-9c6837022f` for today's code: saves made before it are no longer found, so
+rerun `setup_cluster/setup.sh` on the cluster (a local run re-prepares by itself,
+or run `python preprocess.py roneneldan/tinystories`). The AST dump format belongs
+to the Python version, so prepare the data with the same Python (the `hebby`
+environment) that trains on it.
+
 ### SLURM time limits
 
 The sbatch scripts request `#SBATCH --signal=B:USR1@600` and launch training through

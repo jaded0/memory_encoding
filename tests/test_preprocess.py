@@ -67,6 +67,45 @@ def environment(data_dir, **variables):
         yield
 
 
+FUNCTION = '''
+def filter_text(examples, dataset_name):
+    """Filter out characters not in the charset."""
+    key = dataset_keys.get(dataset_name)
+    return {'text': [t for t in examples[key] if t]}
+'''
+
+
+class CodeHashTest(unittest.TestCase):
+    def assert_same_code(self, edited, same):
+        base = preprocess.normalised_function_source(FUNCTION)
+        self.assertNotEqual(edited, FUNCTION)
+        (self.assertEqual if same else self.assertNotEqual)(preprocess.normalised_function_source(edited), base)
+
+    def test_comment_only_edits_keep_the_hash(self):
+        self.assert_same_code(FUNCTION.replace("    key =", "    # which column holds the text\n    key =")
+                              .replace("dataset_name)\n    return", "dataset_name)  # a trailing comment\n\n    return"),
+                              same=True)
+
+    def test_docstring_only_edits_keep_the_hash(self):
+        self.assert_same_code(FUNCTION.replace("Filter out characters not in the charset.", "Something else entirely."), same=True)
+        self.assert_same_code(FUNCTION.replace('    """Filter out characters not in the charset."""\n', ""), same=True)
+
+    def test_code_edits_change_the_hash(self):
+        for edited in (FUNCTION.replace("if t]", "if t.strip()]"),        # logic
+                       FUNCTION.replace("'text'", "'texts'"),              # a string constant
+                       FUNCTION.replace("key", "column"),                  # a name
+                       FUNCTION.replace("dataset_keys.get(dataset_name)", "dataset_keys[dataset_name]")):
+            with self.subTest(edited=edited):
+                self.assert_same_code(edited, same=False)
+
+    def test_the_real_hash_uses_the_normalised_utils_functions(self):
+        import inspect
+        expected = preprocess._short_hash("".join(
+            preprocess.normalised_function_source(inspect.getsource(fn)) for fn in (filter_text, text_to_indices)))
+        self.assertEqual(preprocess.preprocessing_code_hash(), expected)
+        self.assertNotIn("Filter out characters", preprocess.normalised_function_source(inspect.getsource(filter_text)))
+
+
 class MissingDataTest(unittest.TestCase):
     def assert_fails_with_setup_hint(self, **variables):
         with tempfile.TemporaryDirectory() as data_dir, environment(data_dir, **variables), \

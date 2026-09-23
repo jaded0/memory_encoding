@@ -1,7 +1,9 @@
 # First-time cluster setup
 
 Run once per cluster account, and again after changing the preprocessing
-code or adding a Hugging Face dataset. From the repo root on the **login node**:
+code or adding a Hugging Face dataset. Saves made before the 2026-09 change
+to the code hash (`code-e0abe65b67` in the directory name) are no longer found:
+run it again once. From the repo root on the **login node**:
 
 ```bash
 setup_cluster/setup.sh            # download, then sbatch the prepare job
@@ -33,7 +35,8 @@ synthetic datasets in `synth_datasets/` need no setup.
 - The processed data is in `$EPHEMERAL_DATA_DIR`, which defaults to
   `./processed_datasets/`. Each dataset gets one directory, and its name
   includes the split, the row count, a hash of the charset, a hash of the
-  preprocessing code and `PREPROCESS_VERSION`. When any of these changes,
+  preprocessing code (comments and docstrings excluded; see the main README)
+  and `PREPROCESS_VERSION`. When any of these changes,
   a training job can't find the directory and stops, telling you to rerun
   setup. It never loads stale rows, and it never preprocesses inside a SLURM
   job (unless `EPHEMERAL_AUTO_PREPROCESS=1` is set). A local run outside
