@@ -139,6 +139,8 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             # --self_grad > 0 adds the clamped self_grad output to the same tensor, in place, so
             # from here on output_error is the error plus that term.
             if config.get("self_grad", 0) > 0:
+                if self_grad is None:
+                    raise ValueError("--self_grad > 0 needs the ephemeral model's self_grad head; SimpleRNN has none.")
                 output_error += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
 
             # Apply DFA updates
@@ -166,7 +168,24 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 
                 # Clear gradients after the updates
                 rnn.zero_grad()
-            
+            elif isinstance(rnn, SimpleRNN):
+                # The same DFA as above, minus the ephemeral entries, plasticity, forgetting and
+                # wiping (see DFALinear): the hidden layers and i2h project output_error through
+                # their fixed feedback matrices, i2o takes it directly, each gradient is the
+                # outer product with the layer's input trace (averaged over the batch, since the
+                # weights are shared), and w <- w - lr * grad, b <- b - lr * mean(error).
+                if rnn.updater != 'dfa':
+                    raise ValueError("SimpleRNN was built without DFA feedback matrices; pass updater='dfa'.")
+                for layer in rnn.dfa_layers():
+                    layer.populate_dfa_gradients(output_error)
+                # --grad_norm_clip is the rnn baseline's global grad-norm clip under every updater.
+                if config.get('grad_norm_clip', 0) > 0:
+                    torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
+                for layer in rnn.dfa_layers():
+                    layer.apply_dfa_update(config["learning_rate"])
+                # The grads are left in place (the next step's zero_grad clears them) so that
+                # get_all_norms logs them, as it does for the backprop baseline.
+
             state['training_instance'] += 1
             loss_total += loss.mean().item()  # Convert to scalar for consistency
             
@@ -380,10 +399,10 @@ def build_parser():
     parser.add_argument('--residual_connection', type=str2bool, nargs='?', const=True, default=False, help='whether to have a skip connection')
     _add_argument(parser, '--ephemeral_update_clamp', type=float, default=0,
                   help='EphemeralRNN (DFA and backprop): clamp each alpha-scaled update of an ephemeral '
-                       'weight to [-v, v] (0 = off). Ignored by BPTT and by the rnn baseline.')
+                       'weight to [-v, v] (0 = off). Ignored by BPTT and by the rnn baseline (no ephemeral weights).')
     _add_argument(parser, '--grad_norm_clip', type=float, default=0,
                   help='rnn baseline (SimpleRNN): clip_grad_norm_ on all parameters before each '
-                       'optimizer step (0 = off). Ignored by the ephemeral model.')
+                       'update, SGD or DFA (0 = off). Ignored by the ephemeral model.')
     # Old name for whichever of the two applies to --model_type; see resolve_deprecated_args.
     parser.add_argument('--grad_clip', type=float, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     parser.add_argument('--hidden_size', type=int, default=1024, help='Size of hidden layers in RNN')
@@ -578,8 +597,8 @@ def main():
 
     if args.model_type == 'rnn':
         print(f"Initializing SimpleRNN model with '{args.updater}' updater.")
-        rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"], 
-                       dropout_rate=0, enable_recurrence=args.enable_recurrence)
+        rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"],
+                       dropout_rate=0, enable_recurrence=args.enable_recurrence, updater=args.updater)
     elif args.model_type == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{args.updater}' updater.")
         rnn = EphemeralRNN(

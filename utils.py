@@ -134,7 +134,9 @@ def str2bool(v):
 # refused like any other mismatch). 2: introduced, 2026-09. 3: --unit_norm_weights
 # normalises each sequence's [out, in] slice separately. 4: Elman layout, y_t = i2o(h_t)
 # (i2o and self_grad take hidden_size inputs; i2h learns under DFA and per-step backprop).
-CHECKPOINT_CODE_VERSION = 4
+# 5: DFA for the SimpleRNN baseline (--model_type rnn --updater dfa now trains every layer,
+# and its state dict holds the DFA feedback matrices).
+CHECKPOINT_CODE_VERSION = 5
 
 
 def check_checkpoint_code_version(checkpoint, checkpoint_path="<checkpoint>"):

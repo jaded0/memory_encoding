@@ -32,7 +32,8 @@ TAGS=()                      # e.g. TAGS=(bptt long)
 # MODEL_TYPE: 'ephemeral' (fast weights + decay) or 'rnn' (SimpleRNN baseline).
 # UPDATER: 'dfa' (Direct Feedback Alignment), 'backprop' (per-step, hidden
 # detached), or 'bptt' (backprop through time). See README "Updaters" for which
-# combinations train which layers; rnn + dfa changes no parameters.
+# combinations train which layers; rnn + dfa is the ephemeral model's DFA
+# without ephemeral weights (every layer, i2h included, learns every step).
 MODEL_TYPE='ephemeral'       # ephemeral | rnn
 UPDATER='dfa'                # dfa | backprop | bptt
 INPUT_MODE='last_one'        # last_one | last_two
@@ -40,7 +41,7 @@ INPUT_MODE='last_one'        # last_one | last_two
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-3           # Base learning rate
 PLAST_CLIP=1e3               # Plasticity (learning-rate multiplier) of ephemeral weights, alpha
-GRAD_CLIP=0                  # ephemeral: element-wise clamp on ephemeral-weight updates; rnn: grad-norm clip (0 = off)
+GRAD_CLIP=0                  # ephemeral: element-wise clamp on ephemeral-weight updates; rnn: grad-norm clip, also under dfa (0 = off)
 GRAD_CLIP_FLAG=$([[ $MODEL_TYPE == rnn ]] && echo --grad_norm_clip || echo --ephemeral_update_clamp)
 
 # --- Ephemeral Weights (ignored by the rnn baseline) ---

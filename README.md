@@ -64,7 +64,7 @@ but zeros are fed to the next step instead of `h_t`. (Until 2026-09 both heads r
 
 | `--updater` | `--model_type ephemeral` | `--model_type rnn` (SimpleRNN baseline) |
 | --- | --- | --- |
-| `dfa` | Every step: DFA gradients, `apply_update`, forget | No parameter changes: the DFA branch only updates an EphemeralRNN |
+| `dfa` | Every step: DFA gradients, `apply_update`, forget | Every step: the same DFA gradients without ephemeral weights (all layers, `i2h` included; see below), then `w -= lr * grad`; `--grad_norm_clip` is a global grad-norm clip |
 | `backprop` | Every step: `backward()` on the batch-mean step loss, `scale_ephemeral_grads`, `apply_update`, forget | Every step: `torch.optim.SGD` on the batch-mean step loss (all layers, `i2h` included); `--grad_norm_clip` is a global grad-norm clip |
 | `bptt` | After the last step: `backward()` on the batch-mean summed loss, `scale_ephemeral_grads`, plain `p -= lr * p.grad`, forget | After the last step: `torch.optim.SGD`; `--grad_norm_clip` is a global grad-norm clip |
 
@@ -85,6 +85,37 @@ For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is 
 `--grad_norm_clip` applies only to the `rnn` baseline, and `--ephemeral_update_clamp` only to
 the ephemeral model. They used to be one flag, `--grad_clip`; see [Renamed flags](#renamed-flags-2026-09).
 
+**DFA in the SimpleRNN baseline** (since 2026-09; before, `--model_type rnn --updater dfa`
+ran but changed no parameters). It is the ephemeral model's DFA with the ephemeral parts
+removed, so the two models can be compared under DFA. SimpleRNN's layers are `DFALinear`
+(an `nn.Linear`), which shares the `dfa_*` helpers in `ephemeral_model.py` with
+`EphemeralLinear`:
+
+- The error is the same per-sequence `output_error` (softmax − target, from the unreduced loss).
+- The hidden layers and `i2h` project it through a fixed random feedback matrix `[vocab, out]`,
+  initialised like `EphemeralLinear.feedback_weights` (`xavier_normal_`). `i2o` takes it directly.
+- Each layer's gradient is the outer product of its projected error with its input at that
+  step. The step is `w ← w − lr·g` and `b ← b − lr·mean(projected error)`, and the hidden
+  state is detached every step.
+- SimpleRNN has one weight shared by the batch, not one copy per sequence, so the
+  per-sequence outer products are averaged over the batch: the step on a weight is
+  `lr·mean_B(g)`. The bias step is already a batch mean. In the ephemeral model each copy of
+  a slow weight takes `lr·g` for its own sequence, and `start_sequence_wipe()` sets every copy
+  to the batch mean before the next sequence, so each step's contribution to the batch-mean
+  weight is the same `lr·mean_B(g)`.
+- There is no plasticity, ephemeral mask, forgetting or wiping. `--ephemeral_update_clamp`
+  is ignored, since it only clamps ephemeral entries. `--weight_clamp` and `--unit_norm_weights`
+  are ignored, as SimpleRNN ignores them under every updater. `--grad_norm_clip` clips the
+  global norm of the DFA gradients before the step, as it does for the SGD gradients under
+  backprop and BPTT. `--self_grad > 0` is an error, because SimpleRNN has no `self_grad` head.
+- The feedback matrices are drawn after every layer is initialised, so rnn + dfa starts
+  from the same weights as rnn + backprop at the same seed. They are buffers, and only an
+  rnn + dfa model has them (`CHECKPOINT_CODE_VERSION` 5). rnn + backprop and rnn + BPTT
+  are unchanged.
+- The architectures still differ outside DFA: SimpleRNN's hidden layers use ReLU (the
+  ephemeral model's use GELU), and they are `--hidden_size` wide (the ephemeral model's are
+  input + hidden).
+
 Under DFA, `output_error` (`train.py:136`) is a single tensor, and the same object is passed
 to every layer's `populate_dfa_gradients`. It is ∂loss/∂output per sequence, plus the clamped
 `self_grad` output, added in place, when `--self_grad > 0`. It used to have two names,
@@ -98,32 +129,32 @@ The entries that differ between columns are explained, with evidence, in the nex
 
 These describe the current code. They are recorded here, not changed, until they can be
 re-examined with full training runs before and after. Line numbers were last checked after
-the 2026-09 Elman-layout change.
+the 2026-09 change that added DFA to the SimpleRNN baseline.
 
 - **Backprop applies α twice (α²) on ephemeral weights.** The backprop branch calls
-  `rnn.scale_ephemeral_grads(plasticity)` (`train.py:188`), which multiplies masked gradients
-  by α (`ephemeral_model.py:274-282`). `apply_update` then multiplies by the `plasticity`
-  tensor, which is α on the mask (`ephemeral_model.py:61`, `:173`). DFA does not call
+  `rnn.scale_ephemeral_grads(plasticity)` (`train.py:207`), which multiplies masked gradients
+  by α (`ephemeral_model.py:293-301`). `apply_update` then multiplies by the `plasticity`
+  tensor, which is α on the mask (`ephemeral_model.py:94`, `:195`). DFA does not call
   `scale_ephemeral_grads`, so it applies α once. BPTT calls it and then takes a plain SGD step
-  (`train.py:255-266`), so it also applies α once. Measured with α = 7, the masked step is
+  (`train.py:274-285`), so it also applies α once. Measured with α = 7, the masked step is
   49·lr·g under backprop and 7·lr·g under DFA; slow weights get 1·lr·g under both.
 - **Backprop and BPTT carry a 1/B factor that DFA does not.** Backprop calls `backward()`
-  on `step_loss.mean()` over the batch (`train.py:184`), and BPTT on
-  `accumulated_loss.mean()` (`train.py:251`), so each sequence's `per_sample_weights` gradient
+  on `step_loss.mean()` over the batch (`train.py:203`), and BPTT on
+  `accumulated_loss.mean()` (`train.py:270`), so each sequence's `per_sample_weights` gradient
   is 1/B of its own loss gradient. DFA takes each sequence's own error, using
   `grad_outputs=ones` on the unreduced loss (`train.py:136`; the reduction is forced to
-  `'none'` at `train.py:308-310`). This was a deliberate choice at the time, and it helped
+  `'none'` at `train.py:327-329`). This was a deliberate choice at the time, and it helped
   the loss numbers. Combined with α², backprop's per-sequence ephemeral step is α/B times
   DFA's at the same `--learning_rate` and `--plasticity`.
 - **Elman layout, `y_t = i2o(h_t)` (2026-09): pending benchmark confirmation.** Both
   models now compute `h_t = tanh(i2h(combined))` and `y_t = i2o(h_t)`
-  (`ephemeral_model.py:433-438`, `:559-561`); before, `h_t` and `y_t` were both read off
+  (`ephemeral_model.py:452-457`, `:638-640`); before, `h_t` and `y_t` were both read off
   `combined`, and `h_t` fed only the next step. Under DFA and per-step backprop, which
   detach the hidden state every step (`train.py:91-92`), `i2h` therefore never received a
   gradient or an error, and its `per_sample_weights` stayed at their initial zeros, so the
   hidden state was the constant `tanh(i2h.bias)` and recurrence carried no information. Now
   `i2h` learns every step under backprop, gets its own DFA error projection through its
-  `feedback_weights` like the hidden layers (`train.py:150-162`), and still learns under
+  `feedback_weights` like the hidden layers (`train.py:152-164`), and still learns under
   BPTT. Jaden approved this ("option A"), but it changes every updater's dynamics and the
   model's shapes, so it **needs full before/after benchmark runs** against its parent commit
   before it is relied on. Things to watch: all `per_sample_weights` still start at zero, so
@@ -132,24 +163,24 @@ the 2026-09 Elman-layout change.
   layers and the output; the initial output is still `i2o.bias`, but `i2o.bias` is now
   drawn with bound 1/√hidden_size instead of 1/√(input + hidden); and the W&B averages of
   update norms now include a real `i2h` value instead of 0. Checkpoints from before the
-  change are refused (`CHECKPOINT_CODE_VERSION` 4). DFA still trains nothing in the
-  SimpleRNN baseline.
+  change are refused (`CHECKPOINT_CODE_VERSION` 4). (DFA trained nothing in the SimpleRNN
+  baseline until the next change; it now trains every layer, see Updaters.)
 - **Ephemeral + BPTT: fast weights are frozen within a sequence.** BPTT is the contrast to
   per-step backprop and DFA in the permutation grid above. Its only update comes after the
-  last step (`train.py:248`), and `start_sequence_wipe()` zeroes the ephemeral entries at the
-  start of the next sequence (`train.py:80`, `ephemeral_model.py:87-92`). Updates to ephemeral
+  last step (`train.py:267`), and `start_sequence_wipe()` zeroes the ephemeral entries at the
+  start of the next sequence (`train.py:80`, `ephemeral_model.py:120-125`). Updates to ephemeral
   entries therefore never reach a training forward pass, and only slow weights and biases
   learn. As a result, `--plasticity` and `--forget_rate` do not affect ephemeral BPTT
-  training. (The forget set is exactly `ephemeral_mask`, `ephemeral_model.py:50-66`.) This
+  training. (The forget set is exactly `ephemeral_mask`, `ephemeral_model.py:83-99`.) This
   path also ignores `--ephemeral_update_clamp`, `--weight_clamp` and `--unit_norm_weights`,
-  because it never calls `apply_update` or `_apply_regularization` (`train.py:262-266`), and
+  because it never calls `apply_update` or `_apply_regularization` (`train.py:281-285`), and
   it does not increment `training_instance`. Checked on a small model (under the old flag
   names): changing α, `--forget_rate`, the update clamp or the weight clamp leaves a
   four-sequence BPTT loss trajectory bit-identical.
 - **`--unit_norm_weights` rescales the `per_sample_weights` only, one sequence at a time.**
   `_apply_regularization` divides each sequence's `[out, in]` slice of a layer's
   `per_sample_weights` by that slice's own L2 norm after each update
-  (`ephemeral_model.py:233-245`), so one sequence's scale does not depend on the others in
+  (`ephemeral_model.py:252-264`), so one sequence's scale does not depend on the others in
   the batch. (Until 2026-09 the norm was taken over the whole `[batch, out, in]` tensor.)
   `plasticity`, the bias, the feedback weights,
   the traces and the logged update norms are left alone (until 2026-09 they were all
@@ -158,8 +189,8 @@ the 2026-09 Elman-layout change.
   (`self_grad` under backprop, which is not trained there) are not rescaled. `--weight_clamp` is applied after the
   normalization, so a clamp of 1 or more never binds when `--unit_norm_weights` is on.
 - **`EphemeralLinear._update_bias` is dead code with a flipped sign.** Nothing calls it,
-  and it adds `+lr·projected_error` (`ephemeral_model.py:224-231`). The live bias update is
-  `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:193-207`).
+  and it adds `+lr·projected_error` (`ephemeral_model.py:243-250`). The live bias update is
+  `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:215-226`).
 
 ## Paper settings & stability
 
@@ -168,7 +199,7 @@ The paper trains with plain SGD at a base learning rate of 1e-4
 "forgetting rate coefficient" of 0.7 applied after each update (`:124-127`). In code terms
 that is `--forget_rate 0.3`. The current CLI
 defaults are lr 1e-4, α 1e5 and `--forget_rate` 0.01, which keeps 1 − forget_rate = 0.99 of
-each ephemeral weight per step (`train.py:372-377`).
+each ephemeral weight per step (`train.py:391-396`).
 
 ### Terminology: paper vs code
 
@@ -186,7 +217,7 @@ key-recall legend "ephemeral 0.0001 0.5" is lr 1e-4, `--forget_rate 0.5`).
 | Slow weights | The other entries of `per_sample_weights` (formerly `candidate_weights`) | Plasticity 1, never decayed or wiped | | |
 
 Ordering: as in the paper (`:124-127`), the decay comes after each update in all three
-updaters (`train.py:165`, `:212`, `:269`), so one step is
+updaters (`train.py:167`, `:231`, `:288`), so one step is
 `w ← (1 − forget_rate)·(w − lr·α·g)`. Under DFA and backprop the update it follows
 includes `--ephemeral_update_clamp`, `--unit_norm_weights` and `--weight_clamp`. (The class constructors used to
 default to `forget_rate=0.7`, a leftover of the paper's coefficient that would have kept
@@ -395,7 +426,7 @@ CUDA_VISIBLE_DEVICES="" python -m pytest tests/ -q
 `pytest` is not in `environment.yml`; install it with `pip install pytest`.
 
 The suite includes fixed-input golden traces through the real `train.train()`
-path for DFA, backprop, and BPTT, a finite-update smoke test for all three
+path for DFA, backprop, and BPTT (and for the SimpleRNN baseline under DFA), a finite-update smoke test for all three
 (`tests/test_smoke_updaters.py`), and checkpoint/failure-path, metrics and
 reproducibility tests. Others check the old flag names and checkpoints
 (`tests/test_cli_aliases.py`, `tests/test_legacy_checkpoints.py`), and the per-layer

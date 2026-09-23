@@ -9,6 +9,39 @@ import torch.nn.utils.parametrize as parametrize
 # from memory_profiler import profile
 
 
+# DFA pieces shared by EphemeralLinear (the ephemeral model) and DFALinear (the SimpleRNN
+# baseline), so the two models' DFA stays the same computation. Note: neither multiplies the
+# projected error by the layer's activation derivative; see README "Known issues".
+
+def init_feedback_weights(vocab_size, out_features):
+    """A layer's fixed random DFA feedback matrix B, [vocab, out]: xavier_normal_."""
+    return torch.nn.init.xavier_normal_(torch.empty(vocab_size, out_features))
+
+
+def dfa_projected_error(error_signal, feedback_weights, is_last_layer):
+    """The error a layer's DFA update uses, [B, out]: the output error itself for a last layer
+    (i2o, self_grad), else error_signal @ feedback_weights. error_signal is train.py's
+    output_error, [B, vocab]; it is never modified, and a last layer gets that same object."""
+    if is_last_layer:
+        return error_signal
+    return error_signal @ feedback_weights
+
+
+def dfa_per_sample_gradient(projected_error, input):
+    """Per-sequence DFA gradient, [B, out, in]: the outer product of each sequence's projected
+    error [B, out] with its layer input (the input trace) [B, in]."""
+    out = projected_error.unsqueeze(2)  # [batch_size, out_features, 1]
+    return out * input.unsqueeze(1)  # [batch_size, 1, in_features] -> [batch_size, out_features, in_features]
+
+
+def dfa_bias_update(projected_error, learning_rate):
+    """DFA bias step, [out]: -learning_rate times the batch mean of the projected error."""
+    bias_update = -learning_rate * projected_error.mean(dim=0)
+    if len(bias_update.shape) > 1:
+        bias_update = bias_update.mean(dim=0)
+    return bias_update
+
+
 class EphemeralLinear(nn.Linear):
     def __init__(self, in_features, out_features, charset, bias=True, unit_norm_weights=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
@@ -41,7 +74,7 @@ class EphemeralLinear(nn.Linear):
 
 
         # Initialize weights with the adjusted gain
-        self.feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
+        self.feedback_weights = nn.Parameter(init_feedback_weights(len(charset), out_features), requires_grad=requires_grad)
         # self.weight.data = torch.nn.init.xavier_uniform_(torch.empty(out_features, in_features), gain=gain)
 
         # per_sample_weights hold one copy of the layer's weights per sequence in the batch,
@@ -122,26 +155,15 @@ class EphemeralLinear(nn.Linear):
         new tensor. Nothing here modifies error_signal. The gradient is a new tensor, and
         .grad gets its own copy of it (train.py's zero_grad() leaves .grad None, so the clone()
         branch is the one that runs there)."""
-        input = self.in_traces.data
-        input_expanded = input.unsqueeze(1)  # Shape: [batch_size, 1, in_features]
-        
-        # Project error signal using feedback weights (DFA-specific)
-        if self.is_last_layer:
-            projected_error = error_signal
-        else:
-            # For non-last layers in DFA, project the error signal
-            # The feedback weights should match: [vocab_size, out_features]
-            # error_signal: [batch_size, vocab_size] -> projected_error: [batch_size, out_features]
-            projected_error = error_signal @ self.feedback_weights
-        
+        # Project error signal using feedback weights (DFA-specific); last layers use it as is.
+        # error_signal: [batch_size, vocab_size] -> projected_error: [batch_size, out_features]
+        projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer)
+
         # Store projected error for bias updates
         self._last_projected_error = projected_error
-        
-        # Compute per-batch gradient using outer product
-        # projected_error: [batch_size, out_features]
-        # input_expanded: [batch_size, 1, in_features]
-        out = projected_error.unsqueeze(2)  # [batch_size, out_features, 1]
-        gradient = out * input_expanded  # [batch_size, out_features, in_features]
+
+        # Per-sequence gradient: outer product with the input trace, [batch_size, out_features, in_features]
+        gradient = dfa_per_sample_gradient(projected_error, self.in_traces.data)
         
         # Populate per_sample_weights.grad
         if self.per_sample_weights.grad is None:
@@ -196,10 +218,7 @@ class EphemeralLinear(nn.Linear):
             if self.updater == 'dfa':
                 # For DFA, manually update bias using projected error
                 if hasattr(self, '_last_projected_error'):
-                    bias_update = -learning_rate * self._last_projected_error.mean(dim=0)
-                    if len(bias_update.shape) > 1:
-                        bias_update = bias_update.mean(dim=0)
-                    self.bias.data += bias_update
+                    self.bias.data += dfa_bias_update(self._last_projected_error, learning_rate)
             elif self.updater in ['backprop', 'bptt']:
                 # For backprop/bptt, manually update bias using the computed bias gradient
                 if self.bias.grad is not None:
@@ -522,27 +541,87 @@ class EphemeralRNN(torch.nn.Module):
             self.self_grad.set_plasticity(value)
 
 
+class DFALinear(nn.Linear):
+    """nn.Linear that the SimpleRNN baseline can train with DFA, the same way EphemeralLinear is
+    trained (same error projection, input trace, outer product, learning rate and bias step,
+    via the shared dfa_* helpers above). Without enable_dfa it is a plain nn.Linear with the same
+    state dict, so backprop and BPTT are unchanged.
+
+    SimpleRNN has one weight shared by the batch rather than one copy per sequence, so the
+    per-sequence gradients are averaged over the batch, as the bias step already is. That is
+    what EphemeralRNN's slow weights amount to: each copy takes its own sequence's step, and
+    start_sequence_wipe() sets every copy to the batch mean."""
+
+    def __init__(self, in_features, out_features, bias=True):
+        super().__init__(in_features, out_features, bias)
+        self.is_last_layer = False
+        self.register_buffer('feedback_weights', None)  # set by enable_dfa for non-last layers
+        self.in_traces = None  # this step's input, recorded by forward (not saved)
+        self._last_projected_error = None
+
+    def enable_dfa(self, vocab_size, is_last_layer):
+        """Gives a non-last layer its fixed random feedback matrix [vocab, out], initialised as
+        EphemeralLinear's feedback_weights; a last layer (i2o) gets the output error directly."""
+        self.is_last_layer = is_last_layer
+        if not is_last_layer:
+            self.feedback_weights = init_feedback_weights(vocab_size, self.out_features).to(self.weight.device)
+
+    def forward(self, input):
+        self.in_traces = input.detach()
+        return super().forward(input)
+
+    def populate_dfa_gradients(self, error_signal):
+        """Sets weight.grad to the batch mean of the per-sequence DFA gradients and bias.grad to
+        the batch mean of the projected error. error_signal is not modified."""
+        projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer)
+        self._last_projected_error = projected_error
+        self.weight.grad = dfa_per_sample_gradient(projected_error, self.in_traces).mean(dim=0)
+        if self.bias is not None:
+            # So apply_dfa_update's bias step, -lr * bias.grad, is dfa_bias_update(projected_error, lr).
+            self.bias.grad = projected_error.mean(dim=0)
+
+    def apply_dfa_update(self, learning_rate):
+        """w <- w - lr * w.grad and b <- b - lr * b.grad, with the grads populate_dfa_gradients
+        set (clipped first by train.py if --grad_norm_clip is on)."""
+        with torch.no_grad():
+            self.weight -= learning_rate * self.weight.grad
+            if self.bias is not None:
+                self.bias -= learning_rate * self.bias.grad
+
+
 class SimpleRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero', enable_recurrence=True):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero', enable_recurrence=True, updater=None):
+        """updater: 'dfa' gives the hidden layers and i2h fixed random DFA feedback matrices (drawn
+        after every layer is initialised, so the layers start the same as under the other
+        updaters at the same seed). Other values leave it a plain backprop/BPTT model."""
         super(SimpleRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout_rate = dropout_rate
         self.init_type = init_type
         self.enable_recurrence = enable_recurrence
+        self.updater = updater
 
-        # Replace EphemeralLinear with standard Linear layers
-        self.linear_layers = nn.ModuleList([nn.Linear(input_size + hidden_size, hidden_size)])
+        # Standard linear layers (DFALinear is an nn.Linear that can also take DFA updates)
+        self.linear_layers = nn.ModuleList([DFALinear(input_size + hidden_size, hidden_size)])
         for _ in range(1, num_layers):
-            self.linear_layers.append(nn.Linear(hidden_size, hidden_size))
+            self.linear_layers.append(DFALinear(hidden_size, hidden_size))
 
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
 
         # Final layers for hidden and output
-        self.i2h = nn.Linear(hidden_size, hidden_size)
-        self.i2o = nn.Linear(hidden_size, output_size)
+        self.i2h = DFALinear(hidden_size, hidden_size)
+        self.i2o = DFALinear(hidden_size, output_size)
         self.softmax = nn.LogSoftmax(dim=1)
+
+        if updater == 'dfa':
+            for layer in self.dfa_layers():
+                layer.enable_dfa(output_size, is_last_layer=layer is self.i2o)
+
+    def dfa_layers(self):
+        """Every layer DFA trains, in update order: the hidden layers, i2h, then i2o."""
+        return [*self.linear_layers, self.i2h, self.i2o]
 
     def forward(self, input, hidden):
         # print(f"input shape: {input.shape}, hidden shape: {hidden.shape}")

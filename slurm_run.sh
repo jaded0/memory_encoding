@@ -85,6 +85,7 @@ CHECKPOINT_SAVE_FREQ=500
 # --- Training Strategy ---
 # MODEL_TYPE: 'ephemeral' for the plastic model, 'rnn' for a standard SimpleRNN.
 # UPDATER: 'dfa' for Direct Feedback Alignment, 'backprop' for standard backpropagation, 'bptt' for backpropagation through time.
+# Every combination trains; rnn + dfa is the ephemeral model's DFA without ephemeral weights (see README "Updaters").
 #
 # To run EphemeralRNN with backprop: MODEL_TYPE='ephemeral', UPDATER='backprop', LEARNING_RATE=1e-5 (example)
 # To run SimpleRNN with backprop: MODEL_TYPE='rnn', UPDATER='backprop', LEARNING_RATE=1e-3 (example)
@@ -97,7 +98,7 @@ INPUT_MODE='last_one'        # last_one | last_two
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-5           # Base learning rate
 PLAST_CLIP=1e3               # Plasticity (learning-rate multiplier) of ephemeral weights, alpha
-GRAD_CLIP=0                  # ephemeral: element-wise clamp on ephemeral-weight updates; rnn: grad-norm clip (0 = off)
+GRAD_CLIP=0                  # ephemeral: element-wise clamp on ephemeral-weight updates; rnn: grad-norm clip, also under dfa (0 = off)
 GRAD_CLIP_FLAG=$([[ $MODEL_TYPE == rnn ]] && echo --grad_norm_clip || echo --ephemeral_update_clamp)
 
 # --- Ephemeral Weights (ignored by the rnn baseline) ---
