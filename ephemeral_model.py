@@ -49,13 +49,9 @@ class EphemeralLinear(nn.Linear):
         distribution[self.mask] = plast_clip
 
         # forgetting_factor holds the per-entry forget rate (fraction removed per step, not a
-        # multiplier): forget_rate on the mask, 0 elsewhere. mask_tier_two reuses rand_vals, so
-        # it lies inside the mask when plast_proportion >= 0.01 and changes nothing; below
-        # 0.01 it also puts forget_rate on slow entries with rand_vals in [plast_proportion, 0.01).
-        mask_tier_two = rand_vals < 0.01
+        # multiplier): forget_rate on the ephemeral mask, 0 elsewhere.
         forget_dist = torch.zeros_like(self.weight)
         forget_dist[self.mask] = forget_rate
-        forget_dist[mask_tier_two] = forget_rate
         self.forgetting_factor = nn.Parameter(forget_dist, requires_grad=False)
 
         # Initialize plasticity parameters with the generated values
