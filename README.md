@@ -1,6 +1,6 @@
 # Memory Encoding with EphemeralRNN
 
-This repository implements and compares different weight update mechanisms for recurrent neural networks, with a focus on the EphemeralRNN architecture that features high-plasticity weights for short-term memory.
+This repository implements and compares different weight update mechanisms for recurrent neural networks, with a focus on the EphemeralRNN architecture, whose ephemeral weights (a fraction of each layer with a high learning-rate multiplier) act as short-term memory.
 
 ## Overview
 
@@ -12,9 +12,9 @@ The project explores three different training approaches:
 ## Key Features
 
 ### EphemeralRNN Architecture
-- **High-Plasticity Weights**: A subset of weights that can adapt rapidly for short-term memory
+- **Ephemeral weights**: A subset of weights with plasticity α > 1 that adapt rapidly, for short-term memory; the rest are slow weights
 - **Per-Batch Adaptation**: Each sequence in a batch has independent weight adaptations
-- **Forgetting Mechanism**: Controlled decay of high-plasticity weights between updates
+- **Forgetting Mechanism**: Controlled decay of the ephemeral weights after each update
 
 "Ephemeral" means this fast-weights-plus-decay mechanism. The updater (DFA, backprop, BPTT)
 and the model (`--model_type ephemeral` or the `rnn` baseline) are independent axes, and
@@ -43,102 +43,114 @@ every combination as the code behaves today.
 
 ## Updaters
 
-Each EphemeralLinear layer holds per-sequence `candidate_weights` of shape
-`[batch, out, in]`, starting at zero. A fixed random mask marks `--plast_proportion` of each
-layer's entries as ephemeral, with plasticity α = `--plast_clip`. The rest are slow weights
-with plasticity 1. The output layers (`i2o`, `self_grad`) have no ephemeral entries: their
-mask is empty, so they have plasticity 1 everywhere and are never decayed or wiped (the
-W&B `high_lr` and `effective_lr` config values therefore describe the hidden layers and
-`i2h` only). At the start of every sequence, `wipe()` replaces each sequence's copy with
-the batch mean and zeroes the ephemeral entries. Forgetting multiplies the ephemeral
-entries by `1 - forget_rate`. Layers without ephemeral entries log no high-plasticity norms.
+Each EphemeralLinear layer holds `per_sample_weights` of shape `[batch, out, in]`, one copy
+per sequence, starting at zero. A fixed random `ephemeral_mask` marks `--ephemeral_fraction`
+of each layer's entries as ephemeral, with plasticity α = `--plasticity`. The rest are slow
+weights with plasticity 1. The output layers (`i2o`, `self_grad`) have no ephemeral entries:
+their mask is empty, so they have plasticity 1 everywhere and are never decayed or wiped
+(the W&B `nominal_ephemeral_lr` and `nominal_mean_lr` config values therefore describe the
+hidden layers and `i2h` only). At the start of every sequence, `start_sequence_wipe()`
+replaces each sequence's copy with the batch mean and zeroes the ephemeral entries.
+Forgetting multiplies the ephemeral entries by `1 - forget_rate`. Layers without ephemeral
+entries log no ephemeral norms.
 
 | `--updater` | `--model_type ephemeral` | `--model_type rnn` (SimpleRNN baseline) |
 | --- | --- | --- |
-| `dfa` | Every step: DFA gradients, `apply_unified_updates`, forget | No parameter changes: the DFA branch only updates an EphemeralRNN |
-| `backprop` | Every step: `backward()` on the batch-mean step loss, `scale_gradients`, `apply_unified_updates`, forget | Every step: `torch.optim.SGD` on the batch-mean step loss; `--grad_clip` is a global grad-norm clip |
-| `bptt` | After the last step: `backward()` on the batch-mean summed loss, `scale_gradients`, plain `p -= lr * p.grad`, forget | After the last step: `torch.optim.SGD`; `--grad_clip` is a global grad-norm clip |
+| `dfa` | Every step: DFA gradients, `apply_update`, forget | No parameter changes: the DFA branch only updates an EphemeralRNN |
+| `backprop` | Every step: `backward()` on the batch-mean step loss, `scale_ephemeral_grads`, `apply_update`, forget | Every step: `torch.optim.SGD` on the batch-mean step loss; `--grad_norm_clip` is a global grad-norm clip |
+| `bptt` | After the last step: `backward()` on the batch-mean summed loss, `scale_ephemeral_grads`, plain `p -= lr * p.grad`, forget | After the last step: `torch.optim.SGD`; `--grad_norm_clip` is a global grad-norm clip |
 
 For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is `--batch_size`):
 
 | | DFA | Backprop | BPTT |
 | --- | --- | --- | --- |
-| Error signal | Per-sequence output error; hidden layers receive it through fixed random `feedback_weights` | Autograd | Autograd |
+| Error signal | Per-sequence `output_error`; hidden layers receive it through fixed random `feedback_weights` | Autograd | Autograd |
 | Hidden state | Detached every step | Detached every step | Not detached |
 | When weights change | Every step | Every step | Once, after the last step |
 | Order per update | Update (incl. clamp and normalize), then forget | Update (incl. clamp and normalize), then forget | Update, then forget (once) |
-| Step on an ephemeral weight | `lr·α·g` | `lr·α²·g/B` | `lr·α·g/B`, zeroed by the next `wipe()` |
+| Step on an ephemeral weight | `lr·α·g` | `lr·α²·g/B` | `lr·α·g/B`, zeroed by the next `start_sequence_wipe()` |
 | Step on a slow weight | `lr·g` | `lr·g/B` | `lr·g/B` |
 | Layers that change | Hidden layers, `i2o`, `self_grad` | Hidden layers, `i2o` | Every parameter with a gradient |
-| `--grad_clip` | Element-wise clamp on α-scaled ephemeral updates | Same as DFA | Ignored |
-| `--clip_weights`, `--normalize` | Applied after each update | Applied after each update | Ignored |
+| `--ephemeral_update_clamp` | Element-wise clamp on α-scaled ephemeral updates | Same as DFA | Ignored |
+| `--weight_clamp`, `--unit_norm_weights` | Applied after each update | Applied after each update | Ignored |
+
+`--grad_norm_clip` applies only to the `rnn` baseline, and `--ephemeral_update_clamp` only to
+the ephemeral model. They used to be one flag, `--grad_clip`; see [Renamed flags](#renamed-flags-2026-09).
+
+Under DFA, `output_error` (`train.py:136`) is a single tensor, and the same object is passed
+to every layer's `populate_dfa_gradients`. It is ∂loss/∂output per sequence, plus the clamped
+`self_grad` output, added in place, when `--self_grad > 0`. It used to have two names,
+`global_error` and `reward_update`, but they were always one object. `i2o` and `self_grad`
+keep a reference to it for their bias update, which runs after other layers' updates, so it
+must never be modified in place during a step. `tests/test_dfa_error_signals.py` fails if it is.
 
 The entries that differ between columns are explained, with evidence, in the next section.
 
 ## Known issues / behaviours under review
 
 These describe the current code. They are recorded here, not changed, until they can be
-re-examined with full training runs before and after. Line numbers were last checked when
-the forget step was moved after the update.
+re-examined with full training runs before and after. Line numbers were last checked after
+the 2026-09 naming cleanup.
 
 - **Backprop applies α twice (α²) on ephemeral weights.** The backprop branch calls
-  `rnn.scale_gradients(plast_clip)` (`train.py:180`), which multiplies masked gradients by
-  α (`ephemeral_model.py:256-262`). `apply_unified_updates` then multiplies by
-  `plasticity`, which is α on the mask (`ephemeral_model.py:56`, `:159`). DFA does not call
-  `scale_gradients`, so it applies α once. BPTT calls it and then takes a plain SGD step
-  (`train.py:247-258`), so it also applies α once. Measured with α = 7, the masked step is
+  `rnn.scale_ephemeral_grads(plasticity)` (`train.py:185`), which multiplies masked gradients
+  by α (`ephemeral_model.py:270-278`). `apply_update` then multiplies by the `plasticity`
+  tensor, which is α on the mask (`ephemeral_model.py:61`, `:173`). DFA does not call
+  `scale_ephemeral_grads`, so it applies α once. BPTT calls it and then takes a plain SGD step
+  (`train.py:252-263`), so it also applies α once. Measured with α = 7, the masked step is
   49·lr·g under backprop and 7·lr·g under DFA; slow weights get 1·lr·g under both.
 - **Backprop and BPTT carry a 1/B factor that DFA does not.** Backprop calls `backward()`
-  on `step_loss.mean()` over the batch (`train.py:176`), and BPTT on
-  `accumulated_loss.mean()` (`train.py:243`), so each sequence's candidate-weight gradient
+  on `step_loss.mean()` over the batch (`train.py:181`), and BPTT on
+  `accumulated_loss.mean()` (`train.py:248`), so each sequence's `per_sample_weights` gradient
   is 1/B of its own loss gradient. DFA takes each sequence's own error, using
-  `grad_outputs=ones` on the unreduced loss (`train.py:134`; the reduction is forced to
-  `'none'` at `train.py:300-302`). This was a deliberate choice at the time, and it helped
+  `grad_outputs=ones` on the unreduced loss (`train.py:136`; the reduction is forced to
+  `'none'` at `train.py:305-307`). This was a deliberate choice at the time, and it helped
   the loss numbers. Combined with α², backprop's per-sequence ephemeral step is α/B times
-  DFA's at the same `--learning_rate` and `--plast_clip`.
+  DFA's at the same `--learning_rate` and `--plasticity`.
 - **`i2h` gets no gradient under DFA or backprop (by design; under review).** The DFA
-  branch never populates or updates `i2h` (`train.py:145-157`). Under backprop, the hidden
+  branch never populates or updates `i2h` (`train.py:150-162`). Under backprop, the hidden
   state is detached every step (`train.py:91-92`), and `i2h`'s output feeds only the next
-  step (`ephemeral_model.py:407-414`). So `i2h.candidate_weights.grad` is `None`, and
-  `apply_unified_updates` returns immediately (`ephemeral_model.py:147-148`). This is
+  step (`ephemeral_model.py:423-430`). So `i2h.per_sample_weights.grad` is `None`, and
+  `apply_update` returns immediately (`ephemeral_model.py:161-162`). This is
   probably intended. The ephemeral weights are meant to replace the recurrent connection
   as the short-term memory (paper Fig. 1 caption, `paper/paper_content.tex:117`), while the
   slow weights keep learning as usual. `i2h` is likely vestigial in the ephemeral model,
   kept for parity with the SimpleRNN baseline, which can use recurrence through BPTT. (The
   baseline's `i2h` also gets no gradient under backprop, for the same detach reason.)
-  Consequence: `i2h`'s candidate weights stay at their initial zeros, so under DFA or
+  Consequence: `i2h`'s `per_sample_weights` stay at their initial zeros, so under DFA or
   backprop the hidden state is `tanh(i2h.bias)` with `--enable_recurrence True` and zero
-  with it off (`ephemeral_model.py:408-414`). It is constant either way, so recurrence
+  with it off (`ephemeral_model.py:424-430`). It is constant either way, so recurrence
   contributes no information.
 - **Ephemeral + BPTT: fast weights are frozen within a sequence.** BPTT is the contrast to
   per-step backprop and DFA in the permutation grid above. Its only update comes after the
-  last step (`train.py:240`), and `wipe()` zeroes the ephemeral entries at the start of the
-  next sequence (`train.py:80`, `ephemeral_model.py:81-86`). Updates to ephemeral entries
-  therefore never reach a training forward pass, and only slow weights and biases learn. As
-  a result, `--plast_clip` and `--forget_rate` do not affect ephemeral BPTT training. (The
-  forget set is exactly the mask, `ephemeral_model.py:47-62`.) This path also ignores `--grad_clip`, `--clip_weights` and
-  `--normalize`, because it never calls `apply_unified_updates` or `_apply_regularization`
-  (`train.py:254-258`), and it does not increment `training_instance`. Checked on a small
-  model: changing `--plast_clip`, `--forget_rate`, `--grad_clip` or `--clip_weights` leaves
-  a four-sequence BPTT loss trajectory bit-identical.
-- **`--normalize` rescales the candidate weights only, as one tensor.**
-  `_apply_regularization` divides each layer's `candidate_weights` by their L2 norm after
-  each update (`ephemeral_model.py:219-227`). The norm is taken over the whole
-  `[batch, out, in]` tensor, not per sequence. `plasticity`, `forgetting_factor`, the bias,
-  the feedback weights, the traces and the logged update norms are left alone (until
-  2026-09 they were all rescaled, so α and the forget rate drifted from the CLI values
-  after the first update). Layers whose update returns early (`i2h` under backprop) are
-  not rescaled. `--clip_weights` is applied after the normalization, so a clip of 1 or
-  more never binds when `--normalize` is on.
-- **Old checkpoints keep ephemeral entries in the output layers.** The mask is a state-dict
-  parameter, so a checkpoint saved before the output layers' masks were emptied (2026-09)
-  restores its old non-empty `i2o`/`self_grad` mask, and the matching `forgetting_factor`.
-  Those entries keep being decayed and wiped. This is deliberate: re-deriving the mask on
+  last step (`train.py:245`), and `start_sequence_wipe()` zeroes the ephemeral entries at the
+  start of the next sequence (`train.py:80`, `ephemeral_model.py:87-92`). Updates to ephemeral
+  entries therefore never reach a training forward pass, and only slow weights and biases
+  learn. As a result, `--plasticity` and `--forget_rate` do not affect ephemeral BPTT
+  training. (The forget set is exactly `ephemeral_mask`, `ephemeral_model.py:50-66`.) This
+  path also ignores `--ephemeral_update_clamp`, `--weight_clamp` and `--unit_norm_weights`,
+  because it never calls `apply_update` or `_apply_regularization` (`train.py:259-263`), and
+  it does not increment `training_instance`. Checked on a small model (under the old flag
+  names): changing α, `--forget_rate`, the update clamp or the weight clamp leaves a
+  four-sequence BPTT loss trajectory bit-identical.
+- **`--unit_norm_weights` rescales the `per_sample_weights` only, as one tensor.**
+  `_apply_regularization` divides each layer's `per_sample_weights` by their L2 norm after
+  each update (`ephemeral_model.py:233-241`). The norm is taken over the whole
+  `[batch, out, in]` tensor, not per sequence. `plasticity`, the bias, the feedback weights,
+  the traces and the logged update norms are left alone (until 2026-09 they were all
+  rescaled, together with the then-stored `forgetting_factor`, so α and the forget rate
+  drifted from the CLI values after the first update). Layers whose update returns early
+  (`i2h` under backprop) are not rescaled. `--weight_clamp` is applied after the
+  normalization, so a clamp of 1 or more never binds when `--unit_norm_weights` is on.
+- **Old checkpoints keep ephemeral entries in the output layers.** `ephemeral_mask` is a
+  state-dict parameter, so a checkpoint saved before the output layers' masks were emptied
+  (2026-09) restores its old non-empty `i2o`/`self_grad` mask. Those entries keep being
+  decayed (the forget rate is `forget_rate` on the mask) and wiped. This is deliberate: re-deriving the mask on
   load would silently change a resumed run's dynamics. `train.py` prints a warning on such
   a resume; start fresh to get the current behaviour.
 - **`EphemeralLinear._update_bias` is dead code with a flipped sign.** Nothing calls it,
-  and it adds `+lr·projected_error` (`ephemeral_model.py:210-217`). The live bias update is
-  `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:179-193`).
+  and it adds `+lr·projected_error` (`ephemeral_model.py:224-231`). The live bias update is
+  `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:193-207`).
 
 ## Paper settings & stability
 
@@ -147,7 +159,7 @@ The paper trains with plain SGD at a base learning rate of 1e-4
 "forgetting rate coefficient" of 0.7 applied after each update (`:124-127`). In code terms
 that is `--forget_rate 0.3`. The current CLI
 defaults are lr 1e-4, α 1e5 and `--forget_rate` 0.01, which keeps 1 − forget_rate = 0.99 of
-each ephemeral weight per step (`train.py:313-317`).
+each ephemeral weight per step (`train.py:359-364`).
 
 ### Terminology: paper vs code
 
@@ -159,13 +171,15 @@ key-recall legend "ephemeral 0.0001 0.5" is lr 1e-4, `--forget_rate 0.5`).
 | Paper term | Code / CLI name | Meaning | Formula | Conversion |
 | --- | --- | --- | --- | --- |
 | "Forgetting rate coefficient" in the text (`paper_content.tex:127`); forget rate in the figure legends | `--forget_rate`; config and W&B key `forget_rate`; `FORGET_RATE` in the run scripts; `forget_rate=` in the `EphemeralRNN`/`EphemeralLinear` constructors | Fraction of each ephemeral weight removed per step | `w ← (1 − forget_rate)·w` | The text's coefficient is 1 − `forget_rate`: its "forgetting rate coefficient 0.7" is `--forget_rate 0.3`. Legend values are already `--forget_rate` values |
-| (none) | `EphemeralLinear.forgetting_factor` (state-dict tensor) | Per-entry forget rate: `forget_rate` on the ephemeral mask, 0 elsewhere. A removal fraction, not a multiplier | `w ← (1 − forgetting_factor)·w`, element-wise (`apply_forget_step`) | As above, per entry |
-| Plasticity α_k (`:100-107`) | `--plast_clip`; `plasticity` tensor | Learning-rate multiplier on ephemeral weights (1 on slow weights) | step `lr·α·g` (DFA) | `--plast_clip` = α |
+| (none) | `forget_rate * ephemeral_mask`, computed in `EphemeralLinear.apply_forget_step` (checkpoints before 2026-09 stored it as the tensor `forgetting_factor`) | Per-entry forget rate: `forget_rate` on the ephemeral mask, 0 elsewhere. A removal fraction, not a multiplier | `w ← (1 − forget_rate·mask)·w`, element-wise | As above, per entry |
+| Plasticity α_k (`:100-107`) | `--plasticity` (formerly `--plast_clip`); config and W&B key `plasticity`; `plasticity` tensor | Learning-rate multiplier on ephemeral weights (1 on slow weights) | step `lr·α·g` (DFA) | `--plasticity` = α |
+| Ephemeral (fast) weights | Entries where `ephemeral_mask` is true, a `--ephemeral_fraction` (formerly `--plast_proportion`) of each hidden layer and `i2h` | Weights with plasticity α that are decayed and wiped | | |
+| Slow weights | The other entries of `per_sample_weights` (formerly `candidate_weights`) | Plasticity 1, never decayed or wiped | | |
 
 Ordering: as in the paper (`:124-127`), the decay comes after each update in all three
-updaters (`train.py:157`, `:204`, `:261`), so one step is
+updaters (`train.py:162`, `:209`, `:266`), so one step is
 `w ← (1 − forget_rate)·(w − lr·α·g)`. Under DFA and backprop the update it follows
-includes `--grad_clip`, `--normalize` and `--clip_weights`. (The class constructors used to
+includes `--ephemeral_update_clamp`, `--unit_norm_weights` and `--weight_clamp`. (The class constructors used to
 default to `forget_rate=0.7`, a leftover of the paper's coefficient that would have kept
 only 0.3 of each weight. They now default to 0.01, matching the CLI; `train.py` always
 passed `--forget_rate` explicitly, so no run changed.)
@@ -223,9 +237,11 @@ python train.py --updater bptt --model_type ephemeral
 - `--updater`: Choose between `dfa`, `backprop`, or `bptt`
 - `--model_type`: Choose between `rnn` or `ephemeral`
 - `--learning_rate`: Learning rate for weight updates
-- `--plast_clip`: Plasticity (learning-rate multiplier, alpha) of the ephemeral weights
-- `--plast_proportion`: Proportion of weights that are high-plasticity
+- `--plasticity`: Plasticity (learning-rate multiplier, alpha) of the ephemeral weights
+- `--ephemeral_fraction`: Fraction of each hidden layer's weights that are ephemeral
 - `--forget_rate`: Fraction of each ephemeral weight removed per step
+- `--ephemeral_update_clamp` (ephemeral model) / `--grad_norm_clip` (`rnn` baseline): update clamp or gradient-norm clip
+- `--unit_norm_weights`, `--weight_clamp`: rescaling and clamping of the weights after each update
 - `--resume` / `--resume_checkpoint PATH`: Resume from `latest_checkpoint.pth`, or from an explicit checkpoint
 - `--batch_size`: Number of sequences processed together
 - `--seed`: Seed Python, NumPy, Torch, dataset shuffling, and DataLoader sampling (unset = drawn from the OS; see below)
@@ -236,17 +252,47 @@ scratch even if `latest_checkpoint.pth` exists. `--resume` with no checkpoint pr
 from scratch; a missing explicit `--resume_checkpoint` is an error. Once a checkpoint is
 chosen, any load failure aborts the run, including a mismatch in hidden size, layer count,
 updater, model type, charset size, `--forget_rate`, `--dataset` or `--learning_rate`
-(`utils.py`, `load_checkpoint`). A changed `--forget_rate` is refused because the per-entry
-`forgetting_factor` comes from the checkpoint's state dict, so the new value would
-otherwise be silently ignored. A changed dataset or learning rate is refused because it
+(`utils.py`, `load_checkpoint`). A changed `--forget_rate` is refused because it would
+change a running experiment's decay (before 2026-09 the checkpoint stored the per-entry rate
+as `forgetting_factor`, and the new value was silently ignored). A changed dataset or learning rate is refused because it
 means a different experiment: `slurm_run.sh` keys checkpoints by SLURM job name and always
 passes `--resume true`, so a reused job name would otherwise silently continue an old
 checkpoint. Every CLI argument is saved in the checkpoint's config, and on resume
 `load_checkpoint` prints every field that differs (`checkpoint -> this run`) before these
 checks. Other differences, such as `--n_iters` or `--print_freq`, are only printed;
-`--plast_clip` is printed and then applied to the loaded plasticity as before. Checkpoints
+`--plasticity` is printed and then applied to the loaded plasticity as before. Checkpoints
 that did not record a field (older runs) are not checked on it. The seed and `--deterministic`
 come from the checkpoint; passing a different value is an error.
+
+The state dict must match the model exactly: a missing or unexpected tensor is an error,
+not a freshly initialised tensor. Checkpoints saved before the 2026-09 naming cleanup load
+through a mapping of the old names (`candidate_weights` → `per_sample_weights`, `mask` →
+`ephemeral_mask`, `last_high_plast_update_norm` / `last_low_plast_update_norm` →
+`last_ephemeral_step_norm` / `last_slow_step_norm`). Their stored `forgetting_factor` must
+equal `forget_rate` on the mask, and is then dropped. A checkpoint where it does not is refused:
+one trained with `--normalize` before 2026-09 (which rescaled it), or with
+`--plast_proportion` below 0.01 before `mask_tier_two` was removed. Their config keys are
+mapped too (see below), so the diff and the checks compare old and new names correctly.
+
+### Renamed flags (2026-09)
+
+The old names still work. Each prints a one-line `DEPRECATED:` note, so old scripts and the
+frozen `checkpoints/<run>/run_used.sh` copies that `sweeps/bulk_restart.sh` resubmits run
+unchanged. Configs, checkpoints and W&B record only the new names. Giving an old and a new
+name with different values is an error.
+
+| Old flag | New flag | Notes |
+| --- | --- | --- |
+| `--plast_clip` | `--plasticity` | α |
+| `--plast_proportion` | `--ephemeral_fraction` | |
+| `--grad_clip` | `--ephemeral_update_clamp` with `--model_type ephemeral`, `--grad_norm_clip` with `--model_type rnn` | Each model only ever used the one that applies to it |
+| `--clip_weights` | `--weight_clamp` | |
+| `--normalize` | `--unit_norm_weights` | |
+| `--plast_learning_rate`, `--imprint_rate` | (removed) | Were unused; still accepted and ignored |
+
+W&B also renamed its keys: `high_lr` → `nominal_ephemeral_lr`, `effective_lr` →
+`nominal_mean_lr`, and `avg_high_plast_*` / `avg_low_plast_*` → `avg_ephemeral_*` /
+`avg_slow_*`.
 
 ### Seeds & reproducibility
 
@@ -280,7 +326,7 @@ stops the same way with `end_reason: terminated` and exit code 143.
 
 - **Positional Encoding**: Add positional information with `--positional_encoding_dim N`
 - **Residual Connections**: Enable/disable with `--residual_connection True/False`
-- **Weight Normalization**: Enable/disable with `--normalize True/False`
+- **Weight Normalization**: Enable/disable with `--unit_norm_weights True/False`
 - **Input Modes**: Choose between `--input_mode last_one` or `--input_mode last_two`
 
 ## Testing
@@ -296,13 +342,15 @@ CUDA_VISIBLE_DEVICES="" python -m pytest tests/ -q
 The suite includes fixed-input golden traces through the real `train.train()`
 path for DFA, backprop, and BPTT, a finite-update smoke test for all three
 (`tests/test_smoke_updaters.py`), and checkpoint/failure-path, metrics and
-reproducibility tests. See [tests/README.md](tests/README.md) for what the
+reproducibility tests. Others check the old flag names and checkpoints
+(`tests/test_cli_aliases.py`, `tests/test_legacy_checkpoints.py`), and the per-layer
+error tensors of the DFA path (`tests/test_dfa_error_signals.py`). See [tests/README.md](tests/README.md) for what the
 golden traces pin, which known behaviours they currently freeze, and how to
 regenerate them.
 
 ## Project Structure
 
-- `train.py`: Main training script with unified training loop
+- `train.py`: Main training script; `train_batch` runs one batch under any of the three updaters
 - `ephemeral_model.py`: Implementation of EphemeralRNN and EphemeralLinear layers
 - `preprocess.py`: Data loading and preprocessing utilities
 - `reproducibility.py`: Seed resolution, RNG and data-stream checkpoint state
