@@ -17,12 +17,10 @@ INPUT_MODE='last_one'           # last_one | last_two
 
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-4              # Base learning rate - was causing NaN with 1e-3
-PLAST_LEARNING_RATE=1e-10       # Plasticity LR (for specific rules)
 PLAST_CLIP=1e3                  # Plasticity max value - was causing NaN with 1e4
 GRAD_CLIP=0                     # Max gradient norm
 
 # --- Plasticity Specifics (ignored by backprop) ---
-IMPRINT_RATE=0.3                # Imprint strength (unused)
 FORGET_RATE=0.01                # Weight decay/forgetting factor - was causing NaN with 0.1
 SELF_GRAD=0                     # Experimental recurrent replacement
 PLAST_PROPORTION=0.2            # Proportion of weights that are plastic
@@ -62,14 +60,13 @@ python -u train.py \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
-    --plast_learning_rate $PLAST_LEARNING_RATE \
-    --plast_clip $PLAST_CLIP \
-    --grad_clip $GRAD_CLIP \
-    --imprint_rate $IMPRINT_RATE \
+    --plasticity $PLAST_CLIP \
+    --ephemeral_update_clamp $GRAD_CLIP \
+    --grad_norm_clip $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
     --self_grad $SELF_GRAD \
-    --normalize $NORMALIZE \
-    --clip_weights $CLIP_WEIGHTS \
+    --unit_norm_weights $NORMALIZE \
+    --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \
     --num_layers $NUM_LAYERS \
     --residual_connection $RESIDUAL_CONNECTION \
@@ -83,7 +80,7 @@ python -u train.py \
     --track false \
     --group "$GROUP" \
     --notes "$NOTES" \
-    --plast_proportion $PLAST_PROPORTION \
+    --ephemeral_fraction $PLAST_PROPORTION \
     --enable_recurrence $ENABLE_RECURRENCE
 
 echo "--- Backprop Stability Test Finished ---"

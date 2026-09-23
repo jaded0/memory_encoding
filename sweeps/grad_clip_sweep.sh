@@ -101,8 +101,6 @@ TAGS=(bench_sweep sweep)
 # ======================== Fixed Parameters (Not Swept) - Based on whole_run.sh ========================
 INPUT_MODE='last_one'        # From whole_run.sh
 LEARNING_RATE=1e-3           # From whole_run.sh
-PLAST_LEARNING_RATE=1e-10    # From whole_run.sh
-IMPRINT_RATE=0.3             # From whole_run.sh
 FORGET_RATE=0.01             # From whole_run.sh (0.01 instead of variable)
 SELF_GRAD=0                  # From whole_run.sh
 NORMALIZE=false              # From whole_run.sh
@@ -142,14 +140,13 @@ forward_signals python -u train.py \
     --updater $UPDATER \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
-    --plast_learning_rate $PLAST_LEARNING_RATE \
-    --plast_clip $PLAST_CLIP \
-    --grad_clip $GRAD_CLIP \
-    --imprint_rate $IMPRINT_RATE \
+    --plasticity $PLAST_CLIP \
+    --ephemeral_update_clamp $GRAD_CLIP \
+    --grad_norm_clip $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
     --self_grad $SELF_GRAD \
-    --normalize $NORMALIZE \
-    --clip_weights $CLIP_WEIGHTS \
+    --unit_norm_weights $NORMALIZE \
+    --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \
     --num_layers $NUM_LAYERS \
     --residual_connection $RESIDUAL_CONNECTION \
@@ -163,7 +160,7 @@ forward_signals python -u train.py \
     --group "$GROUP" \
     --tags "${TAGS[@]}" \
     --notes "$RUN_NOTES" \
-    --plast_proportion $PLAST_PROPORTION \
+    --ephemeral_fraction $PLAST_PROPORTION \
     --enable_recurrence $ENABLE_RECURRENCE
 
 echo "--- Bench Sweep Task $SLURM_ARRAY_TASK_ID Finished ---"

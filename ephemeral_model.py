@@ -10,10 +10,14 @@ import torch.nn.utils.parametrize as parametrize
 
 
 class EphemeralLinear(nn.Linear):
-    def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, updater='dfa', requires_grad=False, is_last_layer=False, plast_clip=1, batch_size=1, forget_rate=0.01, plast_proportion=0.2):
+    def __init__(self, in_features, out_features, charset, bias=True, unit_norm_weights=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see apply_forget_step). The paper's "forgetting rate
-        coefficient 0.7" is 1 - forget_rate, i.e. forget_rate = 0.3. Same meaning as --forget_rate."""
+        coefficient 0.7" is 1 - forget_rate, i.e. forget_rate = 0.3. Same meaning as --forget_rate.
+        plasticity: alpha, the learning-rate multiplier on the ephemeral entries (--plasticity).
+        ephemeral_fraction: fraction of entries that are ephemeral (--ephemeral_fraction).
+        unit_norm_weights, weight_clamp: applied after each update (--unit_norm_weights,
+        --weight_clamp; see _apply_regularization)."""
         super(EphemeralLinear, self).__init__(in_features, out_features, bias)
 
         # Set requires_grad for the base class parameters
@@ -23,8 +27,8 @@ class EphemeralLinear(nn.Linear):
             # For DFA, we set it to False since we handle bias manually
             self.bias.requires_grad = (updater in ['backprop', 'bptt'])
 
-        self.normalize = normalize
-        self.clip_weights = clip_weights
+        self.unit_norm_weights = unit_norm_weights
+        self.weight_clamp = weight_clamp
         self.updater = updater
         self.is_last_layer = is_last_layer
         self.in_traces = nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
@@ -52,9 +56,9 @@ class EphemeralLinear(nn.Linear):
         if self.is_last_layer:
             ephemeral = torch.zeros_like(self.weight, dtype=torch.bool)
         else:
-            ephemeral = rand_vals < plast_proportion
+            ephemeral = rand_vals < ephemeral_fraction
         self.ephemeral_mask = nn.Parameter(ephemeral, requires_grad=False)
-        distribution[self.ephemeral_mask] = plast_clip
+        distribution[self.ephemeral_mask] = plasticity
 
         # A plain attribute, not state: the per-entry forget rate is forget_rate on the ephemeral
         # mask and 0 elsewhere, computed in apply_forget_step. (Checkpoints from before the
@@ -138,12 +142,13 @@ class EphemeralLinear(nn.Linear):
         else:
             self.per_sample_weights.grad.copy_(gradient)
 
-    def apply_update(self, learning_rate, grad_clip, state):
+    def apply_update(self, learning_rate, update_clamp, state):
         """Update step shared by DFA and backprop.
         
         Args:
             learning_rate: Learning rate for updates
-            grad_clip: Gradient clipping value
+            update_clamp: Element-wise clamp on the alpha-scaled update of the ephemeral
+                entries (--ephemeral_update_clamp; 0 = off)
             state: Training state dictionary for logging
         """
         if self.per_sample_weights.grad is None:
@@ -161,10 +166,10 @@ class EphemeralLinear(nn.Linear):
             update = update * plasticity_expanded
             # update = update * mask_expanded
             
-            # Apply gradient clipping (element-wise for consistency)
-            if grad_clip > 0:
+            # Clamp the ephemeral entries of the update element-wise
+            if update_clamp > 0:
                 update = torch.where(mask_expanded, 
-                                    torch.clamp(update, -grad_clip, grad_clip), 
+                                    torch.clamp(update, -update_clamp, update_clamp), 
                                     update)
         
         self.per_sample_weights.data = self.per_sample_weights.data + learning_rate * update
@@ -220,13 +225,13 @@ class EphemeralLinear(nn.Linear):
     
     def _apply_regularization(self):
         """Helper method to apply normalization and weight clipping."""
-        if self.normalize:
+        if self.unit_norm_weights:
             # Only the weights forward() uses. plasticity, the bias, the
             # feedback weights, the traces and the logged update norms are left alone.
             self.per_sample_weights.data = self.per_sample_weights.data / (self.per_sample_weights.data.norm(2) + 1e-6)
         
-        if self.clip_weights != 0:
-            self.per_sample_weights.data.clamp_(-self.clip_weights, self.clip_weights)
+        if self.weight_clamp != 0:
+            self.per_sample_weights.data.clamp_(-self.weight_clamp, self.weight_clamp)
 
 
     def apply_forget_step(self):
@@ -243,8 +248,8 @@ class EphemeralLinear(nn.Linear):
             # values the old stored forgetting_factor tensor held.
             self.per_sample_weights.data = self.per_sample_weights.data * (1 - self.forget_rate * self.ephemeral_mask)
 
-    def scale_ephemeral_grads(self, plast_clip):
-        """Scales the gradients of the ephemeral weights by plast_clip (alpha) before the update."""
+    def scale_ephemeral_grads(self, plasticity):
+        """Scales the gradients of the ephemeral weights by plasticity (alpha) before the update."""
         if self.per_sample_weights.grad is None:
             return
 
@@ -254,10 +259,10 @@ class EphemeralLinear(nn.Linear):
 
         with torch.no_grad():
             # Create a scaling tensor based on the plasticity mask.
-            # The scaling factor is `plast_clip`, making the effective learning rate
-            # for ephemeral weights `learning_rate * plast_clip`, which
+            # The scaling factor is `plasticity`, making the effective learning rate
+            # for ephemeral weights `learning_rate * plasticity`, which
             # mirrors the logic in the DFA updater.
-            lr_scale = plast_clip
+            lr_scale = plasticity
             # self.ephemeral_mask is [out, in], grad is [B, out, in]
             scaling_factor = torch.ones_like(self.ephemeral_mask, dtype=torch.float)
             scaling_factor[self.ephemeral_mask] = lr_scale
@@ -317,19 +322,19 @@ class EphemeralLinear(nn.Linear):
             slow_norm = torch.norm(slow_grad).item() if slow_grad.numel() > 0 else 0.0
             self.last_slow_step_norm.data.fill_(slow_norm)
 
-    def set_plasticity(self, new_plast_clip):
+    def set_plasticity(self, value):
         """Sets the plasticity (alpha) of the ephemeral weights; slow weights keep 1."""
         with torch.no_grad():
             # Only update plasticity values where the mask is True (ephemeral weights)
-            self.plasticity.data[self.ephemeral_mask] = new_plast_clip
-            print(f"Set plasticity to {new_plast_clip} for {torch.sum(self.ephemeral_mask).item()} ephemeral weights")
+            self.plasticity.data[self.ephemeral_mask] = value
+            print(f"Set plasticity to {value} for {torch.sum(self.ephemeral_mask).item()} ephemeral weights")
 
 class EphemeralRNN(torch.nn.Module):
     def __init__(
         self, input_size, hidden_size, output_size, num_layers, charset,
         dropout_rate=0, residual_connection=False, init_type='zero',
-        normalize=True, clip_weights=False, updater='dfa',
-        plast_clip=1, batch_size=1, forget_rate=0.01, plast_proportion=0.2,
+        unit_norm_weights=True, weight_clamp=0, updater='dfa',
+        plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2,
         enable_recurrence=True
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
@@ -349,19 +354,19 @@ class EphemeralRNN(torch.nn.Module):
         self.linear_layers = torch.nn.ModuleList([
             EphemeralLinear(
                 inner_size, inner_size, charset,
-                normalize=normalize, clip_weights=clip_weights,
-                updater=updater, plast_clip=plast_clip,
+                unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
+                updater=updater, plasticity=plasticity,
                 batch_size=batch_size, forget_rate=forget_rate,
-                plast_proportion=plast_proportion
+                ephemeral_fraction=ephemeral_fraction
             )
         ])
         for _ in range(1, num_layers):
             self.linear_layers.append(EphemeralLinear(
                 inner_size, inner_size, charset,
-                normalize=normalize, clip_weights=clip_weights,
-                updater=updater, plast_clip=plast_clip,
+                unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
+                updater=updater, plasticity=plasticity,
                 batch_size=batch_size, forget_rate=forget_rate,
-                plast_proportion=plast_proportion
+                ephemeral_fraction=ephemeral_fraction
             ))
 
         # Dropout layers
@@ -370,24 +375,24 @@ class EphemeralRNN(torch.nn.Module):
         # Final layers for hidden and output, also using EphemeralLinear
         self.i2h = EphemeralLinear(
             inner_size, hidden_size, charset,
-            normalize=normalize, clip_weights=clip_weights,
-            updater=updater, plast_clip=plast_clip,
+            unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
+            updater=updater, plasticity=plasticity,
             batch_size=batch_size, forget_rate=forget_rate,
-            plast_proportion=plast_proportion
+            ephemeral_fraction=ephemeral_fraction
         )
         self.i2o = EphemeralLinear(
             inner_size, output_size, charset,
-            normalize=normalize, clip_weights=clip_weights,
+            unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
             updater=updater, requires_grad=False, is_last_layer=True,
-            plast_clip=plast_clip, batch_size=batch_size, forget_rate=forget_rate,
-            plast_proportion=plast_proportion
+            plasticity=plasticity, batch_size=batch_size, forget_rate=forget_rate,
+            ephemeral_fraction=ephemeral_fraction
         )
         self.self_grad = EphemeralLinear(
             inner_size, output_size, charset,
-            normalize=normalize, clip_weights=clip_weights,
+            unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
             updater=updater, requires_grad=False, is_last_layer=True,
-            plast_clip=plast_clip, batch_size=batch_size, forget_rate=forget_rate,
-            plast_proportion=plast_proportion
+            plasticity=plasticity, batch_size=batch_size, forget_rate=forget_rate,
+            ephemeral_fraction=ephemeral_fraction
         )
         self.softmax = torch.nn.LogSoftmax(dim=1)
 
@@ -434,14 +439,14 @@ class EphemeralRNN(torch.nn.Module):
         self.i2o.apply_forget_step()
         self.self_grad.apply_forget_step()
 
-    def scale_ephemeral_grads(self, plast_clip):
+    def scale_ephemeral_grads(self, plasticity):
         """Calls scale_ephemeral_grads on all EphemeralLinear layers."""
         for layer in self.linear_layers:
-            layer.scale_ephemeral_grads(plast_clip)
-        self.i2h.scale_ephemeral_grads(plast_clip)
-        self.i2o.scale_ephemeral_grads(plast_clip)
+            layer.scale_ephemeral_grads(plasticity)
+        self.i2h.scale_ephemeral_grads(plasticity)
+        self.i2o.scale_ephemeral_grads(plasticity)
         # self_grad is not trained with backprop, so no gradients to scale
-        # self.self_grad.scale_ephemeral_grads(plast_clip)
+        # self.self_grad.scale_ephemeral_grads(plasticity)
 
     
     def get_all_norms(self):
@@ -480,26 +485,26 @@ class EphemeralRNN(torch.nn.Module):
         self.i2o.start_sequence_wipe()
         self.self_grad.start_sequence_wipe()
 
-    def set_plasticity(self, new_plast_clip):
+    def set_plasticity(self, value):
         """Sets the ephemeral plasticity (alpha) in all EphemeralLinear layers (used on resume)."""
-        print(f"Setting plasticity from checkpoint resume: {new_plast_clip}")
+        print(f"Setting plasticity from checkpoint resume: {value}")
         
         # Update all linear layers
         for i, layer in enumerate(self.linear_layers):
             if isinstance(layer, EphemeralLinear):
-                layer.set_plasticity(new_plast_clip)
+                layer.set_plasticity(value)
         
         # Update i2h layer
         if isinstance(self.i2h, EphemeralLinear):
-            self.i2h.set_plasticity(new_plast_clip)
+            self.i2h.set_plasticity(value)
         
         # Note: i2o and self_grad are last layers, so they don't use plasticity scaling
         # in the same way, but we'll update them for consistency
         if isinstance(self.i2o, EphemeralLinear) and not self.i2o.is_last_layer:
-            self.i2o.set_plasticity(new_plast_clip)
+            self.i2o.set_plasticity(value)
         
         if isinstance(self.self_grad, EphemeralLinear) and not self.self_grad.is_last_layer:
-            self.self_grad.set_plasticity(new_plast_clip)
+            self.self_grad.set_plasticity(value)
 
 
 class SimpleRNN(nn.Module):

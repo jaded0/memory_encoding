@@ -13,7 +13,7 @@ from utils import initialize_charset, load_checkpoint, save_checkpoint
 
 
 class CheckpointBehaviorTest(unittest.TestCase):
-    def test_plast_clip_update_and_rng_round_trip(self):
+    def test_plasticity_update_and_rng_round_trip(self):
         seed_everything(31415, deterministic=True)
         charset, _char_to_idx, _idx_to_char, n_characters = initialize_charset(
             "palindrome_dataset"
@@ -21,8 +21,8 @@ class CheckpointBehaviorTest(unittest.TestCase):
         hidden_size = 16
         num_layers = 1
         batch_size = 2
-        initial_plast_clip = 10.0
-        new_plast_clip = 50.0
+        initial_plasticity = 10.0
+        new_plasticity = 50.0
 
         with tempfile.TemporaryDirectory() as temp_dir:
             checkpoint_path = os.path.join(temp_dir, "test_checkpoint.pth")
@@ -33,13 +33,13 @@ class CheckpointBehaviorTest(unittest.TestCase):
                 num_layers,
                 charset,
                 updater="dfa",
-                plast_clip=initial_plast_clip,
+                plasticity=initial_plasticity,
                 batch_size=batch_size,
-                plast_proportion=0.5,
+                ephemeral_fraction=0.5,
             )
 
             config = {
-                "plast_clip": initial_plast_clip,
+                "plasticity": initial_plasticity,
                 "n_hidden": hidden_size,
                 "n_layers": num_layers,
                 "charset_size": n_characters,
@@ -66,11 +66,11 @@ class CheckpointBehaviorTest(unittest.TestCase):
                 num_layers,
                 charset,
                 updater="dfa",
-                plast_clip=new_plast_clip,
+                plasticity=new_plasticity,
                 batch_size=batch_size,
-                plast_proportion=0.5,
+                ephemeral_fraction=0.5,
             )
-            new_config = {**config, "plast_clip": new_plast_clip}
+            new_config = {**config, "plasticity": new_plasticity}
             restored, _, start_iter, loaded_state, loaded_config = load_checkpoint(
                 checkpoint_path, restored, new_config, device="cpu"
             )
@@ -92,8 +92,8 @@ class CheckpointBehaviorTest(unittest.TestCase):
                         device="cpu",
                     )
 
-            if loaded_config["plast_clip"] != new_config["plast_clip"]:
-                restored.set_plasticity(new_config["plast_clip"])
+            if loaded_config["plasticity"] != new_config["plasticity"]:
+                restored.set_plasticity(new_config["plasticity"])
 
             ephemeral_plasticity_values = []
             slow_plasticity_values = []
@@ -104,7 +104,7 @@ class CheckpointBehaviorTest(unittest.TestCase):
             self.assertTrue(ephemeral_plasticity_values)
             self.assertTrue(slow_plasticity_values)
             self.assertTrue(
-                all(value == new_plast_clip for value in ephemeral_plasticity_values)
+                all(value == new_plasticity for value in ephemeral_plasticity_values)
             )
             self.assertTrue(all(value == 1.0 for value in slow_plasticity_values))
 

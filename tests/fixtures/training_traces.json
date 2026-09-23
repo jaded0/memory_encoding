@@ -11,19 +11,19 @@
     "backprop": {
       "configuration": {
         "batch_size": 2,
-        "clip_weights": 0,
         "enable_recurrence": true,
+        "ephemeral_fraction": 0.5,
+        "ephemeral_update_clamp": 0.2,
         "forget_rate": 0.25,
-        "grad_clip": 0.2,
         "hidden_size": 4,
         "input_mode": "last_two",
         "learning_rate": 0.01,
-        "normalize": false,
         "num_layers": 1,
-        "plast_clip": 3.0,
-        "plast_proportion": 0.5,
+        "plasticity": 3.0,
         "residual_connection": false,
-        "sequence_length": 5
+        "sequence_length": 5,
+        "unit_norm_weights": false,
+        "weight_clamp": 0
       },
       "events": {
         "gradient_scaling": [
@@ -4481,20 +4481,20 @@
       "case": "normalize_clip_2seq",
       "configuration": {
         "batch_size": 2,
-        "clip_weights": 0.2,
         "enable_recurrence": true,
+        "ephemeral_fraction": 0.5,
+        "ephemeral_update_clamp": 0.2,
         "forget_rate": 0.25,
-        "grad_clip": 0.2,
         "hidden_size": 4,
         "input_mode": "last_two",
         "learning_rate": 1.0,
-        "normalize": true,
         "num_layers": 1,
         "num_sequences": 2,
-        "plast_clip": 3.0,
-        "plast_proportion": 0.5,
+        "plasticity": 3.0,
         "residual_connection": false,
-        "sequence_length": 5
+        "sequence_length": 5,
+        "unit_norm_weights": true,
+        "weight_clamp": 0.2
       },
       "events": {
         "gradient_scaling": [
@@ -10394,19 +10394,19 @@
     "bptt": {
       "configuration": {
         "batch_size": 2,
-        "clip_weights": 0,
         "enable_recurrence": true,
+        "ephemeral_fraction": 0.5,
+        "ephemeral_update_clamp": 0.2,
         "forget_rate": 0.25,
-        "grad_clip": 0.2,
         "hidden_size": 4,
         "input_mode": "last_two",
         "learning_rate": 0.01,
-        "normalize": false,
         "num_layers": 1,
-        "plast_clip": 3.0,
-        "plast_proportion": 0.5,
+        "plasticity": 3.0,
         "residual_connection": false,
-        "sequence_length": 5
+        "sequence_length": 5,
+        "unit_norm_weights": false,
+        "weight_clamp": 0
       },
       "events": {
         "gradient_scaling": [
@@ -13832,20 +13832,20 @@
       "case": "normalize_clip_2seq",
       "configuration": {
         "batch_size": 2,
-        "clip_weights": 0.2,
         "enable_recurrence": true,
+        "ephemeral_fraction": 0.5,
+        "ephemeral_update_clamp": 0.2,
         "forget_rate": 0.25,
-        "grad_clip": 0.2,
         "hidden_size": 4,
         "input_mode": "last_two",
         "learning_rate": 1.0,
-        "normalize": true,
         "num_layers": 1,
         "num_sequences": 2,
-        "plast_clip": 3.0,
-        "plast_proportion": 0.5,
+        "plasticity": 3.0,
         "residual_connection": false,
-        "sequence_length": 5
+        "sequence_length": 5,
+        "unit_norm_weights": true,
+        "weight_clamp": 0.2
       },
       "events": {
         "gradient_scaling": [
@@ -17177,19 +17177,19 @@
     "dfa": {
       "configuration": {
         "batch_size": 2,
-        "clip_weights": 0,
         "enable_recurrence": true,
+        "ephemeral_fraction": 0.5,
+        "ephemeral_update_clamp": 0.2,
         "forget_rate": 0.25,
-        "grad_clip": 0.2,
         "hidden_size": 4,
         "input_mode": "last_two",
         "learning_rate": 0.01,
-        "normalize": false,
         "num_layers": 1,
-        "plast_clip": 3.0,
-        "plast_proportion": 0.5,
+        "plasticity": 3.0,
         "residual_connection": false,
-        "sequence_length": 5
+        "sequence_length": 5,
+        "unit_norm_weights": false,
+        "weight_clamp": 0
       },
       "events": {
         "gradient_scaling": [],
@@ -21338,20 +21338,20 @@
       "case": "normalize_clip_2seq",
       "configuration": {
         "batch_size": 2,
-        "clip_weights": 0.2,
         "enable_recurrence": true,
+        "ephemeral_fraction": 0.5,
+        "ephemeral_update_clamp": 0.2,
         "forget_rate": 0.25,
-        "grad_clip": 0.2,
         "hidden_size": 4,
         "input_mode": "last_two",
         "learning_rate": 1.0,
-        "normalize": true,
         "num_layers": 1,
         "num_sequences": 2,
-        "plast_clip": 3.0,
-        "plast_proportion": 0.5,
+        "plasticity": 3.0,
         "residual_connection": false,
-        "sequence_length": 5
+        "sequence_length": 5,
+        "unit_norm_weights": true,
+        "weight_clamp": 0.2
       },
       "events": {
         "gradient_scaling": [],

@@ -24,14 +24,14 @@ def tiny_batches():
 
 def build_model():
     with contextlib.redirect_stdout(io.StringIO()):
-        return EphemeralRNN(8, 4, 4, 1, "23. ", normalize=False, clip_weights=0, batch_size=2)
+        return EphemeralRNN(8, 4, 4, 1, "23. ", unit_norm_weights=False, weight_clamp=0, batch_size=2)
 
 
 def run_main(*extra_args, checkpoint_dir):
     argv = [
         "train.py", "--dataset", DATASET, "--track", "False", "--n_iters", "3", "--print_freq", "1",
         "--checkpoint_save_freq", "0", "--checkpoint_dir", checkpoint_dir, "--batch_size", "2",
-        "--hidden_size", "4", "--num_layers", "1", "--normalize", "False", "--input_mode", "last_one",
+        "--hidden_size", "4", "--num_layers", "1", "--unit_norm_weights", "False", "--input_mode", "last_one",
         *extra_args,
     ]
     with patch("sys.argv", argv), \
@@ -78,15 +78,17 @@ class CheckpointCompatibilityTest(unittest.TestCase):
                     self.load(path, {**saved, **change})
 
     def test_other_config_differences_print_but_load(self):
+        # The checkpoint uses the old key plast_clip; load_checkpoint maps it to plasticity.
         saved = {**CONFIG, "print_freq": 50, "n_iters": 100, "plast_clip": 10.0}
         with tempfile.TemporaryDirectory() as directory:
             path = self.save(directory, saved)
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                load_checkpoint(path, build_model(), {**saved, "print_freq": 5, "plast_clip": 20.0, "notes": "x"})
+                load_checkpoint(path, build_model(), {**CONFIG, "print_freq": 5, "n_iters": 100, "plasticity": 20.0, "notes": "x"})
         printed = output.getvalue()
         self.assertIn("print_freq: 50 -> 5", printed)
-        self.assertIn("plast_clip: 10.0 -> 20.0", printed)
+        self.assertIn("plasticity: 10.0 -> 20.0", printed)
+        self.assertNotIn("plast_clip", printed)
         self.assertIn("notes: (not in checkpoint) -> 'x'", printed)
         self.assertNotIn("n_iters", printed)
 

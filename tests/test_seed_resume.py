@@ -40,7 +40,7 @@ def run_main(*extra_args, checkpoint_dir, num_workers=0, seen_batches=None):
     argv = [
         "train.py", "--dataset", DATASET, "--track", "False", "--n_iters", "3", "--print_freq", "1",
         "--checkpoint_save_freq", "1", "--checkpoint_dir", checkpoint_dir, "--batch_size", "2",
-        "--hidden_size", "4", "--num_layers", "1", "--normalize", "False", "--input_mode", "last_one",
+        "--hidden_size", "4", "--num_layers", "1", "--unit_norm_weights", "False", "--input_mode", "last_one",
         *extra_args,
     ]
     real_train = train_module.train

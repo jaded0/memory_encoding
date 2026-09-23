@@ -19,18 +19,18 @@ SEQUENCES = (
     [[2, 0, 3, 1, 2], [1, 3, 2, 0, 1]],
 )
 BASE_SETTINGS = {
-    "normalize": False,
-    "clip_weights": 0,
+    "unit_norm_weights": False,
+    "weight_clamp": 0,
     "learning_rate": 0.01,
     "num_sequences": 1,
 }
 CASES = {
-    # clip_weights 0.2 binds after normalize; 1 would not (a unit-norm tensor has no entry
+    # weight_clamp 0.2 binds after unit_norm_weights; 1 would not (a unit-norm tensor has no entry
     # above 1). lr 1.0 makes the second BPTT sequence's hidden-layer step (~lr**2) large
     # enough for the rel 1e-6 comparison instead of falling under abs_tol 1e-7.
     "normalize_clip_2seq": {
-        "normalize": True,
-        "clip_weights": 0.2,
+        "unit_norm_weights": True,
+        "weight_clamp": 0.2,
         "learning_rate": 1.0,
         "num_sequences": 2,
     },
@@ -98,7 +98,7 @@ def _instrument_updates(model):
 
         def record_update(
             learning_rate,
-            grad_clip,
+            update_clamp,
             state,
             original=original_update,
             event_log=events[name]["update"],
@@ -110,7 +110,7 @@ def _instrument_updates(model):
                 if layer.per_sample_weights.grad is not None
                 else None
             )
-            original(learning_rate, grad_clip, state)
+            original(learning_rate, update_clamp, state)
             event_log.append({
                 "before": before,
                 "gradient": gradient,
@@ -123,7 +123,7 @@ def _instrument_updates(model):
     scale_events = []
     original_scale = model.scale_ephemeral_grads
 
-    def record_scale(plast_clip):
+    def record_scale(plasticity):
         raw = {
             name: (
                 _tensor_summary(layer.per_sample_weights.grad)
@@ -132,7 +132,7 @@ def _instrument_updates(model):
             )
             for name, layer in _named_ephemeral_layers(model)
         }
-        original_scale(plast_clip)
+        original_scale(plasticity)
         scaled = {
             name: (
                 _tensor_summary(layer.per_sample_weights.grad)
@@ -198,14 +198,14 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED, case=None):
             output_size=len(charset),
             num_layers=1,
             charset=charset,
-            normalize=settings["normalize"],
+            unit_norm_weights=settings["unit_norm_weights"],
             residual_connection=False,
-            clip_weights=settings["clip_weights"],
+            weight_clamp=settings["weight_clamp"],
             updater=updater,
-            plast_clip=3.0,
+            plasticity=3.0,
             batch_size=batch_size,
             forget_rate=0.25,
-            plast_proportion=0.5,
+            ephemeral_fraction=0.5,
             enable_recurrence=True,
         )
 
@@ -223,8 +223,8 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED, case=None):
         "pe_matrix": None,
         "self_grad": 0.0,
         "learning_rate": settings["learning_rate"],
-        "grad_clip": 0.2,
-        "plast_clip": 3.0,
+        "ephemeral_update_clamp": 0.2,
+        "plasticity": 3.0,
     }
     state = {"training_instance": 0, "log_norms_now": True}
 
@@ -254,14 +254,14 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED, case=None):
         "input_mode": "last_two",
         "hidden_size": 4,
         "num_layers": 1,
-        "normalize": settings["normalize"],
+        "unit_norm_weights": settings["unit_norm_weights"],
         "residual_connection": False,
-        "clip_weights": settings["clip_weights"],
+        "weight_clamp": settings["weight_clamp"],
         "learning_rate": settings["learning_rate"],
-        "grad_clip": 0.2,
-        "plast_clip": 3.0,
+        "ephemeral_update_clamp": 0.2,
+        "plasticity": 3.0,
         "forget_rate": 0.25,
-        "plast_proportion": 0.5,
+        "ephemeral_fraction": 0.5,
         "enable_recurrence": True,
     }
     trace = {

@@ -155,6 +155,40 @@ def print_config_diff(config, loaded_config):
         current_text = "(not in this run)" if current_value is missing else repr(current_value)
         print(f"  {key}: {loaded_text} -> {current_text}")
 
+# Config (CLI) keys before the naming cleanup (2026-09), and the keys that replaced them.
+LEGACY_CONFIG_KEYS = {
+    'plast_clip': 'plasticity',
+    'plast_proportion': 'ephemeral_fraction',
+    'clip_weights': 'weight_clamp',
+    'normalize': 'unit_norm_weights',
+}
+# Removed flags that never did anything; dropped from old configs so they do not show in the diff.
+REMOVED_CONFIG_KEYS = ('plast_learning_rate', 'imprint_rate')
+
+def upgrade_legacy_config(loaded_config):
+    """Returns a checkpoint config with old CLI keys renamed, so the resume checks and the
+    config diff compare like with like. grad_clip becomes ephemeral_update_clamp for the
+    ephemeral model and grad_norm_clip for the rnn baseline (the only use each model made of
+    it), and the other one gets its default, 0, which is what the old flags give today."""
+    upgraded = {}
+    for key, value in loaded_config.items():
+        if key in REMOVED_CONFIG_KEYS:
+            continue
+        new_key = LEGACY_CONFIG_KEYS.get(key, key)
+        if new_key != key and new_key in loaded_config:
+            raise RuntimeError(f"Checkpoint config has both {key} and {new_key}.")
+        upgraded[new_key] = value
+    if 'grad_clip' in upgraded:
+        model_type = {'ethereal': 'ephemeral'}.get(upgraded.get('model_type'), upgraded.get('model_type'))
+        targets = {'ephemeral': 'ephemeral_update_clamp', 'rnn': 'grad_norm_clip'}
+        if model_type in targets:  # otherwise left as grad_clip, and the diff shows it
+            if any(key in upgraded for key in targets.values()):
+                raise RuntimeError("Checkpoint config has both grad_clip and a key that replaced it.")
+            grad_clip = upgraded.pop('grad_clip')
+            for name, target in targets.items():
+                upgraded[target] = grad_clip if name == model_type else 0
+    return upgraded
+
 # State-dict names of EphemeralLinear tensors before the naming cleanup (2026-09).
 LEGACY_STATE_DICT_NAMES = {
     'candidate_weights': 'per_sample_weights',
@@ -236,7 +270,8 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     print(f"=> Loading checkpoint '{checkpoint_path}'")
     if checkpoint is None:
         checkpoint = read_checkpoint(checkpoint_path)
-    loaded_config = checkpoint.get('config', {}) # The config used for this checkpoint
+    # The config used for this checkpoint, with pre-2026-09 CLI names mapped to today's
+    loaded_config = upgrade_legacy_config(checkpoint.get('config', {}))
     print_config_diff(config, loaded_config)
 
     compatibility_defaults = {

@@ -149,9 +149,9 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 
                 # Apply the updates using the DFA-populated gradients
                 for layer in rnn.linear_layers:
-                    layer.apply_update(config["learning_rate"], config["grad_clip"], state)
-                rnn.i2o.apply_update(config["learning_rate"], config["grad_clip"], state)
-                rnn.self_grad.apply_update(config["learning_rate"], config["grad_clip"], state)
+                    layer.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
+                rnn.i2o.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
+                rnn.self_grad.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 
                 # Forget after the whole update (incl. clamp/normalize), as in the paper
                 rnn.apply_forget_step()
@@ -177,7 +177,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 total_loss.backward(retain_graph=False)
                 
                 # Scale the ephemeral weights' gradients
-                rnn.scale_ephemeral_grads(config["plast_clip"])
+                rnn.scale_ephemeral_grads(config["plasticity"])
                 
                 # Store gradient norms for logging
                 if state.get('log_norms_now', False):
@@ -196,9 +196,9 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 
                 # Apply the updates using the gradients computed by backprop
                 for layer in rnn.linear_layers:
-                    layer.apply_update(config["learning_rate"], config["grad_clip"], state)
-                rnn.i2h.apply_update(config["learning_rate"], config["grad_clip"], state)
-                rnn.i2o.apply_update(config["learning_rate"], config["grad_clip"], state)
+                    layer.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
+                rnn.i2h.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
+                rnn.i2o.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 
                 # Forget after the whole update (incl. clamp/normalize), as in the paper
                 rnn.apply_forget_step()
@@ -216,8 +216,8 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 total_loss = step_loss.mean() if step_loss.dim() > 0 else step_loss
                 total_loss.backward()
                 
-                if config['grad_clip'] > 0:
-                    torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
+                if config['grad_norm_clip'] > 0:
+                    torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
                 
                 optimizer.step()
                 loss_total += step_loss.mean().item() if step_loss.dim() > 0 else step_loss.item()
@@ -244,7 +244,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     total_loss.backward(retain_graph=False)
                     
                     # Scale the ephemeral weights' gradients
-                    rnn.scale_ephemeral_grads(config["plast_clip"])
+                    rnn.scale_ephemeral_grads(config["plasticity"])
                     
                     # Store gradient norms for logging
                     if state.get('log_norms_now', False):
@@ -265,8 +265,8 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     total_loss = accumulated_loss.mean() if accumulated_loss.dim() > 0 else accumulated_loss
                     total_loss.backward()
                     
-                    if config['grad_clip'] > 0:
-                        torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_clip'])
+                    if config['grad_norm_clip'] > 0:
+                        torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
                     
                     optimizer.step()
 
@@ -303,30 +303,81 @@ def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, l
     
     return train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
 
-def main():
-    # Parse command-line arguments
+class _StoreWithAlias(argparse.Action):
+    """Stores the value like 'store'. Option strings listed in `deprecated` still work and print a
+    one-line deprecation note. Giving both the new and an old name with different values is an error."""
+
+    def __init__(self, option_strings, dest, deprecated=(), **kwargs):
+        self.deprecated = tuple(deprecated)
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if option_string in self.deprecated:
+            print(f"DEPRECATED: {option_string} is now {self.option_strings[0]} (same meaning); the old name still works.")
+        given = namespace.__dict__.setdefault('_given_flags', {})
+        previous = given.get(self.dest)
+        if previous is not None and previous != option_string and getattr(namespace, self.dest) != values:
+            parser.error(f"{previous} and {option_string} are the same setting but were given different values.")
+        given[self.dest] = option_string
+        setattr(namespace, self.dest, values)
+
+
+class _IgnoredFlag(argparse.Action):
+    """Accepts a removed flag and its value so old run scripts still run, and prints a note."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(f"DEPRECATED: {option_string} was unused and is now ignored; remove it.")
+
+
+# Old flag names that became aliases, kept so old scripts and frozen checkpoints/<run>/run_used.sh
+# copies keep running. --grad_clip is resolved in resolve_deprecated_args.
+DEPRECATED_FLAG_ALIASES = {
+    '--plasticity': ['--plast_clip'],
+    '--ephemeral_fraction': ['--plast_proportion'],
+    '--weight_clamp': ['--clip_weights'],
+    '--unit_norm_weights': ['--normalize'],
+}
+IGNORED_FLAGS = ('--plast_learning_rate', '--imprint_rate')
+
+
+def _add_argument(parser, name, **kwargs):
+    aliases = DEPRECATED_FLAG_ALIASES.get(name, [])
+    parser.add_argument(name, *aliases, action=_StoreWithAlias, deprecated=aliases, **kwargs)
+
+
+def build_parser():
     # Defaults match the configuration the run scripts actually use; the model hyperparameters
-    # (lr, plast_clip, forget_rate, hidden_size, plast_proportion, dataset) are the bench_sweep point
+    # (lr, plasticity, forget_rate, hidden_size, ephemeral_fraction, dataset) are the bench_sweep point
     # that solves 3-char palindromes without recurrence.
     parser = argparse.ArgumentParser(description='Train a model with specified hyperparameters.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate for the optimizer')
-    parser.add_argument('--plast_learning_rate', type=float, default=0.005, help='Learning rate for the plasticity')
-    parser.add_argument('--plast_clip', type=float, default=1e5, help='Plasticity (learning-rate multiplier) of the ephemeral weights, alpha.')
-    parser.add_argument('--imprint_rate', type=float, default=0.00, help='Imprint rate (unused)')
+    _add_argument(parser, '--plasticity', type=float, default=1e5,
+                  help='Plasticity alpha: the learning-rate multiplier on the ephemeral weights (slow weights have 1).')
+    for flag in IGNORED_FLAGS:
+        parser.add_argument(flag, action=_IgnoredFlag, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     parser.add_argument('--forget_rate', type=float, default=0.01, help='Fraction of each ephemeral weight removed per step (w <- (1 - forget_rate) w).')
     parser.add_argument('--checkpoint_save_freq', type=int, default=10000,
                         help='How often to save a checkpoint (in iterations).')
     parser.add_argument('--residual_connection', type=str2bool, nargs='?', const=True, default=False, help='whether to have a skip connection')
-    parser.add_argument('--grad_clip', type=float, default=0, help='Element-wise clip on ephemeral-weight updates (0 = off).')
+    _add_argument(parser, '--ephemeral_update_clamp', type=float, default=0,
+                  help='EphemeralRNN (DFA and backprop): clamp each alpha-scaled update of an ephemeral '
+                       'weight to [-v, v] (0 = off). Ignored by BPTT and by the rnn baseline.')
+    _add_argument(parser, '--grad_norm_clip', type=float, default=0,
+                  help='rnn baseline (SimpleRNN): clip_grad_norm_ on all parameters before each '
+                       'optimizer step (0 = off). Ignored by the ephemeral model.')
+    # Old name for whichever of the two applies to --model_type; see resolve_deprecated_args.
+    parser.add_argument('--grad_clip', type=float, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     parser.add_argument('--hidden_size', type=int, default=1024, help='Size of hidden layers in RNN')
     parser.add_argument('--num_layers', type=int, default=3, help='Number of layers in RNN')
     parser.add_argument('--n_iters', type=int, default=10000, help='Number of training iterations')
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
     parser.add_argument('--model_type', type=str, default='ephemeral', choices=['rnn', 'ephemeral'], help='Model architecture to use.')
     parser.add_argument('--updater', type=str, default='dfa', choices=['dfa', 'backprop', 'bptt'], help='Weight update algorithm to use.')
-    parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=False, help='Rescale each layer\'s candidate weights to unit norm after each update.')
-    parser.add_argument('--clip_weights', type=float, default=0, help='Clamp candidate weights to [-clip_weights, clip_weights] (0 = off).')
+    _add_argument(parser, '--unit_norm_weights', type=str2bool, nargs='?', const=True, default=False,
+                  help='Rescale each layer\'s per_sample_weights to unit L2 norm (over the whole tensor) after each update.')
+    _add_argument(parser, '--weight_clamp', type=float, default=0,
+                  help='Clamp per_sample_weights to [-v, v] after each update and unit-norm rescaling (0 = off).')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
     parser.add_argument('--dataset', type=str, default='3_palindrome_dataset_vary_length', help='The dataset used for training.')
     parser.add_argument('--notes', type=str, default='nothing to say', help='talk about this run')
@@ -343,7 +394,8 @@ def main():
                         help='Directory to save checkpoints.')
     parser.add_argument('--resume_checkpoint', type=str, default=None,
                         help='Resume from this checkpoint (always resumes; errors if missing).')
-    parser.add_argument('--plast_proportion', type=float, default=0.1, help='Proportion of weights that are ephemeral in each layer.')
+    _add_argument(parser, '--ephemeral_fraction', type=float, default=0.1,
+                  help='Fraction of each hidden layer\'s and i2h\'s weights that are ephemeral (i2o and self_grad have none).')
     parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=False, help='Whether to enable recurrent hidden state connections')
     parser.add_argument('--log_freq', type=int, default=None, help='Frequency for W&B sync triggers (overrides LOG_FREQ environment variable)')
     parser.add_argument('--resume', type=str2bool, nargs='?', const=True, default=False, help='Resume from <checkpoint_dir>/latest_checkpoint.pth if it exists.')
@@ -353,12 +405,36 @@ def main():
     parser.add_argument('--deterministic', type=str2bool, nargs='?', const=True, default=None,
                         help='Require deterministic Torch operations (unset = off on a fresh run, '
                              'the checkpoint\'s value on resume).')
+    return parser
 
+
+def resolve_deprecated_args(args, parser):
+    """Maps --grad_clip to the flag that applies to --model_type, as the old code did: the ephemeral
+    model used it only as the element-wise update clamp, the rnn baseline only as clip_grad_norm_."""
+    given = vars(args).pop('_given_flags', {})
+    if 'grad_clip' in vars(args):
+        grad_clip = vars(args).pop('grad_clip')
+        target = 'ephemeral_update_clamp' if args.model_type == 'ephemeral' else 'grad_norm_clip'
+        if target in given and getattr(args, target) != grad_clip:
+            parser.error(f"--grad_clip {grad_clip} conflicts with --{target} {getattr(args, target)}.")
+        setattr(args, target, grad_clip)
+        print(f"DEPRECATED: --grad_clip is now --ephemeral_update_clamp (ephemeral) or --grad_norm_clip (rnn); "
+              f"with --model_type {args.model_type} it sets --{target}.")
+    return args
+
+
+def parse_args(argv=None):
+    parser = build_parser()
+    return resolve_deprecated_args(parser.parse_args(argv), parser)
+
+
+def main():
     # grab slurm jobid if it exists.
     job_id = os.environ.get("SLURM_JOB_ID") if os.environ.get("SLURM_JOB_ID") else "no_SLURM"
     print("SLURM Job ID:", job_id)
     
-    args = parser.parse_args()
+    parser = build_parser()
+    args = resolve_deprecated_args(parser.parse_args(), parser)
 
     # Define the path to the latest checkpoint
     latest_checkpoint_path = os.path.join(args.checkpoint_dir, "latest_checkpoint.pth")
@@ -401,15 +477,14 @@ def main():
 
     config = {
         "learning_rate": args.learning_rate,
-        "plast_learning_rate": args.plast_learning_rate,
-        "plast_clip": args.plast_clip,
-        "imprint_rate": args.imprint_rate,
+        "plasticity": args.plasticity,
         "forget_rate": args.forget_rate,
         "checkpoint_save_freq": args.checkpoint_save_freq,
         # Use 'mean' for backprop, will be overridden to 'none' in train() for the ephemeral model
         "criterion": torch.nn.CrossEntropyLoss(reduction='mean'),
         "residual_connection": args.residual_connection,
-        "grad_clip": args.grad_clip,
+        "ephemeral_update_clamp": args.ephemeral_update_clamp,
+        "grad_norm_clip": args.grad_norm_clip,
         "n_hidden": args.hidden_size,
         "n_layers": args.num_layers,
         "track": args.track,
@@ -419,7 +494,7 @@ def main():
         "batch_size": args.batch_size,
         "self_grad": args.self_grad,
         "input_mode": args.input_mode,
-        "plast_proportion": args.plast_proportion,
+        "ephemeral_fraction": args.ephemeral_fraction,
         "enable_recurrence": args.enable_recurrence,
         "seed": seed,
         "deterministic": deterministic,
@@ -488,10 +563,10 @@ def main():
         print(f"Initializing EphemeralRNN model with '{args.updater}' updater.")
         rnn = EphemeralRNN(
             base_input_size, config["n_hidden"], output_size, config["n_layers"], charset,
-            normalize=args.normalize, residual_connection=args.residual_connection,
-            clip_weights=args.clip_weights, updater=args.updater,
-            plast_clip=config["plast_clip"], batch_size=config["batch_size"],
-            forget_rate=config["forget_rate"], plast_proportion=config["plast_proportion"],
+            unit_norm_weights=args.unit_norm_weights, residual_connection=args.residual_connection,
+            weight_clamp=args.weight_clamp, updater=args.updater,
+            plasticity=config["plasticity"], batch_size=config["batch_size"],
+            forget_rate=config["forget_rate"], ephemeral_fraction=config["ephemeral_fraction"],
             enable_recurrence=args.enable_recurrence
         )
     else:
@@ -525,7 +600,7 @@ def main():
         state.update(loaded_main_state) # Update your main program state
         print(f"resumed, starting from iter: {start_iter}")
 
-        # Check if plast_clip has changed and update plasticity parameters if needed
+        # Check if --plasticity has changed and update plasticity parameters if needed
         if isinstance(rnn, EphemeralRNN):
             # The mask comes from the state dict. Checkpoints saved before last layers lost
             # their ephemeral entries keep them; left as saved so the run continues unchanged.
@@ -533,16 +608,17 @@ def main():
             if stale:
                 print(f"WARNING: checkpoint predates empty last-layer masks: {', '.join(stale)} keep "
                       "their saved ephemeral entries (decayed and wiped). Start fresh for the current behaviour.")
-            loaded_plast_clip = loaded_config.get('plast_clip', 1.0)
-            current_plast_clip = config.get('plast_clip', 1.0)
+            # load_checkpoint maps an old checkpoint's plast_clip to plasticity.
+            loaded_plasticity = loaded_config.get('plasticity', 1.0)
+            current_plasticity = config.get('plasticity', 1.0)
 
-            if loaded_plast_clip != current_plast_clip:
-                print(f"Plasticity changed from {loaded_plast_clip} to {current_plast_clip}")
+            if loaded_plasticity != current_plasticity:
+                print(f"Plasticity changed from {loaded_plasticity} to {current_plasticity}")
                 print("Updating plasticity parameters in all layers...")
-                rnn.set_plasticity(current_plast_clip)
+                rnn.set_plasticity(current_plasticity)
                 print("Plasticity parameters updated successfully!")
             else:
-                print(f"Plasticity unchanged: {current_plast_clip}")
+                print(f"Plasticity unchanged: {current_plasticity}")
 
     elif torch.cuda.is_available(): # No checkpoint_to_load specified AT ALL, and cuda is available
         print("No checkpoint specified for loading. Moving model to GPU.")
@@ -553,22 +629,21 @@ def main():
         # wandb initialization
         wandb_config = {
             "learning_rate": args.learning_rate,
-            "plast_learning_rate": args.plast_learning_rate,
-            "plast_clip": args.plast_clip,
-            "nominal_mean_lr": args.learning_rate * (1-args.plast_proportion + args.plast_proportion * args.plast_clip),
-            "nominal_ephemeral_lr": args.learning_rate * args.plast_clip,
+            "plasticity": args.plasticity,
+            "nominal_mean_lr": args.learning_rate * (1-args.ephemeral_fraction + args.ephemeral_fraction * args.plasticity),
+            "nominal_ephemeral_lr": args.learning_rate * args.plasticity,
             "architecture": args.model_type,
             "updater": args.updater,
             "residual_connection": args.residual_connection,
-            "grad_clip": args.grad_clip,
+            "ephemeral_update_clamp": args.ephemeral_update_clamp,
+            "grad_norm_clip": args.grad_norm_clip,
             "n_hidden": args.hidden_size,
             "n_layers": args.num_layers,
             "dataset": args.dataset,
             "epochs": 1, # This seems fixed, maybe adjust?
-            "imprint_rate": args.imprint_rate,
             "forget_rate": args.forget_rate,
-            "normalize": args.normalize,
-            "clip_weights": args.clip_weights,
+            "unit_norm_weights": args.unit_norm_weights,
+            "weight_clamp": args.weight_clamp,
             "log_freq": log_freq,
             "batch_size": args.batch_size,
             "slurm_id": job_id,
@@ -576,7 +651,7 @@ def main():
             "checkpoint_save_freq": args.checkpoint_save_freq,
             "self_grad": args.self_grad,
             "input_mode": args.input_mode,
-            "plast_proportion": args.plast_proportion,
+            "ephemeral_fraction": args.ephemeral_fraction,
             "enable_recurrence": args.enable_recurrence,
             "seed": seed,
             "seed_source": seed_source,
