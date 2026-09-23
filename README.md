@@ -98,7 +98,7 @@ python train.py --updater bptt --model_type ephemeral
 ### SLURM time limits
 
 The sbatch scripts request `#SBATCH --signal=B:USR1@600` and launch training through
-`forward_signals` (from `forward_signals.sh`). Ten minutes before the wall-time limit,
+`forward_signals` (from `sweeps/forward_signals.sh`). Ten minutes before the wall-time limit,
 `train.py` stops at the next iteration, saves `latest_checkpoint.pth` (if `--checkpoint_save_freq > 0`),
 records `end_reason: time_limit` in W&B, and exits with code 124; resume with `--resume`. A SIGTERM
 stops the same way with `end_reason: terminated` and exit code 143.

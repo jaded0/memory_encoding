@@ -18,6 +18,10 @@
 #SBATCH --output=slurm_logs/hebby_sweep_%A_%a.out # Ensure slurm_logs directory exists! %A=jobID, %a=taskID
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 
+# Resolve repo root regardless of how this script was launched: sbatch runs a
+# spooled copy of this file, so $0 won't point at sweeps/ under sbatch, but
+# SLURM_SUBMIT_DIR (the directory sbatch was invoked from) does.
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}" || exit 1
 
 # ======================== Parameter Definitions & Calculation ================
 echo "--- Preparing Sweep Parameters ---"
@@ -116,7 +120,7 @@ echo "  Output File: slurm_logs/hebby_sweep_${SLURM_ARRAY_JOB_ID}_${SLURM_ARRAY_
 echo "---"
 
 # Run the python script
-source ./forward_signals.sh
+source ./sweeps/forward_signals.sh
 forward_signals python -u train.py \
     --model_type $MODEL_TYPE \
     --updater $UPDATER \

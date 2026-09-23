@@ -3,6 +3,9 @@
 # run_training.sh - Runs train.py with specified hyperparameters.
 # ==============================================================================
 
+# Resolve repo root regardless of how this script was launched.
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}" || exit 1
+
 # --- W&B Tracking ---
 export WANDB_MODE=online # online | offline | disabled
 

@@ -1,6 +1,9 @@
 #!/bin/bash
 # Test script for backprop with EphemeralRNN - stable parameters
 
+# Resolve repo root regardless of how this script was launched.
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}" || exit 1
+
 # --- Experiment Identification ---
 EXPERIMENT_NAME="backprop_stable_test"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}"

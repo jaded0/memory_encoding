@@ -17,6 +17,11 @@
 #SBATCH --qos=standby      # Make it preemptable
 #SBATCH --requeue          # Requeue on preemption or failure
 
+# Resolve repo root regardless of how this script was launched: sbatch runs a
+# spooled copy of this file, so $0 won't point at sweeps/ under sbatch, but
+# SLURM_SUBMIT_DIR (the directory sbatch was invoked from) does.
+cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")/..}" || exit 1
+
 # ======================== Environment Setup ===================================
 echo "--- Setting up Environment ---"
 # Load Conda environment
@@ -138,7 +143,7 @@ mkdir -p "$CHECKPOINT_DIR"
 cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
 # The Python script will now automatically look for $CHECKPOINT_DIR/latest_checkpoint.pth
-source ./forward_signals.sh
+source ./sweeps/forward_signals.sh
 forward_signals python -u train.py \
     --model_type $MODEL_TYPE \
     --updater $UPDATER \
