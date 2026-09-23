@@ -44,10 +44,10 @@ every combination as the code behaves today.
 ## Updaters
 
 Each EphemeralLinear layer holds `per_sample_weights` of shape `[batch, out, in]`, one copy
-per sequence, starting at zero. A fixed random `ephemeral_mask` marks `--ephemeral_fraction`
+per sequence, starting at zero (slow entries included; see `docs/next_steps.md` §1). A fixed random `ephemeral_mask` marks `--ephemeral_fraction`
 of each layer's entries as ephemeral, with plasticity α = `--plasticity`. The rest are slow
-weights with plasticity 1. The output layers (`i2o`, `self_grad`) have no ephemeral entries:
-their mask is empty, so they have plasticity 1 everywhere and are never decayed or wiped
+weights with plasticity 1. The output layer `i2o` has no ephemeral entries:
+its mask is empty, so it has plasticity 1 everywhere and is never decayed or wiped
 (the W&B `nominal_ephemeral_lr` and `nominal_mean_lr` config values therefore describe the
 hidden layers and `i2h` only). At the start of every sequence, `start_sequence_wipe()`
 replaces each sequence's copy with the batch mean and zeroes the ephemeral entries.
@@ -56,7 +56,7 @@ entries log no ephemeral norms.
 
 Both models use the Elman layout at each step: `combined = hidden_layers(cat(x_t, h_{t-1}))`
 (plus the residual, if on), `h_t = tanh(i2h(combined))`, and the output `y_t = i2o(h_t)`.
-The ephemeral model's `self_grad` head also reads `h_t`. So `i2o` and `self_grad` take
+So `i2o` takes
 `--hidden_size` inputs, and `i2h` is a hidden layer that every updater trains. With
 `--enable_recurrence False` the output path is the same, `y_t = i2o(tanh(i2h(combined)))`,
 but zeros are fed to the next step instead of `h_t`. (Until 2026-09 both heads read
@@ -78,7 +78,7 @@ For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is 
 | Order per update | Update (incl. clamp and normalize), then forget | Update (incl. clamp and normalize), then forget | Update, then forget (once) |
 | Step on an ephemeral weight | `lr·α·g` | `lr·α²·g/B` | `lr·α·g/B`, zeroed by the next `start_sequence_wipe()` |
 | Step on a slow weight | `lr·g` | `lr·g/B` | `lr·g/B` |
-| Layers that change | Hidden layers, `i2h`, `i2o`, `self_grad` | Hidden layers, `i2h`, `i2o` | Every parameter with a gradient (hidden layers, `i2h`, `i2o`) |
+| Layers that change | Hidden layers, `i2h`, `i2o` | Hidden layers, `i2h`, `i2o` | Every parameter with a gradient (hidden layers, `i2h`, `i2o`) |
 | `--ephemeral_update_clamp` | Element-wise clamp on α-scaled ephemeral updates | Same as DFA | Ignored |
 | `--weight_clamp`, `--unit_norm_weights` | Applied after each update | Applied after each update | Ignored |
 
@@ -107,7 +107,7 @@ removed, so the two models can be compared under DFA. SimpleRNN's layers are `DF
   is ignored, since it only clamps ephemeral entries. `--weight_clamp` and `--unit_norm_weights`
   are ignored, as SimpleRNN ignores them under every updater. `--grad_norm_clip` clips the
   global norm of the DFA gradients before the step, as it does for the SGD gradients under
-  backprop and BPTT. `--self_grad > 0` is an error, because SimpleRNN has no `self_grad` head.
+  backprop and BPTT.
 - The feedback matrices are drawn after every layer is initialised, so rnn + dfa starts
   from the same weights as rnn + backprop at the same seed. They are buffers, and only an
   rnn + dfa model has them (`CHECKPOINT_CODE_VERSION` 5). rnn + backprop and rnn + BPTT
@@ -117,15 +117,17 @@ removed, so the two models can be compared under DFA. SimpleRNN's layers are `DF
   input + hidden).
 
 Under DFA, `output_error` (`train.py:136`) is a single tensor, and the same object is passed
-to every layer's `populate_dfa_gradients`. It is ∂loss/∂output per sequence, plus the clamped
-`self_grad` output, added in place, when `--self_grad > 0`. It used to have two names,
-`global_error` and `reward_update`, but they were always one object. `i2o` and `self_grad`
-keep a reference to it for their bias update, which runs after other layers' updates, so it
+to every layer's `populate_dfa_gradients`. It is ∂loss/∂output per sequence. It used to have two names,
+`global_error` and `reward_update`, but they were always one object. `i2o`
+keeps a reference to it for its bias update, which runs after other layers' updates, so it
 must never be modified in place during a step. `tests/test_dfa_error_signals.py` fails if it is.
 
 The entries that differ between columns are explained, with evidence, in the next section.
 
 ## Known issues / behaviours under review
+
+Planned, decided-but-unimplemented work (weight initialisation, baseline architecture
+matching, hyperparameter parity) is listed in `docs/next_steps.md`.
 
 These describe the current code. They are recorded here, not changed, until they can be
 re-examined with full training runs before and after. Line numbers were last checked after
@@ -185,8 +187,7 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   `plasticity`, the bias, the feedback weights,
   the traces and the logged update norms are left alone (until 2026-09 they were all
   rescaled, together with the then-stored `forgetting_factor`, so α and the forget rate
-  drifted from the CLI values after the first update). Layers whose update is skipped
-  (`self_grad` under backprop, which is not trained there) are not rescaled. `--weight_clamp` is applied after the
+  drifted from the CLI values after the first update). `--weight_clamp` is applied after the
   normalization, so a clamp of 1 or more never binds when `--unit_norm_weights` is on.
 - **DFA omits the activation derivative f′ (to examine; not changed).** Every non-output
   layer's DFA error is the output error projected straight through its feedback matrix,
@@ -198,7 +199,7 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   from Nøkland's formulation (2016, "Direct Feedback Alignment Provides Learning in Deep
   Neural Networks"), where a hidden layer's update is δa_l = (B_l·e) ⊙ f′(a_l), with a_l the
   layer's pre-activation, e the output error, and δW_l = −δa_l·h_{l−1}ᵀ. Only the output
-  layer takes e directly, as `i2o` and `self_grad` do here. Jaden wants to examine whether the
+  layer takes e directly, as `i2o` does here. Jaden wants to examine whether the
   update *should* include f′. The SimpleRNN DFA baseline (`DFALinear`, 2026-09) omits it too,
   on purpose, so that the two models' DFA is the same computation. Any future change must be
   applied to both, most simply in the shared `dfa_*` helpers (`EphemeralLinear` already records

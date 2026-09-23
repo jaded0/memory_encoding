@@ -20,7 +20,7 @@ def init_feedback_weights(vocab_size, out_features):
 
 def dfa_projected_error(error_signal, feedback_weights, is_last_layer):
     """The error a layer's DFA update uses, [B, out]: the output error itself for a last layer
-    (i2o, self_grad), else error_signal @ feedback_weights. error_signal is train.py's
+    (i2o), else error_signal @ feedback_weights. error_signal is train.py's
     output_error, [B, vocab]; it is never modified, and a last layer gets that same object."""
     if is_last_layer:
         return error_signal
@@ -83,7 +83,7 @@ class EphemeralLinear(nn.Linear):
         self.per_sample_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=(updater in ['backprop', 'bptt']))
         distribution = torch.ones_like(self.weight)
         rand_vals = torch.rand_like(self.weight)
-        # The mask marks the ephemeral entries. Last layers (i2o, self_grad) have none, so
+        # The mask marks the ephemeral entries. Last layers (i2o) have none, so
         # nothing there is decayed, wiped or treated as ephemeral. rand_vals is drawn for
         # every layer anyway, which keeps the RNG stream the same for the layers after it.
         if self.is_last_layer:
@@ -403,7 +403,7 @@ class EphemeralRNN(torch.nn.Module):
         self.dropout = nn.Dropout(dropout_rate)
 
         # Elman layout: i2h maps the hidden layers' output to the hidden state h_t, and the
-        # output heads (i2o, self_grad) read h_t, so they take hidden_size inputs. i2h is a
+        # output head i2o reads h_t, so it takes hidden_size inputs. i2h is a
         # hidden layer like the ones above (it has ephemeral entries and a DFA feedback matrix).
         self.i2h = EphemeralLinear(
             inner_size, hidden_size, charset,
@@ -413,13 +413,6 @@ class EphemeralRNN(torch.nn.Module):
             ephemeral_fraction=ephemeral_fraction
         )
         self.i2o = EphemeralLinear(
-            hidden_size, output_size, charset,
-            unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
-            updater=updater, requires_grad=False, is_last_layer=True,
-            plasticity=plasticity, batch_size=batch_size, forget_rate=forget_rate,
-            ephemeral_fraction=ephemeral_fraction
-        )
-        self.self_grad = EphemeralLinear(
             hidden_size, output_size, charset,
             unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
             updater=updater, requires_grad=False, is_last_layer=True,
@@ -451,15 +444,13 @@ class EphemeralRNN(torch.nn.Module):
         # recurrences.
         hidden_t = torch.tanh(self.i2h(combined))
         output = self.i2o(hidden_t)
-        # self_grad is a second output head (same shape and error as i2o), so it reads h_t too.
-        self_grad = self.self_grad(hidden_t)
         # --enable_recurrence False keeps the same output path but feeds zeros to the next step.
         next_hidden = hidden_t if self.enable_recurrence else torch.zeros_like(hidden)
 
         # output.requires_grad = True # This is now handled in the training loop for DFA.
         # output = self.dropout(output)  # Apply dropout to the output before softmax
         # output = self.softmax(output)
-        return output, next_hidden, self_grad
+        return output, next_hidden
 
     def initHidden(self, batch_size):
         device = next(self.parameters()).device
@@ -471,7 +462,6 @@ class EphemeralRNN(torch.nn.Module):
             layer.apply_forget_step()
         self.i2h.apply_forget_step()
         self.i2o.apply_forget_step()
-        self.self_grad.apply_forget_step()
 
     def scale_ephemeral_grads(self, plasticity):
         """Calls scale_ephemeral_grads on all EphemeralLinear layers."""
@@ -479,8 +469,6 @@ class EphemeralRNN(torch.nn.Module):
             layer.scale_ephemeral_grads(plasticity)
         self.i2h.scale_ephemeral_grads(plasticity)
         self.i2o.scale_ephemeral_grads(plasticity)
-        # self_grad is not trained with backprop, so no gradients to scale
-        # self.self_grad.scale_ephemeral_grads(plasticity)
 
     
     def get_all_norms(self):
@@ -497,8 +485,6 @@ class EphemeralRNN(torch.nn.Module):
         _collect_norms(self.linear_layers, 'linear')
         _collect_norms([self.i2h], 'i2h')
         _collect_norms([self.i2o], 'i2o')
-        # You might want to log self_grad norms too if it's important
-        _collect_norms([self.self_grad], 'self_grad') 
 
         return all_norms
 
@@ -508,8 +494,6 @@ class EphemeralRNN(torch.nn.Module):
             layer.store_grad_norms()
         self.i2h.store_grad_norms()
         self.i2o.store_grad_norms()
-        # self_grad is not trained with backprop, so its grad will be None.
-        # self.self_grad.store_grad_norms()
 
     def start_sequence_wipe(self):
         """Calls start_sequence_wipe on all EphemeralLinear layers."""
@@ -517,7 +501,6 @@ class EphemeralRNN(torch.nn.Module):
             layer.start_sequence_wipe()
         self.i2h.start_sequence_wipe()
         self.i2o.start_sequence_wipe()
-        self.self_grad.start_sequence_wipe()
 
     def set_plasticity(self, value):
         """Sets the ephemeral plasticity (alpha) in all EphemeralLinear layers (used on resume)."""
@@ -532,13 +515,11 @@ class EphemeralRNN(torch.nn.Module):
         if isinstance(self.i2h, EphemeralLinear):
             self.i2h.set_plasticity(value)
         
-        # Note: i2o and self_grad are last layers, so they don't use plasticity scaling
+        # Note: i2o is a last layer, so it doesn't use plasticity scaling
         # in the same way, but we'll update them for consistency
         if isinstance(self.i2o, EphemeralLinear) and not self.i2o.is_last_layer:
             self.i2o.set_plasticity(value)
-        
-        if isinstance(self.self_grad, EphemeralLinear) and not self.self_grad.is_last_layer:
-            self.self_grad.set_plasticity(value)
+
 
 
 class DFALinear(nn.Linear):
@@ -640,7 +621,7 @@ class SimpleRNN(nn.Module):
         next_hidden = hidden_t if self.enable_recurrence else torch.zeros_like(hidden)
         # output = self.dropout(output)
         # output = self.softmax(output)
-        return output, next_hidden, None
+        return output, next_hidden
 
     def get_all_norms(self):
         """Calculates weight and gradient norms for SimpleRNN."""

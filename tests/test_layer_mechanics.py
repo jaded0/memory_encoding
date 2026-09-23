@@ -28,7 +28,7 @@ def build_rnn(model_type, updater, enable_recurrence=True, num_layers=1):
 
 def run_one_sequence(model, updater, optimizer=None, grad_norm_clip=0):
     config = {"updater": updater, "criterion": torch.nn.CrossEntropyLoss(reduction="none"),
-              "input_mode": "last_two", "pe_matrix": None, "self_grad": 0.0, "learning_rate": LEARNING_RATE,
+              "input_mode": "last_two", "pe_matrix": None, "learning_rate": LEARNING_RATE,
               "ephemeral_update_clamp": 0, "grad_norm_clip": grad_norm_clip, "plasticity": 3.0}
     onehot = torch.nn.functional.one_hot(SEQUENCE, len(CHARSET)).float()
     with contextlib.redirect_stdout(io.StringIO()):
@@ -113,10 +113,9 @@ class ElmanLayoutTest(unittest.TestCase):
             self.assertTrue(all(g is not None and g > 0 for g in grads), grads)
             self.assertFalse(torch.equal(model.i2h.weight.detach(), weight_before))
 
-    def test_output_heads_read_the_hidden_state(self):
+    def test_output_head_reads_the_hidden_state(self):
         model = build_rnn("ephemeral", "dfa")
-        for head in (model.i2o, model.self_grad):
-            self.assertEqual(head.in_features, HIDDEN)
+        self.assertEqual(model.i2o.in_features, HIDDEN)
         self.assertEqual((model.i2h.in_features, model.i2h.out_features), (2 * len(CHARSET) + HIDDEN, HIDDEN))
         self.assertTrue(model.i2h.ephemeral_mask.any())  # a hidden layer, not a last layer
         self.assertFalse(model.i2h.is_last_layer)
@@ -133,8 +132,8 @@ class ElmanLayoutTest(unittest.TestCase):
                         on.i2o.per_sample_weights.normal_()  # starts at zero, which would hide i2h
                     off.load_state_dict(on.state_dict())
                     x, h = torch.randn(2, 2 * len(CHARSET)), torch.randn(2, HIDDEN)
-                    out_on, hidden_on, _ = on(x, h)
-                    out_off, hidden_off, _ = off(x, h)
+                    out_on, hidden_on = on(x, h)
+                    out_off, hidden_off = off(x, h)
                     torch.testing.assert_close(out_off, out_on, rtol=0, atol=0)
                     self.assertTrue(torch.equal(hidden_off, torch.zeros_like(h)))
                     self.assertGreater(hidden_on.abs().sum().item(), 0)

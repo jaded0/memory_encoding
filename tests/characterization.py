@@ -84,7 +84,6 @@ def _named_ephemeral_layers(model):
         yield f"linear_layers.{index}", layer
     yield "i2h", model.i2h
     yield "i2o", model.i2o
-    yield "self_grad", model.self_grad
 
 
 def _instrument_updates(model):
@@ -234,7 +233,6 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED, case=None):
         "criterion": torch.nn.CrossEntropyLoss(reduction="mean"),
         "input_mode": "last_two",
         "pe_matrix": None,
-        "self_grad": 0.0,
         "learning_rate": settings["learning_rate"],
         "ephemeral_update_clamp": 0.2,
         "plasticity": 3.0,
@@ -353,7 +351,6 @@ def _run_rnn_characterization(updater, seed, case, settings):
         "criterion": torch.nn.CrossEntropyLoss(reduction="mean"),
         "input_mode": "last_two",
         "pe_matrix": None,
-        "self_grad": 0.0,
         "learning_rate": settings["learning_rate"],
         "ephemeral_update_clamp": 0.2,  # no ephemeral entries: never read on this path
         "grad_norm_clip": 0,

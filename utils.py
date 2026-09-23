@@ -133,10 +133,11 @@ def str2bool(v):
 # History: 1 was never written (checkpoints before versioning have no code_version and are
 # refused like any other mismatch). 2: introduced, 2026-09. 3: --unit_norm_weights
 # normalises each sequence's [out, in] slice separately. 4: Elman layout, y_t = i2o(h_t)
-# (i2o and self_grad take hidden_size inputs; i2h learns under DFA and per-step backprop).
+# (i2o takes hidden_size inputs; i2h learns under DFA and per-step backprop).
 # 5: DFA for the SimpleRNN baseline (--model_type rnn --updater dfa now trains every layer,
-# and its state dict holds the DFA feedback matrices).
-CHECKPOINT_CODE_VERSION = 5
+# and its state dict holds the DFA feedback matrices). 6: the self_grad head and --self_grad
+# are removed (its layer is gone from the state dict).
+CHECKPOINT_CODE_VERSION = 6
 
 
 def check_checkpoint_code_version(checkpoint, checkpoint_path="<checkpoint>"):

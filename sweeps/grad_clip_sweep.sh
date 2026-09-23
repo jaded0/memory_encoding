@@ -102,7 +102,6 @@ TAGS=(bench_sweep sweep)
 INPUT_MODE='last_one'        # From whole_run.sh
 LEARNING_RATE=1e-3           # From whole_run.sh
 FORGET_RATE=0.01             # From whole_run.sh (0.01 instead of variable)
-SELF_GRAD=0                  # From whole_run.sh
 NORMALIZE=false              # From whole_run.sh
 HIDDEN_SIZE=256              # From whole_run.sh
 NUM_LAYERS=3                 # From whole_run.sh
@@ -144,7 +143,6 @@ forward_signals python -u train.py \
     --ephemeral_update_clamp $GRAD_CLIP \
     --grad_norm_clip $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
-    --self_grad $SELF_GRAD \
     --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \

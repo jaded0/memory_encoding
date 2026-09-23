@@ -156,13 +156,15 @@ class LegacyStateDictLoadTest(unittest.TestCase):
                     old = legacy(case, name)
                     with contextlib.redirect_stdout(io.StringIO()):
                         model = SimpleRNN(4, 4, 4, 1) if case == "rnn_backprop" else build_model()
-                    upgraded, dropped = upgrade_legacy_state_dict(old["model_state_dict"], model)
-                    expected, expected_dropped = rename_old_state_dict(old["model_state_dict"])
+                    # The fixtures predate the removal of the self_grad head; today's model has none.
+                    state = {k: v for k, v in old["model_state_dict"].items() if not k.startswith("self_grad.")}
+                    upgraded, dropped = upgrade_legacy_state_dict(state, model)
+                    expected, expected_dropped = rename_old_state_dict(state)
                     self.assertEqual(list(upgraded), list(expected))
                     for key, value in expected.items():
                         torch.testing.assert_close(upgraded[key], value, rtol=0, atol=0, msg=key)
                     self.assertEqual(dropped, expected_dropped)
-                    self.assertEqual(len(dropped), 0 if case == "rnn_backprop" else 4)  # one per EphemeralLinear
+                    self.assertEqual(len(dropped), 0 if case == "rnn_backprop" else 3)  # one per EphemeralLinear
                     if case != "rnn_backprop":
                         # The ephemeral weights were trained, so the check above is not comparing zeros.
                         self.assertGreater(upgraded["linear_layers.0.per_sample_weights"].abs().sum().item(), 0)

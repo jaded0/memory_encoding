@@ -1,11 +1,11 @@
 """Pins the error tensors each layer uses on the DFA path, so an aliasing mistake fails a test.
 
-Every layer receives one shared output_error. i2o and self_grad keep that same object for their
+Every layer receives one shared output_error. i2o keeps that same object for its
 bias update, which runs after other layers' updates. An in-place change to it anywhere between
 autograd.grad and the last bias update (for example a clamp_ or mul_ in one layer's populate or
 update) would change what a later layer uses. For each step, these tests check the tensors at
 populate time and again at update time against values computed independently from the step's
-outputs. The golden trace has --self_grad 0, so the self_grad term is covered only here.
+outputs.
 """
 import contextlib
 import io
@@ -31,7 +31,7 @@ def build_model():
 
 def named_layers(model):
     return {**{f"linear_layers.{i}": layer for i, layer in enumerate(model.linear_layers)},
-            "i2h": model.i2h, "i2o": model.i2o, "self_grad": model.self_grad}
+            "i2h": model.i2h, "i2o": model.i2o}
 
 
 def instrument(model):
@@ -40,12 +40,11 @@ def instrument(model):
 
     def record_output(name):
         def hook(_module, _inputs, output):
-            if name == "i2o":  # i2o runs before self_grad, once per step
-                steps.append({"layers": {}})
+            steps.append({"layers": {}})  # i2o runs once per step
             steps[-1][name] = output.detach().clone()  # returns None: the output is not replaced
         return hook
 
-    output_hooks = [getattr(model, name).register_forward_hook(record_output(name)) for name in ("i2o", "self_grad")]
+    output_hooks = [getattr(model, name).register_forward_hook(record_output(name)) for name in ("i2o",)]
     for name, layer in named_layers(model).items():
         populate, update = layer.populate_dfa_gradients, layer.apply_update
 
@@ -72,13 +71,13 @@ def instrument(model):
     return steps, output_hooks
 
 
-def run(self_grad):
+def run():
     torch.set_num_threads(1)
     seed_everything(4242, deterministic=True)
     model = build_model()
     steps, _hooks = instrument(model)
     config = {"updater": "dfa", "criterion": torch.nn.CrossEntropyLoss(reduction="none"), "input_mode": "last_two",
-              "pe_matrix": None, "self_grad": self_grad, "learning_rate": LEARNING_RATE,
+              "pe_matrix": None, "learning_rate": LEARNING_RATE,
               "ephemeral_update_clamp": 0, "plasticity": 3.0}
     onehot = torch.nn.functional.one_hot(SEQUENCE, len(CHARSET)).float()
     state = {"training_instance": 0}
@@ -89,8 +88,8 @@ def run(self_grad):
 
 
 class DfaErrorSignalTest(unittest.TestCase):
-    def check(self, self_grad):
-        model, steps, onehot = run(self_grad)
+    def check(self):
+        model, steps, onehot = run()
         layers = named_layers(model)
         steps_per_call = SEQUENCE.shape[1] - 1
         self.assertEqual(len(steps), 2 * steps_per_call)
@@ -100,8 +99,6 @@ class DfaErrorSignalTest(unittest.TestCase):
                 target = onehot[:, index % steps_per_call + 1]
                 # d CrossEntropy(x, t)/dx = softmax(x) - t for a one-hot t, per sequence.
                 expected = torch.softmax(step["i2o"], dim=1) - target
-                if self_grad > 0:
-                    expected = expected + torch.clamp(step["self_grad"], -self_grad, self_grad)
 
                 # Every EphemeralLinear layer, i2h included, is populated each step.
                 self.assertEqual(set(step["layers"]), set(layers))
@@ -132,12 +129,7 @@ class DfaErrorSignalTest(unittest.TestCase):
         return steps
 
     def test_every_layer_uses_the_unmodified_output_error(self):
-        self.check(self_grad=0.0)
-
-    def test_self_grad_term_is_added_once_for_every_layer(self):
-        steps = self.check(self_grad=0.05)
-        # The clamp binds somewhere, so the self_grad term is not simply the raw output.
-        self.assertTrue(any((step["self_grad"].abs() > 0.05).any() for step in steps))
+        self.check()
 
 
 if __name__ == "__main__":

@@ -122,7 +122,6 @@ TAGS=(bench_sweep comprehensive_sweep sweep_longer sweep_weight_clips)
 # ======================== Fixed Parameters (Not Swept) ========================
 INPUT_MODE='last_one'
 FORGET_RATE=0.01
-SELF_GRAD=0
 NORMALIZE=false
 NUM_LAYERS=3
 POS_ENCODING=0
@@ -163,7 +162,6 @@ forward_signals python -u train.py \
     --ephemeral_update_clamp $GRAD_CLIP \
     --grad_norm_clip $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
-    --self_grad $SELF_GRAD \
     --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \

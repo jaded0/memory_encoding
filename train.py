@@ -120,7 +120,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             hot_input_char_tensor = combined_char_tensor
 
         # Forward pass
-        output, hidden, self_grad = rnn(hot_input_char_tensor, hidden)
+        output, hidden = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[:, i+1, :]
         
         # Compute loss and update weights based on updater type
@@ -136,17 +136,10 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             output_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
             rnn.zero_grad()
 
-            # --self_grad > 0 adds the clamped self_grad output to the same tensor, in place, so
-            # from here on output_error is the error plus that term.
-            if config.get("self_grad", 0) > 0:
-                if self_grad is None:
-                    raise ValueError("--self_grad > 0 needs the ephemeral model's self_grad head; SimpleRNN has none.")
-                output_error += torch.clamp(self_grad, min=-config["self_grad"], max=config["self_grad"])
-
             # Apply DFA updates
             if isinstance(rnn, EphemeralRNN):
                 # Every layer is given this same object, and all of them are populated before any
-                # update runs. i2o and self_grad keep a reference to it (as _last_projected_error,
+                # update runs. i2o keeps a reference to it (as _last_projected_error,
                 # for the bias update), so it must not be modified in place until the updates
                 # below are done: tests/test_dfa_error_signals.py checks that.
                 # i2h is a hidden layer here (Elman layout: the output reads h_t), so it gets
@@ -155,13 +148,11 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     layer.populate_dfa_gradients(output_error)
                 rnn.i2h.populate_dfa_gradients(output_error)
                 rnn.i2o.populate_dfa_gradients(output_error)
-                rnn.self_grad.populate_dfa_gradients(output_error)
                 # Apply the updates using the DFA-populated gradients
                 for layer in rnn.linear_layers:
                     layer.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2h.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2o.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
-                rnn.self_grad.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 
                 # Forget after the whole update (incl. clamp/normalize), as in the paper
                 rnn.apply_forget_step()
@@ -424,7 +415,6 @@ def build_parser():
     parser.add_argument('--batch_size', type=int, default=16, help='how much to stuff in at once')
     parser.add_argument('--positional_encoding_dim', type=int, default=0,
                         help='Dimension for optional positional encoding (0 means off).')
-    parser.add_argument('--self_grad', type=float, default=0.0, help='Scale of self_grad. grad based replacement for recurrence.')
     parser.add_argument('--input_mode', type=str, default='last_one', choices=['last_one', 'last_two'],
                         help='Input mode: use last one or last two characters.')
     parser.add_argument('--checkpoint_dir', type=str, default='./checkpoints',
@@ -432,7 +422,7 @@ def build_parser():
     parser.add_argument('--resume_checkpoint', type=str, default=None,
                         help='Resume from this checkpoint (always resumes; errors if missing).')
     _add_argument(parser, '--ephemeral_fraction', type=float, default=0.1,
-                  help='Fraction of each hidden layer\'s and i2h\'s weights that are ephemeral (i2o and self_grad have none).')
+                  help='Fraction of each hidden layer\'s and i2h\'s weights that are ephemeral (i2o has none).')
     parser.add_argument('--enable_recurrence', type=str2bool, nargs='?', const=True, default=False, help='Whether to enable recurrent hidden state connections')
     parser.add_argument('--log_freq', type=int, default=None, help='Frequency for W&B sync triggers (overrides LOG_FREQ environment variable)')
     parser.add_argument('--resume', type=str2bool, nargs='?', const=True, default=False, help='Resume from <checkpoint_dir>/latest_checkpoint.pth if it exists.')
@@ -532,7 +522,6 @@ def main():
         "model_type": args.model_type,
         "updater": args.updater,
         "batch_size": args.batch_size,
-        "self_grad": args.self_grad,
         "input_mode": args.input_mode,
         "ephemeral_fraction": args.ephemeral_fraction,
         "enable_recurrence": args.enable_recurrence,
@@ -683,7 +672,6 @@ def main():
             "slurm_id": job_id,
             "positional_encoding_dim": args.positional_encoding_dim,
             "checkpoint_save_freq": args.checkpoint_save_freq,
-            "self_grad": args.self_grad,
             "input_mode": args.input_mode,
             "ephemeral_fraction": args.ephemeral_fraction,
             "enable_recurrence": args.enable_recurrence,

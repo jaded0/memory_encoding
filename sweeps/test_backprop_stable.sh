@@ -22,7 +22,6 @@ GRAD_CLIP=0                     # Max gradient norm
 
 # --- Plasticity Specifics (ignored by backprop) ---
 FORGET_RATE=0.01                # Weight decay/forgetting factor - was causing NaN with 0.1
-SELF_GRAD=0                     # Experimental recurrent replacement
 PLAST_PROPORTION=0.2            # Proportion of weights that are plastic
 ENABLE_RECURRENCE=true          # Whether to enable recurrent hidden state connections
 
@@ -64,7 +63,6 @@ python -u train.py \
     --ephemeral_update_clamp $GRAD_CLIP \
     --grad_norm_clip $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
-    --self_grad $SELF_GRAD \
     --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \

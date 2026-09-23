@@ -47,7 +47,6 @@ GRAD_CLIP_FLAG=$([[ $MODEL_TYPE == rnn ]] && echo --grad_norm_clip || echo --eph
 # --- Ephemeral Weights (ignored by the rnn baseline) ---
 FORGET_RATE=0.01             # Fraction of each ephemeral weight removed per step: w <- (1 - FORGET_RATE) w
 PLAST_PROPORTION=0.2         # Fraction of each layer's weights that are ephemeral
-SELF_GRAD=0                  # Experimental gradient-based replacement for recurrence
 ENABLE_RECURRENCE=false      # Feed the hidden state back into the next step
 
 # --- Regularization & Stability ---
@@ -88,7 +87,6 @@ python -u train.py \
     --plasticity $PLAST_CLIP \
     $GRAD_CLIP_FLAG $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
-    --self_grad $SELF_GRAD \
     --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \
