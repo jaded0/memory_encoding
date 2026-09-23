@@ -168,7 +168,7 @@ The paper trains with plain SGD at a base learning rate of 1e-4
 "forgetting rate coefficient" of 0.7 applied after each update (`:124-127`). In code terms
 that is `--forget_rate 0.3`. The current CLI
 defaults are lr 1e-4, α 1e5 and `--forget_rate` 0.01, which keeps 1 − forget_rate = 0.99 of
-each ephemeral weight per step (`train.py:362-367`).
+each ephemeral weight per step (`train.py:372-377`).
 
 ### Terminology: paper vs code
 
@@ -296,7 +296,8 @@ The old names still work. Each prints a one-line `DEPRECATED:` note, so old scri
 frozen `checkpoints/<run>/run_used.sh` copies that `sweeps/bulk_restart.sh` resubmits run
 unchanged. (A resume of the checkpoints written next to those copies is refused by the
 `code_version` check, since they predate it; such runs have to start fresh.) Configs, checkpoints and W&B record only the new names. Giving an old and a new
-name with different values is an error.
+name with different values is an error. The old names are hidden from `python train.py --help`
+(and its usage line); this table is their reference.
 
 | Old flag | New flag | Notes |
 | --- | --- | --- |

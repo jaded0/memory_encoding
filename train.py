@@ -312,16 +312,18 @@ def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, l
     return train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
 
 class _StoreWithAlias(argparse.Action):
-    """Stores the value like 'store'. Option strings listed in `deprecated` still work and print a
-    one-line deprecation note. Giving both the new and an old name with different values is an error."""
+    """Stores the value like 'store'. An action whose option strings are listed in `deprecated` is
+    an old name for `canonical`: it still works and prints a one-line deprecation note. Giving both
+    the new and an old name with different values is an error."""
 
-    def __init__(self, option_strings, dest, deprecated=(), **kwargs):
+    def __init__(self, option_strings, dest, deprecated=(), canonical=None, **kwargs):
         self.deprecated = tuple(deprecated)
+        self.canonical = canonical or option_strings[0]
         super().__init__(option_strings, dest, **kwargs)
 
     def __call__(self, parser, namespace, values, option_string=None):
         if option_string in self.deprecated:
-            print(f"DEPRECATED: {option_string} is now {self.option_strings[0]} (same meaning); the old name still works.")
+            print(f"DEPRECATED: {option_string} is now {self.canonical} (same meaning); the old name still works.")
         given = namespace.__dict__.setdefault('_given_flags', {})
         previous = given.get(self.dest)
         if previous is not None and previous != option_string and getattr(namespace, self.dest) != values:
@@ -349,8 +351,16 @@ IGNORED_FLAGS = ('--plast_learning_rate', '--imprint_rate')
 
 
 def _add_argument(parser, name, **kwargs):
-    aliases = DEPRECATED_FLAG_ALIASES.get(name, [])
-    parser.add_argument(name, *aliases, action=_StoreWithAlias, deprecated=aliases, **kwargs)
+    """Adds `name`, and each of its old names as a separate argument hidden from --help and usage
+    (README "Renamed flags" is the reference for them). An old name stores into the same dest, so
+    it behaves exactly like the new one apart from the deprecation note."""
+    parser.add_argument(name, action=_StoreWithAlias, **kwargs)
+    dest = name.lstrip('-')
+    alias_kwargs = {key: value for key, value in kwargs.items() if key in ('type', 'nargs', 'const', 'choices')}
+    for alias in DEPRECATED_FLAG_ALIASES.get(name, []):
+        # default=SUPPRESS: the default comes from the new name's argument only.
+        parser.add_argument(alias, dest=dest, action=_StoreWithAlias, deprecated=(alias,), canonical=name,
+                            default=argparse.SUPPRESS, help=argparse.SUPPRESS, **alias_kwargs)
 
 
 def build_parser():

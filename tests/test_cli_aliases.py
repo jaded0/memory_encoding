@@ -3,7 +3,7 @@ import contextlib
 import io
 import unittest
 
-from train import parse_args
+from train import build_parser, parse_args
 from utils import upgrade_legacy_config
 
 RENAMED = {  # old flag -> (new dest, value given, parsed value)
@@ -39,6 +39,15 @@ class DeprecatedFlagTest(unittest.TestCase):
                 new = "--" + dest
                 self.assertEqual(printed.splitlines(), [f"DEPRECATED: {old} is now {new} (same meaning); the old name still works."])
                 self.assertEqual(parse(new, value), (args, ""))
+
+    def test_old_names_are_hidden_from_help(self):
+        help_text = build_parser().format_help()
+        for old in (*RENAMED, "--grad_clip", "--plast_learning_rate", "--imprint_rate"):
+            with self.subTest(flag=old):
+                self.assertNotIn(old, help_text)
+        for new in ("--plasticity", "--ephemeral_fraction", "--weight_clamp", "--unit_norm_weights",
+                    "--ephemeral_update_clamp", "--grad_norm_clip"):
+            self.assertIn(new, help_text)
 
     def test_normalize_without_a_value_means_true(self):
         self.assertTrue(parse("--normalize")[0]["unit_norm_weights"])
