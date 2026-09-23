@@ -133,36 +133,40 @@ the forget-rate terminology table (next section) was added.
 - **`EphemeralLinear._update_bias` is dead code with a flipped sign.** Nothing calls it,
   and it adds `+lr·projected_error` (`ephemeral_model.py:207-214`). The live bias update is
   `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:176-190`).
-- **Forget-step ordering differs from the paper.** The paper applies `w ← γ·w` after each
-  update (`paper/paper_content.tex:124-127`). The code multiplies by `1 - forget_rate`
-  before the update, in all three updaters (`train.py:151`, `:180`, `:247`;
-  `ephemeral_model.py:237`), so `--forget_rate` corresponds to 1 − γ. (The class
-  constructors used to default to `forget_rate=0.7`, a leftover of the paper's γ that would
-  have kept only 0.3 of each weight. They now default to 0.01, matching the CLI; `train.py`
+- **Forget-step ordering differs from the paper.** The paper multiplies each ephemeral
+  weight by its coefficient 0.7 after each update (`paper/paper_content.tex:124-127`). The
+  code multiplies by `1 - forget_rate` before the update, in all three updaters
+  (`train.py:151`, `:180`, `:247`; `ephemeral_model.py:237`). (The class constructors used
+  to default to `forget_rate=0.7`, a leftover of the paper's coefficient that would have
+  kept only 0.3 of each weight. They now default to 0.01, matching the CLI; `train.py`
   always passed `--forget_rate` explicitly, so no run changed.)
 
 ## Paper settings & stability
 
 The paper trains with plain SGD at a base learning rate of 1e-4
-(`paper/paper_content.tex:135`), ephemeral plasticity α = 1e4 or 1e5 (`:104`), and γ = 0.7
-applied after each update (`:124-127`). In code terms that γ is `--forget_rate 0.3`, applied
-before the update as noted above. The current CLI defaults are lr 1e-4, α 1e5 and
-`--forget_rate` 0.01, which is γ = 0.99 (`train.py:313-317`).
+(`paper/paper_content.tex:135`), ephemeral plasticity α = 1e4 or 1e5 (`:104`), and a
+"forgetting rate coefficient" of 0.7 applied after each update (`:124-127`). In code terms
+that is `--forget_rate 0.3`, applied before the update as noted above. The current CLI
+defaults are lr 1e-4, α 1e5 and `--forget_rate` 0.01, which keeps 1 − forget_rate = 0.99 of
+each ephemeral weight per step (`train.py:313-317`).
 
 ### Terminology: paper vs code
 
 The code's convention is the one to use: `forget_rate` is the fraction of each ephemeral
-weight removed per step. The paper's "forgetting rate coefficient" γ is the fraction kept.
+weight removed per step, and 1 − forget_rate is the fraction kept. The paper's text
+reports the fraction kept; its figure legends use code `--forget_rate` values (the Fig. 1
+key-recall legend "ephemeral 0.0001 0.5" is lr 1e-4, `--forget_rate 0.5`).
 
-| Paper term (symbol) | Code / CLI name | Meaning | Formula | Conversion |
+| Paper term | Code / CLI name | Meaning | Formula | Conversion |
 | --- | --- | --- | --- | --- |
-| "Forgetting rate coefficient" γ (`paper_content.tex:127`) | `--forget_rate`; config and W&B key `forget_rate`; `FORGET_RATE` in the run scripts; `forget_rate=` in the `EphemeralRNN`/`EphemeralLinear` constructors | Fraction of each ephemeral weight removed per step | `w ← (1 − forget_rate)·w` | γ = 1 − `forget_rate`; the paper's γ = 0.7 is `--forget_rate 0.3`, and the default 0.01 is γ = 0.99 |
+| "Forgetting rate coefficient" in the text (`paper_content.tex:127`); forget rate in the figure legends | `--forget_rate`; config and W&B key `forget_rate`; `FORGET_RATE` in the run scripts; `forget_rate=` in the `EphemeralRNN`/`EphemeralLinear` constructors | Fraction of each ephemeral weight removed per step | `w ← (1 − forget_rate)·w` | The text's coefficient is 1 − `forget_rate`: its "forgetting rate coefficient 0.7" is `--forget_rate 0.3`. Legend values are already `--forget_rate` values |
 | (none) | `EphemeralLinear.forgetting_factor` (state-dict tensor) | Per-entry forget rate: `forget_rate` on the ephemeral mask, 0 elsewhere. A removal fraction, not a multiplier | `w ← (1 − forgetting_factor)·w`, element-wise (`apply_forget_step`) | As above, per entry |
 | Plasticity α_k (`:100-107`) | `--plast_clip`; `plasticity` tensor | Learning-rate multiplier on ephemeral weights (1 on slow weights) | step `lr·α·g` (DFA) | `--plast_clip` = α |
 
-Ordering: the paper applies γ after each update (`:124-127`). The code forgets before the
-update in all three updaters (`train.py:151`, `:180`, `:247`), so one step is
-`w ← (1 − forget_rate)·w − lr·α·g` rather than the paper's `w ← γ·(w − lr·α·g)`. The two
+Ordering: the paper applies the decay after each update (`:124-127`). The code forgets
+before the update in all three updaters (`train.py:151`, `:180`, `:247`), so one step is
+`w ← (1 − forget_rate)·w − lr·α·g` rather than the paper's
+`w ← (1 − forget_rate)·(w − lr·α·g)`. The two
 differ only in whether the newest update is decayed once before the next prediction.
 
 These settings are part of the paper's method, and they were tuned under today's α² and
@@ -174,8 +178,8 @@ lr·α²/B = 62,500 for backprop with B = 16.
 
 The removed `UNIFIED_UPDATES.md` (Aug 2025, still in git history) recorded lr 1e-4,
 `PLAST_CLIP` 1e3 and `FORGET_RATE` 0.01 as the settings that stopped backprop producing NaNs.
-They were found while backprop was applying α². Its forget rate of 0.01 (γ = 0.99), like
-today's default, disagrees with the paper's γ = 0.7.
+They were found while backprop was applying α². Its forget rate of 0.01, like today's
+default, disagrees with the paper's text value, which is `--forget_rate 0.3`.
 
 ## Installation
 

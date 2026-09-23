@@ -90,7 +90,7 @@ under review". A fix to any of them is expected to fail the golden test.
 | `normalize` rescales every float parameter of a layer to unit norm after each update, including `plasticity`, `forgetting_factor`, the bias, the feedback weights, the traces and the logged update norms (which end up at about 1). After the first update α and `forget_rate` are no longer the values passed in (in the trace, α 3.0 becomes about 0.11 in the hidden layer) | `EphemeralLinear._apply_regularization` | DFA and backprop `normalize_clip_2seq` |
 | `normalize` does not touch `i2h` under backprop, because `apply_unified_updates` returns before `_apply_regularization` when the gradient is `None` | `apply_unified_updates` | backprop `normalize_clip_2seq` |
 | Ephemeral BPTT never increments `training_instance` | `train.py` BPTT branch | BPTT |
-| Forgetting runs before the update, as `1 - forget_rate` (the paper puts γ after) | `train.py` all branches; `apply_forget_step` | all three |
+| Forgetting runs before the update, as `1 - forget_rate` (the paper decays after the update) | `train.py` all branches; `apply_forget_step` | all three |
 
 The 1/B factor in backprop and BPTT (batch-mean loss before `backward()`) is
 also frozen, but it was a deliberate choice rather than a bug.

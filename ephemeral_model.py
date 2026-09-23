@@ -12,8 +12,8 @@ import torch.nn.utils.parametrize as parametrize
 class EphemeralLinear(nn.Linear):
     def __init__(self, in_features, out_features, charset, bias=True, normalize=True, clip_weights=False, updater='dfa', requires_grad=False, is_last_layer=False, plast_clip=1, batch_size=1, forget_rate=0.01, plast_proportion=0.2):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
-        w <- (1 - forget_rate) * w (see apply_forget_step). It is the paper's 1 - gamma:
-        the paper's gamma = 0.7 retention is forget_rate = 0.3. Same meaning as --forget_rate."""
+        w <- (1 - forget_rate) * w (see apply_forget_step). The paper's "forgetting rate
+        coefficient 0.7" is 1 - forget_rate, i.e. forget_rate = 0.3. Same meaning as --forget_rate."""
         super(EphemeralLinear, self).__init__(in_features, out_features, bias)
 
         # Set requires_grad for the base class parameters
@@ -227,9 +227,9 @@ class EphemeralLinear(nn.Linear):
 
     def apply_forget_step(self):
         """Decays the ephemeral entries: w <- (1 - forgetting_factor) * w, element-wise, where
-        forgetting_factor is forget_rate on the mask and 0 elsewhere (a retention of
-        gamma = 1 - forget_rate per call). train.py calls this before each update; the paper
-        applies gamma after. This is done with no_grad to prevent interference with backprop."""
+        forgetting_factor is forget_rate on the mask and 0 elsewhere, so each call keeps
+        1 - forget_rate of every ephemeral weight. train.py calls this before each update; the
+        paper decays after. This is done with no_grad to prevent interference with backprop."""
         with torch.no_grad():
             # Use non-inplace multiplication to avoid RuntimeError during backprop.
             # The original `mul_` was an inplace operation that corrupted the
@@ -321,7 +321,7 @@ class EphemeralRNN(torch.nn.Module):
         enable_recurrence=True
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
-        w <- (1 - forget_rate) * w; the paper's gamma is 1 - forget_rate (see EphemeralLinear)."""
+        w <- (1 - forget_rate) * w (see EphemeralLinear)."""
         super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
