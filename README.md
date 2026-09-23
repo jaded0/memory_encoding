@@ -94,7 +94,7 @@ the 2026-09 naming cleanup.
 
 - **Backprop applies α twice (α²) on ephemeral weights.** The backprop branch calls
   `rnn.scale_ephemeral_grads(plasticity)` (`train.py:185`), which multiplies masked gradients
-  by α (`ephemeral_model.py:270-278`). `apply_update` then multiplies by the `plasticity`
+  by α (`ephemeral_model.py:274-282`). `apply_update` then multiplies by the `plasticity`
   tensor, which is α on the mask (`ephemeral_model.py:61`, `:173`). DFA does not call
   `scale_ephemeral_grads`, so it applies α once. BPTT calls it and then takes a plain SGD step
   (`train.py:252-263`), so it also applies α once. Measured with α = 7, the masked step is
@@ -110,7 +110,7 @@ the 2026-09 naming cleanup.
 - **`i2h` gets no gradient under DFA or backprop (by design; under review).** The DFA
   branch never populates or updates `i2h` (`train.py:150-162`). Under backprop, the hidden
   state is detached every step (`train.py:91-92`), and `i2h`'s output feeds only the next
-  step (`ephemeral_model.py:423-430`). So `i2h.per_sample_weights.grad` is `None`, and
+  step (`ephemeral_model.py:427-434`). So `i2h.per_sample_weights.grad` is `None`, and
   `apply_update` returns immediately (`ephemeral_model.py:161-162`). This is
   probably intended. The ephemeral weights are meant to replace the recurrent connection
   as the short-term memory (paper Fig. 1 caption, `paper/paper_content.tex:117`), while the
@@ -119,7 +119,7 @@ the 2026-09 naming cleanup.
   baseline's `i2h` also gets no gradient under backprop, for the same detach reason.)
   Consequence: `i2h`'s `per_sample_weights` stay at their initial zeros, so under DFA or
   backprop the hidden state is `tanh(i2h.bias)` with `--enable_recurrence True` and zero
-  with it off (`ephemeral_model.py:424-430`). It is constant either way, so recurrence
+  with it off (`ephemeral_model.py:428-434`). It is constant either way, so recurrence
   contributes no information.
 - **Ephemeral + BPTT: fast weights are frozen within a sequence.** BPTT is the contrast to
   per-step backprop and DFA in the permutation grid above. Its only update comes after the
@@ -133,10 +133,12 @@ the 2026-09 naming cleanup.
   it does not increment `training_instance`. Checked on a small model (under the old flag
   names): changing α, `--forget_rate`, the update clamp or the weight clamp leaves a
   four-sequence BPTT loss trajectory bit-identical.
-- **`--unit_norm_weights` rescales the `per_sample_weights` only, as one tensor.**
-  `_apply_regularization` divides each layer's `per_sample_weights` by their L2 norm after
-  each update (`ephemeral_model.py:233-241`). The norm is taken over the whole
-  `[batch, out, in]` tensor, not per sequence. `plasticity`, the bias, the feedback weights,
+- **`--unit_norm_weights` rescales the `per_sample_weights` only, one sequence at a time.**
+  `_apply_regularization` divides each sequence's `[out, in]` slice of a layer's
+  `per_sample_weights` by that slice's own L2 norm after each update
+  (`ephemeral_model.py:233-245`), so one sequence's scale does not depend on the others in
+  the batch. (Until 2026-09 the norm was taken over the whole `[batch, out, in]` tensor.)
+  `plasticity`, the bias, the feedback weights,
   the traces and the logged update norms are left alone (until 2026-09 they were all
   rescaled, together with the then-stored `forgetting_factor`, so α and the forget rate
   drifted from the CLI values after the first update). Layers whose update returns early

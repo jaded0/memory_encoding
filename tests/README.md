@@ -19,6 +19,7 @@ CUDA_VISIBLE_DEVICES="" python -m pytest tests/ -q
 | `test_cli_aliases.py` | Old flag names parse to the new settings, each with one deprecation line. `--grad_clip` follows `--model_type`. Removed flags are ignored, and conflicting old and new values are an error. Old config keys map to what the old flags parse to |
 | `test_dfa_error_signals.py` | The DFA path's per-layer error tensors, projected errors, gradients and bias steps, checked at populate and at update time against values computed independently, with `--self_grad` 0 and 0.05. It fails on an in-place change to the shared `output_error` (see the main README) |
 | `test_metrics.py` | Interval metrics, recall targets and chance levels |
+| `test_layer_mechanics.py` | Single mechanics checked in isolation: `--unit_norm_weights` rescales each sequence's slice to unit norm, independently of the other sequences |
 | `legacy/test_plast_clip_update.py` | Changing `--plasticity` on resume updates checkpoint plasticity; RNG round-trip |
 
 ## What the golden trace is
@@ -72,8 +73,8 @@ zero during the second sequence, so it would take a third.
 | DFA | 1.4015654325 | 4 | 0 | 4 / 0 | 4 |
 | Backprop | 1.4014256299 | 4 | 4 | 4 / 4 (all no-ops: `i2h` gradient is `None`) | 4 |
 | BPTT | 1.3995014429 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
-| DFA, `normalize_clip_2seq` | 1.6278324127, 1.5768324137 | 8 | 0 | 8 / 0 | 8 |
-| Backprop, `normalize_clip_2seq` | 1.6137693822, 1.5223413408 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
+| DFA, `normalize_clip_2seq` | 1.6380852461, 1.5860396624 | 8 | 0 | 8 / 0 | 8 |
+| Backprop, `normalize_clip_2seq` | 1.6136492193, 1.5338995159 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
 | BPTT, `normalize_clip_2seq` | 1.3995014429, 1.3863253593 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
 
 In `normalize_clip_2seq`, BPTT's first loss equals the base case's, because the
@@ -123,3 +124,4 @@ Pass `--output PATH` to write somewhere else for comparison.
 | 2026-09-23 | 79aab73 | Renames only; values identical. Event key `unified_update` → `update` (the method is now `apply_update`). Checked by renaming that key in the previous fixture and comparing: equal, and byte-identical when dumped |
 | 2026-09-23 | eeb0d89 | Renames only; values identical. State-dict names in the module snapshots: `candidate_weights` → `per_sample_weights`, `candidate_gradient` → `per_sample_gradient`, `mask` → `ephemeral_mask`, `last_high_plast_update_norm` / `last_low_plast_update_norm` → `last_ephemeral_step_norm` / `last_slow_step_norm`. `forgetting_factor` is no longer stored; the snapshot records `forget_rate * ephemeral_mask` under the same key, and its values are identical. Checked by renaming those keys in the previous fixture and comparing: equal, and byte-identical when dumped |
 | 2026-09-23 | d7905ac | Renames only; values identical. CLI and config names in each trace's `configuration`: `grad_clip` → `ephemeral_update_clamp`, `plast_clip` → `plasticity`, `plast_proportion` → `ephemeral_fraction`, `clip_weights` → `weight_clamp`, `normalize` → `unit_norm_weights`. Checked by renaming those keys in the previous fixture and comparing: equal, and byte-identical when dumped. The case key `normalize_clip_2seq` is unchanged |
+| 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | `--unit_norm_weights` now normalises each sequence's `[out, in]` slice of `per_sample_weights` separately instead of the whole `[batch, out, in]` tensor, so a sequence's scale no longer depends on the others (Jaden's choice). Only `dfa/normalize_clip_2seq` and `backprop/normalize_clip_2seq` change; the other four traces are identical (BPTT ignores `unit_norm_weights`). Losses: DFA 1.6278 → 1.6381 and 1.5768 → 1.5860; backprop 1.6138 → 1.6136 and 1.5223 → 1.5339. `CHECKPOINT_CODE_VERSION` 2 → 3 |

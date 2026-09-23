@@ -380,7 +380,7 @@ def build_parser():
     parser.add_argument('--model_type', type=str, default='ephemeral', choices=['rnn', 'ephemeral'], help='Model architecture to use.')
     parser.add_argument('--updater', type=str, default='dfa', choices=['dfa', 'backprop', 'bptt'], help='Weight update algorithm to use.')
     _add_argument(parser, '--unit_norm_weights', type=str2bool, nargs='?', const=True, default=False,
-                  help='Rescale each layer\'s per_sample_weights to unit L2 norm (over the whole tensor) after each update.')
+                  help='Rescale each sequence\'s slice of each layer\'s per_sample_weights to unit L2 norm after each update.')
     _add_argument(parser, '--weight_clamp', type=float, default=0,
                   help='Clamp per_sample_weights to [-v, v] after each update and unit-norm rescaling (0 = off).')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')

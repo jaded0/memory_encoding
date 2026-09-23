@@ -131,8 +131,9 @@ def str2bool(v):
 # of thumb, a commit that regenerates the golden trace with changed values bumps it.
 #
 # History: 1 was never written (checkpoints before versioning have no code_version and are
-# refused like any other mismatch). 2: introduced, 2026-09.
-CHECKPOINT_CODE_VERSION = 2
+# refused like any other mismatch). 2: introduced, 2026-09. 3: --unit_norm_weights
+# normalises each sequence's [out, in] slice separately.
+CHECKPOINT_CODE_VERSION = 3
 
 
 def check_checkpoint_code_version(checkpoint, checkpoint_path="<checkpoint>"):

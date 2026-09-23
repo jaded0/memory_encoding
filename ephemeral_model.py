@@ -235,7 +235,11 @@ class EphemeralLinear(nn.Linear):
         if self.unit_norm_weights:
             # Only the weights forward() uses. plasticity, the bias, the
             # feedback weights, the traces and the logged update norms are left alone.
-            self.per_sample_weights.data = self.per_sample_weights.data / (self.per_sample_weights.data.norm(2) + 1e-6)
+            # Each sequence's [out, in] slice is rescaled to unit L2 norm on its own, so one
+            # sequence's scale never depends on the others in the batch.
+            weights = self.per_sample_weights.data
+            norms = torch.linalg.vector_norm(weights, ord=2, dim=(1, 2), keepdim=True)  # [B, 1, 1]
+            self.per_sample_weights.data = weights / (norms + 1e-6)
         
         if self.weight_clamp != 0:
             self.per_sample_weights.data.clamp_(-self.weight_clamp, self.weight_clamp)
