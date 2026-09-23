@@ -200,3 +200,6 @@ archive/
 
 # Debug dumps
 debug_output*.txt
+
+# Preprocessed Hugging Face datasets (preprocess.py; override with EPHEMERAL_DATA_DIR)
+processed_datasets/
