@@ -53,9 +53,9 @@ entries by `1 - forget_rate`.
 
 | `--updater` | `--model_type ephemeral` | `--model_type rnn` (SimpleRNN baseline) |
 | --- | --- | --- |
-| `dfa` | Every step: DFA gradients, forget, `apply_unified_updates` | No parameter changes: the DFA branch only updates an EphemeralRNN |
-| `backprop` | Every step: `backward()` on the batch-mean step loss, forget, `scale_gradients`, `apply_unified_updates` | Every step: `torch.optim.SGD` on the batch-mean step loss; `--grad_clip` is a global grad-norm clip |
-| `bptt` | After the last step: `backward()` on the batch-mean summed loss, forget, `scale_gradients`, plain `p -= lr * p.grad` | After the last step: `torch.optim.SGD`; `--grad_clip` is a global grad-norm clip |
+| `dfa` | Every step: DFA gradients, `apply_unified_updates`, forget | No parameter changes: the DFA branch only updates an EphemeralRNN |
+| `backprop` | Every step: `backward()` on the batch-mean step loss, `scale_gradients`, `apply_unified_updates`, forget | Every step: `torch.optim.SGD` on the batch-mean step loss; `--grad_clip` is a global grad-norm clip |
+| `bptt` | After the last step: `backward()` on the batch-mean summed loss, `scale_gradients`, plain `p -= lr * p.grad`, forget | After the last step: `torch.optim.SGD`; `--grad_clip` is a global grad-norm clip |
 
 For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is `--batch_size`):
 
@@ -64,7 +64,7 @@ For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is 
 | Error signal | Per-sequence output error; hidden layers receive it through fixed random `feedback_weights` | Autograd | Autograd |
 | Hidden state | Detached every step | Detached every step | Not detached |
 | When weights change | Every step | Every step | Once, after the last step |
-| Order per update | Forget, then update | Forget, then update | Forget, then update (once) |
+| Order per update | Update (incl. clamp and normalize), then forget | Update (incl. clamp and normalize), then forget | Update, then forget (once) |
 | Step on an ephemeral weight | `lr·α·g` | `lr·α²·g/B` | `lr·α·g/B`, zeroed by the next `wipe()` |
 | Step on a slow weight | `lr·g` | `lr·g/B` | `lr·g/B` |
 | Layers that change | Hidden layers, `i2o`, `self_grad` | Hidden layers, `i2o` | Every parameter with a gradient |
@@ -77,14 +77,14 @@ The entries that differ between columns are explained, with evidence, in the nex
 
 These describe the current code. They are recorded here, not changed, until they can be
 re-examined with full training runs before and after. Line numbers were last checked when
-the forget-rate terminology table (next section) was added.
+the forget step was moved after the update.
 
 - **Backprop applies α twice (α²) on ephemeral weights.** The backprop branch calls
-  `rnn.scale_gradients(plast_clip)` (`train.py:183`), which multiplies masked gradients by
-  α (`ephemeral_model.py:253-259`). `apply_unified_updates` then multiplies by
+  `rnn.scale_gradients(plast_clip)` (`train.py:180`), which multiplies masked gradients by
+  α (`ephemeral_model.py:254-260`). `apply_unified_updates` then multiplies by
   `plasticity`, which is α on the mask (`ephemeral_model.py:49`, `:156`). DFA does not call
   `scale_gradients`, so it applies α once. BPTT calls it and then takes a plain SGD step
-  (`train.py:250-261`), so it also applies α once. Measured with α = 7, the masked step is
+  (`train.py:247-258`), so it also applies α once. Measured with α = 7, the masked step is
   49·lr·g under backprop and 7·lr·g under DFA; slow weights get 1·lr·g under both.
 - **Backprop and BPTT carry a 1/B factor that DFA does not.** Backprop calls `backward()`
   on `step_loss.mean()` over the batch (`train.py:176`), and BPTT on
@@ -97,7 +97,7 @@ the forget-rate terminology table (next section) was added.
 - **`i2h` gets no gradient under DFA or backprop (by design; under review).** The DFA
   branch never populates or updates `i2h` (`train.py:145-157`). Under backprop, the hidden
   state is detached every step (`train.py:91-92`), and `i2h`'s output feeds only the next
-  step (`ephemeral_model.py:399-406`). So `i2h.candidate_weights.grad` is `None`, and
+  step (`ephemeral_model.py:400-407`). So `i2h.candidate_weights.grad` is `None`, and
   `apply_unified_updates` returns immediately (`ephemeral_model.py:144-145`). This is
   probably intended. The ephemeral weights are meant to replace the recurrent connection
   as the short-term memory (paper Fig. 1 caption, `paper/paper_content.tex:117`), while the
@@ -106,7 +106,7 @@ the forget-rate terminology table (next section) was added.
   baseline's `i2h` also gets no gradient under backprop, for the same detach reason.)
   Consequence: `i2h`'s candidate weights stay at their initial zeros, so under DFA or
   backprop the hidden state is `tanh(i2h.bias)` with `--enable_recurrence True` and zero
-  with it off (`ephemeral_model.py:400-406`). It is constant either way, so recurrence
+  with it off (`ephemeral_model.py:401-407`). It is constant either way, so recurrence
   contributes no information.
 - **Ephemeral + BPTT: fast weights are frozen within a sequence.** BPTT is the contrast to
   per-step backprop and DFA in the permutation grid above. Its only update comes after the
@@ -117,7 +117,7 @@ the forget-rate terminology table (next section) was added.
   forget set lies inside the mask when `--plast_proportion` ≥ 0.01,
   `ephemeral_model.py:47-58`.) This path also ignores `--grad_clip`, `--clip_weights` and
   `--normalize`, because it never calls `apply_unified_updates` or `_apply_regularization`
-  (`train.py:257-261`), and it does not increment `training_instance`. Checked on a small
+  (`train.py:254-258`), and it does not increment `training_instance`. Checked on a small
   model: changing `--plast_clip`, `--forget_rate`, `--grad_clip` or `--clip_weights` leaves
   a four-sequence BPTT loss trajectory bit-identical.
 - **`--normalize` also rescales plasticity and forgetting.** `_apply_regularization`
@@ -133,20 +133,13 @@ the forget-rate terminology table (next section) was added.
 - **`EphemeralLinear._update_bias` is dead code with a flipped sign.** Nothing calls it,
   and it adds `+lr·projected_error` (`ephemeral_model.py:207-214`). The live bias update is
   `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:176-190`).
-- **Forget-step ordering differs from the paper.** The paper multiplies each ephemeral
-  weight by its coefficient 0.7 after each update (`paper/paper_content.tex:124-127`). The
-  code multiplies by `1 - forget_rate` before the update, in all three updaters
-  (`train.py:151`, `:180`, `:247`; `ephemeral_model.py:237`). (The class constructors used
-  to default to `forget_rate=0.7`, a leftover of the paper's coefficient that would have
-  kept only 0.3 of each weight. They now default to 0.01, matching the CLI; `train.py`
-  always passed `--forget_rate` explicitly, so no run changed.)
 
 ## Paper settings & stability
 
 The paper trains with plain SGD at a base learning rate of 1e-4
 (`paper/paper_content.tex:135`), ephemeral plasticity α = 1e4 or 1e5 (`:104`), and a
 "forgetting rate coefficient" of 0.7 applied after each update (`:124-127`). In code terms
-that is `--forget_rate 0.3`, applied before the update as noted above. The current CLI
+that is `--forget_rate 0.3`. The current CLI
 defaults are lr 1e-4, α 1e5 and `--forget_rate` 0.01, which keeps 1 − forget_rate = 0.99 of
 each ephemeral weight per step (`train.py:313-317`).
 
@@ -163,11 +156,13 @@ key-recall legend "ephemeral 0.0001 0.5" is lr 1e-4, `--forget_rate 0.5`).
 | (none) | `EphemeralLinear.forgetting_factor` (state-dict tensor) | Per-entry forget rate: `forget_rate` on the ephemeral mask, 0 elsewhere. A removal fraction, not a multiplier | `w ← (1 − forgetting_factor)·w`, element-wise (`apply_forget_step`) | As above, per entry |
 | Plasticity α_k (`:100-107`) | `--plast_clip`; `plasticity` tensor | Learning-rate multiplier on ephemeral weights (1 on slow weights) | step `lr·α·g` (DFA) | `--plast_clip` = α |
 
-Ordering: the paper applies the decay after each update (`:124-127`). The code forgets
-before the update in all three updaters (`train.py:151`, `:180`, `:247`), so one step is
-`w ← (1 − forget_rate)·w − lr·α·g` rather than the paper's
-`w ← (1 − forget_rate)·(w − lr·α·g)`. The two
-differ only in whether the newest update is decayed once before the next prediction.
+Ordering: as in the paper (`:124-127`), the decay comes after each update in all three
+updaters (`train.py:157`, `:204`, `:261`), so one step is
+`w ← (1 − forget_rate)·(w − lr·α·g)`. Under DFA and backprop the update it follows
+includes `--grad_clip`, `--normalize` and `--clip_weights`. (The class constructors used to
+default to `forget_rate=0.7`, a leftover of the paper's coefficient that would have kept
+only 0.3 of each weight. They now default to 0.01, matching the CLI; `train.py` always
+passed `--forget_rate` explicitly, so no run changed.)
 
 These settings are part of the paper's method, and they were tuned under today's α² and
 1/B behaviour. Fixing either changes backprop's effective fast-weight step at the same

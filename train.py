@@ -147,14 +147,14 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                 rnn.i2o.populate_dfa_gradients(reward_update)
                 rnn.self_grad.populate_dfa_gradients(reward_update)
                 
-                # Apply forgetting step before weight updates
-                rnn.apply_forget_step()
-                
                 # Apply unified updates using the DFA-populated gradients
                 for layer in rnn.linear_layers:
                     layer.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
                 rnn.i2o.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
                 rnn.self_grad.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
+                
+                # Forget after the whole update (incl. clamp/normalize), as in the paper
+                rnn.apply_forget_step()
                 
                 # Clear gradients after unified updates
                 rnn.zero_grad()
@@ -175,9 +175,6 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                 # Compute gradients through the entire network (true backprop)
                 total_loss = step_loss.mean() if step_loss.dim() > 0 else step_loss
                 total_loss.backward(retain_graph=False)
-                
-                # Apply forgetting step before weight updates
-                rnn.apply_forget_step()
                 
                 # Scale gradients for high-plasticity weights
                 rnn.scale_gradients(config["plast_clip"])
@@ -202,6 +199,9 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                     layer.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
                 rnn.i2h.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
                 rnn.i2o.apply_unified_updates(config["learning_rate"], config["grad_clip"], state)
+                
+                # Forget after the whole update (incl. clamp/normalize), as in the paper
+                rnn.apply_forget_step()
                 
                 # Clear gradients after unified updates
                 rnn.zero_grad()
@@ -243,9 +243,6 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                     total_loss = accumulated_loss.mean() if accumulated_loss.dim() > 0 else accumulated_loss
                     total_loss.backward(retain_graph=False)
                     
-                    # Apply forgetting step before optimizer step (only once here)
-                    rnn.apply_forget_step()
-                    
                     # Scale gradients for high-plasticity weights
                     rnn.scale_gradients(config["plast_clip"])
                     
@@ -259,6 +256,9 @@ def train_unified(line_tensor, onehot_line_tensor, rnn, config, state, optimizer
                             if param.grad is not None:
                                 param.data -= config["learning_rate"] * param.grad
                                 param.grad.zero_()
+
+                    # Forget after the update (only once here), as in the paper
+                    rnn.apply_forget_step()
                 else:
                     # Standard SimpleRNN with BPTT
                     optimizer.zero_grad()

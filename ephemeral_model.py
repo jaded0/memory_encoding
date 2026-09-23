@@ -228,8 +228,9 @@ class EphemeralLinear(nn.Linear):
     def apply_forget_step(self):
         """Decays the ephemeral entries: w <- (1 - forgetting_factor) * w, element-wise, where
         forgetting_factor is forget_rate on the mask and 0 elsewhere, so each call keeps
-        1 - forget_rate of every ephemeral weight. train.py calls this before each update; the
-        paper decays after. This is done with no_grad to prevent interference with backprop."""
+        1 - forget_rate of every ephemeral weight. train.py calls this after each update (after
+        the clamp and normalization too), as in the paper: w <- (1 - forget_rate) * (w - lr*alpha*g).
+        This is done with no_grad to prevent interference with backprop."""
         with torch.no_grad():
             # Use non-inplace multiplication to avoid RuntimeError during backprop.
             # The original `mul_` was an inplace operation that corrupted the
