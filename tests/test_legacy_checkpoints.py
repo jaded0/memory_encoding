@@ -76,12 +76,23 @@ def rename_old_state_dict(state_dict):
 
 
 def run_train_main(argv, checkpoint_dir):
-    """Runs train.main() with argv on the in-memory rows of test_seed_resume; returns stdout."""
+    """Runs train.main() with argv on the in-memory rows of test_seed_resume; returns stdout.
+
+    The fixtures are CPU runs, compared bit for bit, so this always runs on the CPU with one
+    thread. Without that, train.main() moves the model to cuda:0 when a GPU is visible: the
+    saved tensors are then on another device, and the GPU arithmetic differs by up to ~1e-7.
+    """
     output = io.StringIO()
+    threads = torch.get_num_threads()
+    torch.set_num_threads(1)
     with patch("sys.argv", ["train.py", *argv, "--checkpoint_dir", checkpoint_dir]), \
+            patch("torch.cuda.is_available", return_value=False), \
             patch.object(train_module, "load_and_preprocess_data", side_effect=fake_loader(0)), \
             contextlib.redirect_stdout(output):
-        train_module.main()
+        try:
+            train_module.main()
+        finally:
+            torch.set_num_threads(threads)
     return output.getvalue()
 
 

@@ -3,6 +3,10 @@ the state-dict and CLI renames); it was run there, from the repository root, as
 
     CUDA_VISIBLE_DEVICES="" python tests/fixtures/legacy_names/make_legacy_checkpoints.py tests/fixtures/legacy_names
 
+on the CPU (CUDA hidden, as above) with Torch's default thread count. The test replays them on
+the CPU with one thread, and the results are bit-identical. Any regeneration must also run on
+the CPU.
+
 For each case, iter3.pth is a checkpoint after 3 iterations, and iter5.pth is what the old code
 saved after resuming it with --resume for 2 more. The flags are the old names, as a frozen
 run_used.sh would pass them. tests/test_legacy_checkpoints.py resumes iter3.pth with today's
