@@ -147,14 +147,17 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 # update runs. i2o and self_grad keep a reference to it (as _last_projected_error,
                 # for the bias update), so it must not be modified in place until the updates
                 # below are done: tests/test_dfa_error_signals.py checks that.
+                # i2h is a hidden layer here (Elman layout: the output reads h_t), so it gets
+                # its own feedback projection like the layers before it.
                 for layer in rnn.linear_layers:
                     layer.populate_dfa_gradients(output_error)
+                rnn.i2h.populate_dfa_gradients(output_error)
                 rnn.i2o.populate_dfa_gradients(output_error)
                 rnn.self_grad.populate_dfa_gradients(output_error)
-                
                 # Apply the updates using the DFA-populated gradients
                 for layer in rnn.linear_layers:
                     layer.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
+                rnn.i2h.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2o.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.self_grad.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 

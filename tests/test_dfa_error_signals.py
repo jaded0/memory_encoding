@@ -31,7 +31,7 @@ def build_model():
 
 def named_layers(model):
     return {**{f"linear_layers.{i}": layer for i, layer in enumerate(model.linear_layers)},
-            "i2o": model.i2o, "self_grad": model.self_grad}
+            "i2h": model.i2h, "i2o": model.i2o, "self_grad": model.self_grad}
 
 
 def instrument(model):
@@ -103,6 +103,8 @@ class DfaErrorSignalTest(unittest.TestCase):
                 if self_grad > 0:
                     expected = expected + torch.clamp(step["self_grad"], -self_grad, self_grad)
 
+                # Every EphemeralLinear layer, i2h included, is populated each step.
+                self.assertEqual(set(step["layers"]), set(layers))
                 shared = step["layers"]["i2o"]["received"]
                 torch.testing.assert_close(shared, expected, rtol=1e-6, atol=1e-7)
                 for name, record in step["layers"].items():

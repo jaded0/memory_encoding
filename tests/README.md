@@ -17,9 +17,9 @@ CUDA_VISIBLE_DEVICES="" python -m pytest tests/ -q
 | `test_failure_paths.py` | Checkpoint compatibility (including a changed `forget_rate`, `dataset` or `learning_rate`, and a different or missing `code_version`, in `load_checkpoint` and in a `--resume` that then trains nothing), the resume config diff (including an old config key), missing or unreadable checkpoints, explicit resume, non-finite loss, time-limit (124) and SIGTERM (143) exits |
 | `test_legacy_checkpoints.py` | Checkpoints written before the 2026-09 renames (`fixtures/legacy_names`, made at 1775121 by `make_legacy_checkpoints.py` there). They have no `code_version`, so resuming them with the old or the new flag names is refused and leaves them untouched. At the unit level, `upgrade_legacy_state_dict` maps their state dicts exactly as the test's own independent renamer does, and `upgrade_legacy_config` maps their configs to the new keys. A bad `forgetting_factor`, or a missing or unexpected state-dict key, fails the load |
 | `test_cli_aliases.py` | Old flag names parse to the new settings, each with one deprecation line. `--grad_clip` follows `--model_type`. Removed flags are ignored, and conflicting old and new values are an error. Old config keys map to what the old flags parse to |
-| `test_dfa_error_signals.py` | The DFA path's per-layer error tensors, projected errors, gradients and bias steps, checked at populate and at update time against values computed independently, with `--self_grad` 0 and 0.05. It fails on an in-place change to the shared `output_error` (see the main README) |
+| `test_dfa_error_signals.py` | The DFA path's per-layer error tensors (every layer, `i2h` included, is populated each step), projected errors, gradients and bias steps, checked at populate and at update time against values computed independently, with `--self_grad` 0 and 0.05. It fails on an in-place change to the shared `output_error` (see the main README) |
 | `test_metrics.py` | Interval metrics, recall targets and chance levels |
-| `test_layer_mechanics.py` | Single mechanics checked in isolation: `--unit_norm_weights` rescales each sequence's slice to unit norm, independently of the other sequences |
+| `test_layer_mechanics.py` | Single mechanics checked in isolation: `--unit_norm_weights` rescales each sequence's slice to unit norm, independently of the other sequences. The Elman layout: `i2h` gets a non-zero gradient and an update every step under DFA and per-step backprop (EphemeralRNN) and under backprop (SimpleRNN), with recurrence on; the output heads take `hidden_size` inputs; `--enable_recurrence False` keeps the output path and feeds back zeros; DFA leaves SimpleRNN untouched |
 | `legacy/test_plast_clip_update.py` | Changing `--plasticity` on resume updates checkpoint plasticity; RNG round-trip |
 
 ## What the golden trace is
@@ -41,7 +41,7 @@ thread, CPU. There are two cases per updater:
   trace stores each call's inputs, outputs and loss under `calls`, and the
   model state and event log after both. `weight_clamp` is 0.2 because the
   unit-norm rescaling runs first and leaves no entry above 1, so a clamp of 1
-  never binds. lr is 1.0 so that the step BPTT takes on the hidden layer after the
+  never binds. lr is 1.0 so that the step BPTT takes on `i2h` after the
   second sequence (about lr², since it goes through the `i2o` weights the first
   sequence set) sits well above the comparison's `abs_tol` of 1e-7.
 
@@ -61,21 +61,23 @@ Not covered: positional encoding, `self_grad > 0` (covered for DFA's error
 signals by `test_dfa_error_signals.py`), more than one layer, the SimpleRNN
 baseline, and metric outputs. In the base case's single call BPTT moves only
 `i2o` and the biases, and its other `per_sample_weights` are still zero
-afterwards. The second call of `normalize_clip_2seq` also moves the hidden
-layer's slow weights. `i2h` never gets a non-zero update in any trace: under
-BPTT its gradient passes through the hidden layer's weights, which are still
-zero during the second sequence, so it would take a third.
+afterwards. The second call of `normalize_clip_2seq` also moves `i2h`. Under
+BPTT the hidden layer's gradient passes through `i2h`'s weights (Elman layout),
+which are still zero during the second sequence, so moving it would take a
+third. DFA updates `i2h` from the first step; backprop's first `i2h` gradient
+is zero (it goes through `i2o`'s weights, which start at zero) and is non-zero
+from the second step on.
 
 ## Behaviour the trace currently freezes
 
 | Updater | Loss | Forget calls | Gradient-scale calls | `apply_update` calls (linear / `i2h`) | `training_instance` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| DFA | 1.4015654325 | 4 | 0 | 4 / 0 | 4 |
-| Backprop | 1.4014256299 | 4 | 4 | 4 / 4 (all no-ops: `i2h` gradient is `None`) | 4 |
-| BPTT | 1.3995014429 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
-| DFA, `normalize_clip_2seq` | 1.6380852461, 1.5860396624 | 8 | 0 | 8 / 0 | 8 |
-| Backprop, `normalize_clip_2seq` | 1.6136492193, 1.5338995159 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
-| BPTT, `normalize_clip_2seq` | 1.3995014429, 1.3863253593 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
+| DFA | 1.4558221102 | 4 | 0 | 4 / 4 | 4 |
+| Backprop | 1.4556038678 | 4 | 4 | 4 / 4 (the first `i2h` gradient is zero) | 4 |
+| BPTT | 1.4538696706 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
+| DFA, `normalize_clip_2seq` | 1.6720900536, 1.6015992165 | 8 | 0 | 8 / 8 | 8 |
+| Backprop, `normalize_clip_2seq` | 1.5847793221, 1.5525134802 | 8 | 8 | 8 / 8 | 8 |
+| BPTT, `normalize_clip_2seq` | 1.4538696706, 1.3888572156 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
 
 In `normalize_clip_2seq`, BPTT's first loss equals the base case's, because the
 update comes after the last step and BPTT ignores `unit_norm_weights` and
@@ -90,11 +92,9 @@ under review". A fix to any of them is expected to fail the golden test.
 | Behaviour | Where | Trace that changes when it is fixed |
 | --- | --- | --- |
 | Backprop's ephemeral step is α² (`scale_ephemeral_grads` multiplies by α, then `apply_update` multiplies by `plasticity`); DFA and BPTT apply α once | `train.py` backprop branch; `ephemeral_model.py` `scale_ephemeral_grads`, `apply_update` | backprop |
-| DFA never populates or updates `i2h` (by design; under review) | `train.py` DFA branch | DFA, if `i2h` starts being updated |
-| Backprop's `i2h` gradient is always `None` because the hidden state is detached every step (by design; under review) | `train.py` hidden detach; `EphemeralRNN.forward` | backprop, only if truncation changes |
 | `ephemeral_update_clamp` clamps the α-scaled update on masked entries only; it binds in the DFA trace at 0.2 | `apply_update` | DFA |
 | Ephemeral BPTT ignores `ephemeral_update_clamp`, `weight_clamp` and `unit_norm_weights` | `train.py` BPTT branch | `bptt/normalize_clip_2seq` if weight clamping or unit-norm rescaling is added; `bptt` (base) if the update clamp is |
-| `unit_norm_weights` does not touch `i2h` under backprop, because `apply_update` returns before `_apply_regularization` when the gradient is `None` | `apply_update` | backprop `normalize_clip_2seq` |
+| Elman layout, `y_t = i2o(h_t)`: approved, but pending full before/after benchmark runs (main README) | `EphemeralRNN.forward`, `SimpleRNN.forward`; `train.py` DFA branch | all six, if it is reverted |
 | Ephemeral BPTT never increments `training_instance` | `train.py` BPTT branch | BPTT |
 
 The 1/B factor in backprop and BPTT (batch-mean loss before `backward()`) is
@@ -124,4 +124,5 @@ Pass `--output PATH` to write somewhere else for comparison.
 | 2026-09-23 | 79aab73 | Renames only; values identical. Event key `unified_update` → `update` (the method is now `apply_update`). Checked by renaming that key in the previous fixture and comparing: equal, and byte-identical when dumped |
 | 2026-09-23 | eeb0d89 | Renames only; values identical. State-dict names in the module snapshots: `candidate_weights` → `per_sample_weights`, `candidate_gradient` → `per_sample_gradient`, `mask` → `ephemeral_mask`, `last_high_plast_update_norm` / `last_low_plast_update_norm` → `last_ephemeral_step_norm` / `last_slow_step_norm`. `forgetting_factor` is no longer stored; the snapshot records `forget_rate * ephemeral_mask` under the same key, and its values are identical. Checked by renaming those keys in the previous fixture and comparing: equal, and byte-identical when dumped |
 | 2026-09-23 | d7905ac | Renames only; values identical. CLI and config names in each trace's `configuration`: `grad_clip` → `ephemeral_update_clamp`, `plast_clip` → `plasticity`, `plast_proportion` → `ephemeral_fraction`, `clip_weights` → `weight_clamp`, `normalize` → `unit_norm_weights`. Checked by renaming those keys in the previous fixture and comparing: equal, and byte-identical when dumped. The case key `normalize_clip_2seq` is unchanged |
-| 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | `--unit_norm_weights` now normalises each sequence's `[out, in]` slice of `per_sample_weights` separately instead of the whole `[batch, out, in]` tensor, so a sequence's scale no longer depends on the others (Jaden's choice). Only `dfa/normalize_clip_2seq` and `backprop/normalize_clip_2seq` change; the other four traces are identical (BPTT ignores `unit_norm_weights`). Losses: DFA 1.6278 → 1.6381 and 1.5768 → 1.5860; backprop 1.6138 → 1.6136 and 1.5223 → 1.5339. `CHECKPOINT_CODE_VERSION` 2 → 3 |
+| 2026-09-23 | aef0697 | `--unit_norm_weights` now normalises each sequence's `[out, in]` slice of `per_sample_weights` separately instead of the whole `[batch, out, in]` tensor, so a sequence's scale no longer depends on the others (Jaden's choice). Only `dfa/normalize_clip_2seq` and `backprop/normalize_clip_2seq` change; the other four traces are identical (BPTT ignores `unit_norm_weights`). Losses: DFA 1.6278 → 1.6381 and 1.5768 → 1.5860; backprop 1.6138 → 1.6136 and 1.5223 → 1.5339. `CHECKPOINT_CODE_VERSION` 2 → 3 |
+| 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | **Elman layout ("option A", approved by Jaden). Needs full before/after benchmark runs; compare against its parent.** Both models now compute `h_t = tanh(i2h(combined))` and `y_t = i2o(h_t)` (before, `i2o` read `combined`); `self_grad` also reads `h_t`, so `i2o` and `self_grad` are `[B, vocab, hidden]` instead of `[B, vocab, input + hidden]`, and `i2h` gets a DFA error projection and update like the hidden layers. All six traces change. `i2h` is now updated in DFA (4 / 8 calls, non-zero from the first step) and backprop (non-zero from the second step), and BPTT's second `normalize_clip_2seq` sequence moves `i2h` instead of the hidden layer. Losses: DFA 1.4016 → 1.4558, backprop 1.4014 → 1.4556, BPTT 1.3995 → 1.4539; `normalize_clip_2seq` DFA 1.6381 → 1.6721 and 1.5860 → 1.6016, backprop 1.6136 → 1.5848 and 1.5339 → 1.5525, BPTT 1.3995 → 1.4539 and 1.3863 → 1.3889. Most of the base rise is initialisation, not learning: BPTT's first loss is the untrained model's, whose output is `i2o.bias`, and that bias is now drawn with bound 1/√4 instead of 1/√12 (and the RNG stream after `i2o` shifts). `CHECKPOINT_CODE_VERSION` 3 → 4 |

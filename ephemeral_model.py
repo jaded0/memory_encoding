@@ -383,7 +383,9 @@ class EphemeralRNN(torch.nn.Module):
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
 
-        # Final layers for hidden and output, also using EphemeralLinear
+        # Elman layout: i2h maps the hidden layers' output to the hidden state h_t, and the
+        # output heads (i2o, self_grad) read h_t, so they take hidden_size inputs. i2h is a
+        # hidden layer like the ones above (it has ephemeral entries and a DFA feedback matrix).
         self.i2h = EphemeralLinear(
             inner_size, hidden_size, charset,
             unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
@@ -392,14 +394,14 @@ class EphemeralRNN(torch.nn.Module):
             ephemeral_fraction=ephemeral_fraction
         )
         self.i2o = EphemeralLinear(
-            inner_size, output_size, charset,
+            hidden_size, output_size, charset,
             unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
             updater=updater, requires_grad=False, is_last_layer=True,
             plasticity=plasticity, batch_size=batch_size, forget_rate=forget_rate,
             ephemeral_fraction=ephemeral_fraction
         )
         self.self_grad = EphemeralLinear(
-            inner_size, output_size, charset,
+            hidden_size, output_size, charset,
             unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
             updater=updater, requires_grad=False, is_last_layer=True,
             plasticity=plasticity, batch_size=batch_size, forget_rate=forget_rate,
@@ -424,19 +426,21 @@ class EphemeralRNN(torch.nn.Module):
         if self.residual_connection:
             combined += residual
 
-        # Split into hidden and output
-        if self.enable_recurrence:
-            hidden = self.i2h(combined)
-        else:
-            hidden = torch.zeros_like(hidden)  # disable hidden connection
-        output = self.i2o(combined)
-        self_grad = self.self_grad(combined)
-        hidden = torch.tanh(hidden)  # Apply tanh function to keep hidden from blowing up after many recurrences
+        # Elman layout: h_t = tanh(i2h(combined)), y_t = i2o(h_t). The output reads this
+        # step's hidden state, so i2h is trained every step even when the hidden state is
+        # detached between steps (DFA, per-step backprop). tanh keeps h_t bounded over many
+        # recurrences.
+        hidden_t = torch.tanh(self.i2h(combined))
+        output = self.i2o(hidden_t)
+        # self_grad is a second output head (same shape and error as i2o), so it reads h_t too.
+        self_grad = self.self_grad(hidden_t)
+        # --enable_recurrence False keeps the same output path but feeds zeros to the next step.
+        next_hidden = hidden_t if self.enable_recurrence else torch.zeros_like(hidden)
 
         # output.requires_grad = True # This is now handled in the training loop for DFA.
         # output = self.dropout(output)  # Apply dropout to the output before softmax
         # output = self.softmax(output)
-        return output, hidden, self_grad
+        return output, next_hidden, self_grad
 
     def initHidden(self, batch_size):
         device = next(self.parameters()).device
@@ -550,16 +554,14 @@ class SimpleRNN(nn.Module):
             combined = F.relu(combined)
             # combined = self.dropout(combined)
 
-        # Split into hidden and output
-        if self.enable_recurrence:
-            hidden = self.i2h(combined)
-        else:
-            hidden = torch.zeros_like(hidden)  # disable hidden connection
-        output = self.i2o(combined)
-        hidden = torch.tanh(hidden)
+        # Elman layout, as in EphemeralRNN: h_t = tanh(i2h(combined)), y_t = i2o(h_t);
+        # --enable_recurrence False feeds zeros to the next step instead of h_t.
+        hidden_t = torch.tanh(self.i2h(combined))
+        output = self.i2o(hidden_t)
+        next_hidden = hidden_t if self.enable_recurrence else torch.zeros_like(hidden)
         # output = self.dropout(output)
         # output = self.softmax(output)
-        return output, hidden, None
+        return output, next_hidden, None
 
     def get_all_norms(self):
         """Calculates weight and gradient norms for SimpleRNN."""
