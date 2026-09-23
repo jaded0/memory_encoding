@@ -3,17 +3,12 @@
 # run_training.sh - Run a single train.py experiment (local or interactive).
 #
 #   bash run_training.sh              # normal run (W&B online)
-#   SMOKE=1 bash run_training.sh      # login node: cache HF datasets + check env, then exit
 #
-# SMOKE=1 is for the cluster login node (internet, no GPU): it runs a few CPU
-# iterations with W&B disabled into checkpoints/_smoke, which downloads and
-# caches the dataset and fails fast on a broken environment. Never set it as
-# the default here. Cluster runs: slurm_run.sh. Sweeps: sweeps/.
+# Cluster runs: slurm_run.sh (first-time setup: setup_cluster/). Sweeps: sweeps/.
 # Flag semantics and defaults: `python train.py --help`.
 # ==============================================================================
 
 cd "$(dirname "$0")" || exit 1
-SMOKE=${SMOKE:-0}
 
 # --- W&B Tracking ---
 export WANDB_MODE=online # online | offline | disabled
@@ -65,29 +60,15 @@ POS_ENCODING=0               # Positional encoding dimension (0 = off)
 
 # ======================== Data & Training Loop ================================
 # Names containing palindrome_dataset, long_range_memory_dataset or resequence
-# load from synth_datasets/ on disk; anything else (e.g. roneneldan/tinystories)
-# is downloaded from Hugging Face, so only those need a SMOKE run to cache.
+# load from synth_datasets/ on disk; Hugging Face ones (e.g. roneneldan/tinystories)
+# must be prepared once first: python preprocess.py <name> (cluster: setup_cluster/).
 DATASET='4_palindrome_dataset_vary_length'
 BATCH_SIZE=16                # Sequences per batch
 N_ITERS=12000000             # Total training iterations
 PRINT_FREQ=5000              # Console progress frequency
 
-# ======================== Smoke Mode ==========================================
-TRACK=true
-if [[ $SMOKE == 1 ]]; then
-    export WANDB_MODE=disabled
-    TRACK=false
-    EXPERIMENT_NAME="_smoke"
-    CHECKPOINT_DIR="./checkpoints/_smoke"
-    RESUME=false
-    N_ITERS=20
-    PRINT_FREQ=10
-    CHECKPOINT_SAVE_FREQ=$N_ITERS
-fi
-
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"
-[[ $SMOKE == 1 ]] && echo "  SMOKE mode: $N_ITERS iterations, W&B disabled"
 echo "  Group: $GROUP | Model: $MODEL_TYPE | Updater: $UPDATER | Input: $INPUT_MODE | LR: $LEARNING_RATE"
 echo "  Dataset: $DATASET | Batch: $BATCH_SIZE | Hidden: $HIDDEN_SIZE | PosEnc: $POS_ENCODING"
 echo "  Checkpoint Dir: $CHECKPOINT_DIR (resume: $RESUME, save every $CHECKPOINT_SAVE_FREQ)"
@@ -95,7 +76,7 @@ echo "  Checkpoint Dir: $CHECKPOINT_DIR (resume: $RESUME, save every $CHECKPOINT
 mkdir -p "$CHECKPOINT_DIR"
 
 # Save a copy of this script for reproducibility
-[[ $SMOKE == 1 ]] || cp "$0" "$CHECKPOINT_DIR/run_used.sh"
+cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
 python -u train.py \
     --model_type $MODEL_TYPE \
@@ -119,7 +100,7 @@ python -u train.py \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --resume $RESUME \
-    --track $TRACK \
+    --track true \
     --group "$GROUP" \
     --tags "${TAGS[@]}" \
     --notes "$NOTES" \

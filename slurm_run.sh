@@ -3,17 +3,15 @@
 # slurm_run.sh - SLURM submission script for a single long train.py run
 #
 #   sbatch slurm_run.sh               # submit from the repo root (on the login node)
-#   SMOKE=1 ./slurm_run.sh            # login node: cache HF datasets + check env, then exit
+#
+# First-time setup (download + preprocess datasets, GPU smoke test of this
+# config): setup_cluster/setup.sh, see setup_cluster/README.md.
 #
 # The job name (--job-name below) is the experiment's identity: it names the
 # checkpoint dir, and the run always passes --resume, so a requeue, a preemption
 # or sweeps/bulk_restart.sh continues from checkpoints/<job-name>/latest_checkpoint.pth.
 # Give each new experiment a new job name, or it will continue the old one.
-#
-# SMOKE=1 runs this exact config for a few CPU iterations with W&B disabled and
-# Hugging Face online, into checkpoints/_smoke, so the dataset is cached for the
-# offline compute nodes and a broken environment fails fast. Never set it as the
-# default here. Local runs: run_training.sh. Sweeps: sweeps/.
+# Local runs: run_training.sh. Sweeps: sweeps/.
 # ==============================================================================
 
 # --- SLURM Directives ---
@@ -23,9 +21,10 @@
 #SBATCH --nodes=1              # Number of nodes requested
 #SBATCH --gpus=1               # Number of GPUs requested
 #SBATCH --mem-per-cpu=8000M    # Memory per CPU core (e.g., 8GB)
-#SBATCH --mail-type=BEGIN,END,FAIL # Email notifications
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE # Email notifications
 #SBATCH --job-name=text_scale_5_3 # Job name in queue
 #SBATCH --output=hebby_train_%j.out # Standard output file (%j = job ID)
+#SBATCH --open-mode=append     # a requeue keeps its job ID and log: append, don't truncate
 #SBATCH --mail-user=jaden.lorenc@gmail.com # Your email address
 #SBATCH --qos=standby      # Make it preemptable
 #SBATCH --requeue          # Requeue on preemption or failure
@@ -34,25 +33,20 @@
 # spooled copy of this file, so $0 won't point here under sbatch, but
 # SLURM_SUBMIT_DIR (the directory sbatch was invoked from) does.
 cd "${SLURM_SUBMIT_DIR:-$(dirname "$0")}" || exit 1
-SMOKE=${SMOKE:-0}
 
 # ======================== Environment Setup ===================================
 echo "--- Setting up Environment ---"
 # Load Conda environment
 # source /path/to/your/miniconda3/etc/profile.d/conda.sh # Adjust path if needed
-conda activate hebby || { [[ $SMOKE == 1 ]] && { echo "conda activate hebby failed"; exit 1; }; }
+conda activate hebby
 echo "Activated Conda environment: $CONDA_DEFAULT_ENV"
 
 # Configure W&B and HuggingFace for offline use (if needed)
 export WANDB_MODE=offline
 export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python # Ensure W&B uses the conda python
-if [[ $SMOKE == 1 ]]; then
-    export WANDB_MODE=disabled   # login node has internet: let HF download and cache
-else
-    export HF_OFFLINE=1
-    export HF_DATASETS_OFFLINE=1
-    echo "HF Offline mode enabled."
-fi
+export HF_OFFLINE=1
+export HF_DATASETS_OFFLINE=1
+echo "HF Offline mode enabled."
 echo "WANDB_MODE set to: $WANDB_MODE"
 
 # Optional: Check GPU status
@@ -69,15 +63,13 @@ EXPERIMENT_NAME="$SLURM_JOB_NAME"
 CHECKPOINT_DIR="./checkpoints/${EXPERIMENT_NAME}" # Persistent directory for this experiment
 RESUME=true                  # Continue latest_checkpoint.pth if present (see header)
 
-if [[ $SMOKE != 1 ]]; then
-    # --- add to run list (for bulk_restart.sh) and refuse duplicates ---
-    RUN_LIST="current_runs.txt"
-    grep -qxF "$EXPERIMENT_NAME" "$RUN_LIST" 2>/dev/null || echo "$EXPERIMENT_NAME" >> "$RUN_LIST"
-    if squeue -h -n "$EXPERIMENT_NAME" -o "%A" \
-           | grep -v "^${SLURM_JOB_ID}$" \
-           | grep -q .; then
-      echo "⏩  $EXPERIMENT_NAME already RUNNING or PENDING – aborting."; exit 0
-    fi
+# --- add to run list (for bulk_restart.sh) and refuse duplicates ---
+RUN_LIST="current_runs.txt"
+grep -qxF "$EXPERIMENT_NAME" "$RUN_LIST" 2>/dev/null || echo "$EXPERIMENT_NAME" >> "$RUN_LIST"
+if squeue -h -n "$EXPERIMENT_NAME" -o "%A" \
+       | grep -v "^${SLURM_JOB_ID}$" \
+       | grep -q .; then
+  echo "⏩  $EXPERIMENT_NAME already RUNNING or PENDING – aborting."; exit 0
 fi
 
 # --- Experiment Identification (W&B) ---
@@ -133,24 +125,10 @@ N_ITERS=10000000           # Total training steps (iterations)
 PRINT_FREQ=50                # Console print basic avg loss/acc frequency
 LOG_FREQ=500              # W&B sync frequency for offline mode
 
-# ======================== Smoke Mode ==========================================
-TRACK=true
-if [[ $SMOKE == 1 ]]; then
-    TRACK=false
-    EXPERIMENT_NAME="_smoke"
-    GROUP="_smoke"
-    CHECKPOINT_DIR="./checkpoints/_smoke"
-    RESUME=false
-    N_ITERS=20
-    PRINT_FREQ=10
-    CHECKPOINT_SAVE_FREQ=$N_ITERS
-fi
-
 # ======================== Execution ===========================================
 echo "--- Starting Training ---"
 echo "SLURM Job ID: $SLURM_JOB_ID"
 echo "SLURM Job Name: $SLURM_JOB_NAME"
-[[ $SMOKE == 1 ]] && echo "  SMOKE mode: $N_ITERS iterations, W&B disabled, HF online"
 echo "  Group: $GROUP | Model: $MODEL_TYPE | Updater: $UPDATER | Input: $INPUT_MODE | LR: $LEARNING_RATE"
 echo "  Dataset: $DATASET | Batch: $BATCH_SIZE | Hidden: $HIDDEN_SIZE | PosEnc: $POS_ENCODING"
 echo "  Checkpoint Dir: $CHECKPOINT_DIR (resume: $RESUME, save every $CHECKPOINT_SAVE_FREQ)"
@@ -159,7 +137,7 @@ echo "  Checkpoint Dir: $CHECKPOINT_DIR (resume: $RESUME, save every $CHECKPOINT
 mkdir -p "$CHECKPOINT_DIR"
 
 # Save a copy of this script for reproducibility (bulk_restart.sh resubmits it)
-[[ $SMOKE == 1 ]] || cp "$0" "$CHECKPOINT_DIR/run_used.sh"
+cp "$0" "$CHECKPOINT_DIR/run_used.sh"
 
 source ./sweeps/forward_signals.sh
 forward_signals python -u train.py \
@@ -185,16 +163,13 @@ forward_signals python -u train.py \
     --checkpoint_dir "$CHECKPOINT_DIR" \
     --checkpoint_save_freq $CHECKPOINT_SAVE_FREQ \
     --resume $RESUME \
-    --track $TRACK \
+    --track true \
     --group "$GROUP" \
     --tags "${TAGS[@]}" \
     --notes "$NOTES" \
     --plast_proportion $PLAST_PROPORTION \
     --enable_recurrence $ENABLE_RECURRENCE
 
-status=$?
-echo "--- Training Finished (exit $status) ---"
-# Smoke runs must fail loudly; normal runs keep the original always-0 exit.
-[[ $SMOKE == 1 ]] && exit $status
+echo "--- Training Finished ---"
 
 # ==============================================================================
