@@ -325,7 +325,7 @@ def main():
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
     parser.add_argument('--model_type', type=str, default='ephemeral', choices=['rnn', 'ephemeral'], help='Model architecture to use.')
     parser.add_argument('--updater', type=str, default='dfa', choices=['dfa', 'backprop', 'bptt'], help='Weight update algorithm to use.')
-    parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=False, help='Rescale every float parameter of each layer to unit norm after each update (also rescales plasticity and forgetting).')
+    parser.add_argument('--normalize', type=str2bool, nargs='?', const=True, default=False, help='Rescale each layer\'s candidate weights to unit norm after each update.')
     parser.add_argument('--clip_weights', type=float, default=0, help='Clamp candidate weights to [-clip_weights, clip_weights] (0 = off).')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
     parser.add_argument('--dataset', type=str, default='3_palindrome_dataset_vary_length', help='The dataset used for training.')

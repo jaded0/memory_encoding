@@ -66,8 +66,8 @@ zero during the second sequence, so it would take a third.
 | DFA | 1.4015091658 | 4 | 0 | 4 / 0 | 4 |
 | Backprop | 1.4013973176 | 4 | 4 | 4 / 4 (all no-ops: `i2h` gradient is `None`) | 4 |
 | BPTT | 1.3995014429 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
-| DFA, `normalize_clip_2seq` | 1.8621133566, 1.6398608685 | 8 | 0 | 8 / 0 | 8 |
-| Backprop, `normalize_clip_2seq` | 1.9314314723, 1.6064965129 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
+| DFA, `normalize_clip_2seq` | 1.6188724041, 1.5682410002 | 8 | 0 | 8 / 0 | 8 |
+| Backprop, `normalize_clip_2seq` | 1.6121615767, 1.5185782313 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
 | BPTT, `normalize_clip_2seq` | 1.3995014429, 1.3863281012 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
 
 In `normalize_clip_2seq`, BPTT's first loss equals the base case's, because the
@@ -87,7 +87,6 @@ under review". A fix to any of them is expected to fail the golden test.
 | Backprop's `i2h` gradient is always `None` because the hidden state is detached every step (by design; under review) | `train.py` hidden detach; `EphemeralRNN.forward` | backprop, only if truncation changes |
 | `grad_clip` clamps the α-scaled update on masked entries only; it binds in the DFA trace at 0.2 | `apply_unified_updates` | DFA |
 | Ephemeral BPTT ignores `grad_clip`, `clip_weights` and `normalize` | `train.py` BPTT branch | `bptt/normalize_clip_2seq` if weight clipping or normalization is added; `bptt` (base) if `grad_clip` is |
-| `normalize` rescales every float parameter of a layer to unit norm after each update, including `plasticity`, `forgetting_factor`, the bias, the feedback weights, the traces and the logged update norms (which end up at about 1). After the first update α and `forget_rate` are no longer the values passed in (in the trace, α 3.0 becomes about 0.11 in the hidden layer) | `EphemeralLinear._apply_regularization` | DFA and backprop `normalize_clip_2seq` |
 | `normalize` does not touch `i2h` under backprop, because `apply_unified_updates` returns before `_apply_regularization` when the gradient is `None` | `apply_unified_updates` | backprop `normalize_clip_2seq` |
 | Ephemeral BPTT never increments `training_instance` | `train.py` BPTT branch | BPTT |
 
@@ -112,4 +111,5 @@ Pass `--output PATH` to write somewhere else for comparison.
 | --- | --- | --- |
 | 2026-08-28 | 43b34c4 | Initial baseline (manticore, CPU, Python 3.11.12, Torch 2.5.1, NumPy 2.2.5, one thread) |
 | 2026-09-23 | 8860326 | Added cases `dfa/normalize_clip_2seq`, `backprop/normalize_clip_2seq` and `bptt/normalize_clip_2seq` for normalize/clip_weights/2×BPTT. The three base entries are byte-identical (patience diff: additions only). Same machine and versions as the initial baseline |
-| 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Forget step moved after the update in all three updaters (the paper's order, `w ← (1 − forget_rate)·(w − lr·α·g)`); under DFA and backprop it now also follows the clamp and normalize. All six traces change. DFA and backprop losses move by 1.6e-5 to 1e-2 (base about 3e-5 and 2e-5 lower; `normalize_clip_2seq` 0.6e-3 to 1e-2 lower). BPTT losses are unchanged (its update comes after the last step, and `wipe()` zeroes the decayed entries before the next forward pass); only its final state and event log differ |
+| 2026-09-23 | 092d434 | Forget step moved after the update in all three updaters (the paper's order, `w ← (1 − forget_rate)·(w − lr·α·g)`); under DFA and backprop it now also follows the clamp and normalize. All six traces change. DFA and backprop losses move by 1.6e-5 to 1e-2 (base about 3e-5 and 2e-5 lower; `normalize_clip_2seq` 0.6e-3 to 1e-2 lower). BPTT losses are unchanged (its update comes after the last step, and `wipe()` zeroes the decayed entries before the next forward pass); only its final state and event log differ |
+| 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | `--normalize` now rescales only each layer's `candidate_weights`, no longer `plasticity`, `forgetting_factor`, the bias, the feedback weights, the traces or the logged update norms. Only `dfa/normalize_clip_2seq` and `backprop/normalize_clip_2seq` change; the other four traces are identical. Their losses drop a lot: DFA 1.862 → 1.619 and 1.640 → 1.568, backprop 1.931 → 1.612 and 1.606 → 1.519 (α stays 3.0 instead of shrinking to about 0.1, and the logged norms are real values, not about 1) |

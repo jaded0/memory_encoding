@@ -216,10 +216,9 @@ class EphemeralLinear(nn.Linear):
     def _apply_regularization(self):
         """Helper method to apply normalization and weight clipping."""
         if self.normalize:
-            for p in self.parameters():
-                # Skip boolean tensors (like masks) and only normalize float tensors
-                if p.dtype.is_floating_point:
-                    p.data = p.data / (p.data.norm(2) + 1e-6)
+            # Only the weights forward() uses. plasticity, forgetting_factor, the bias, the
+            # feedback weights, the traces and the logged update norms are left alone.
+            self.candidate_weights.data = self.candidate_weights.data / (self.candidate_weights.data.norm(2) + 1e-6)
         
         if self.clip_weights != 0:
             self.candidate_weights.data.clamp_(-self.clip_weights, self.clip_weights)

@@ -81,7 +81,7 @@ the forget step was moved after the update.
 
 - **Backprop applies α twice (α²) on ephemeral weights.** The backprop branch calls
   `rnn.scale_gradients(plast_clip)` (`train.py:180`), which multiplies masked gradients by
-  α (`ephemeral_model.py:254-260`). `apply_unified_updates` then multiplies by
+  α (`ephemeral_model.py:253-259`). `apply_unified_updates` then multiplies by
   `plasticity`, which is α on the mask (`ephemeral_model.py:49`, `:156`). DFA does not call
   `scale_gradients`, so it applies α once. BPTT calls it and then takes a plain SGD step
   (`train.py:247-258`), so it also applies α once. Measured with α = 7, the masked step is
@@ -97,7 +97,7 @@ the forget step was moved after the update.
 - **`i2h` gets no gradient under DFA or backprop (by design; under review).** The DFA
   branch never populates or updates `i2h` (`train.py:145-157`). Under backprop, the hidden
   state is detached every step (`train.py:91-92`), and `i2h`'s output feeds only the next
-  step (`ephemeral_model.py:400-407`). So `i2h.candidate_weights.grad` is `None`, and
+  step (`ephemeral_model.py:399-406`). So `i2h.candidate_weights.grad` is `None`, and
   `apply_unified_updates` returns immediately (`ephemeral_model.py:144-145`). This is
   probably intended. The ephemeral weights are meant to replace the recurrent connection
   as the short-term memory (paper Fig. 1 caption, `paper/paper_content.tex:117`), while the
@@ -106,7 +106,7 @@ the forget step was moved after the update.
   baseline's `i2h` also gets no gradient under backprop, for the same detach reason.)
   Consequence: `i2h`'s candidate weights stay at their initial zeros, so under DFA or
   backprop the hidden state is `tanh(i2h.bias)` with `--enable_recurrence True` and zero
-  with it off (`ephemeral_model.py:401-407`). It is constant either way, so recurrence
+  with it off (`ephemeral_model.py:400-406`). It is constant either way, so recurrence
   contributes no information.
 - **Ephemeral + BPTT: fast weights are frozen within a sequence.** BPTT is the contrast to
   per-step backprop and DFA in the permutation grid above. Its only update comes after the
@@ -120,16 +120,15 @@ the forget step was moved after the update.
   (`train.py:254-258`), and it does not increment `training_instance`. Checked on a small
   model: changing `--plast_clip`, `--forget_rate`, `--grad_clip` or `--clip_weights` leaves
   a four-sequence BPTT loss trajectory bit-identical.
-- **`--normalize` also rescales plasticity and forgetting.** `_apply_regularization`
-  divides every float parameter of the layer by its L2 norm after each update
-  (`ephemeral_model.py:216-225`): the candidate weights, but also `plasticity`,
-  `forgetting_factor`, the bias, the feedback weights and the traces. After the first
-  update the ephemeral α and forget rate are no longer `--plast_clip` and `--forget_rate`
-  (in the golden trace, α 3.0 becomes about 0.11). The logged high/low-plasticity update
-  norms are scalar parameters too, so they are rescaled to about 1 before they are logged.
-  Layers whose update returns early (`i2h` under backprop) are not rescaled.
-  `--clip_weights` is applied after the normalization, so a clip of 1 or more never binds
-  when `--normalize` is on.
+- **`--normalize` rescales the candidate weights only, as one tensor.**
+  `_apply_regularization` divides each layer's `candidate_weights` by their L2 norm after
+  each update (`ephemeral_model.py:216-224`). The norm is taken over the whole
+  `[batch, out, in]` tensor, not per sequence. `plasticity`, `forgetting_factor`, the bias,
+  the feedback weights, the traces and the logged update norms are left alone (until
+  2026-09 they were all rescaled, so α and the forget rate drifted from the CLI values
+  after the first update). Layers whose update returns early (`i2h` under backprop) are
+  not rescaled. `--clip_weights` is applied after the normalization, so a clip of 1 or
+  more never binds when `--normalize` is on.
 - **`EphemeralLinear._update_bias` is dead code with a flipped sign.** Nothing calls it,
   and it adds `+lr·projected_error` (`ephemeral_model.py:207-214`). The live bias update is
   `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:176-190`).
