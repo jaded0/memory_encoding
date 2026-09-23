@@ -45,7 +45,14 @@ class EphemeralLinear(nn.Linear):
         self.candidate_weights = nn.Parameter(torch.zeros(self.batch_size, out_features, in_features), requires_grad=(updater in ['backprop', 'bptt']))
         distribution = torch.ones_like(self.weight)
         rand_vals = torch.rand_like(self.weight)
-        self.mask = nn.Parameter((rand_vals < plast_proportion).bool(), requires_grad=False)
+        # The mask marks the ephemeral entries. Last layers (i2o, self_grad) have none, so
+        # nothing there is decayed, wiped or treated as ephemeral. rand_vals is drawn for
+        # every layer anyway, which keeps the RNG stream the same for the layers after it.
+        if self.is_last_layer:
+            ephemeral = torch.zeros_like(self.weight, dtype=torch.bool)
+        else:
+            ephemeral = rand_vals < plast_proportion
+        self.mask = nn.Parameter(ephemeral, requires_grad=False)
         distribution[self.mask] = plast_clip
 
         # forgetting_factor holds the per-entry forget rate (fraction removed per step, not a
@@ -273,13 +280,18 @@ class EphemeralLinear(nn.Linear):
 
             # update_norm = self.last_update_norm.item()
 
-        return {
+        norms = {
             'weight_norm': combined_weight_norm,
             'high_plast_weight_norm': high_plast_norm,
             'low_plast_weight_norm': low_plast_norm,
             'high_plast_update_norm': self.last_high_plast_update_norm.item(),
             'low_plast_update_norm': self.last_low_plast_update_norm.item(),
         }
+        if not self.mask.any():
+            # No ephemeral entries (last layers): report no high-plasticity norms rather than
+            # zeros, so they do not pull down the averages logged to W&B.
+            del norms['high_plast_weight_norm'], norms['high_plast_update_norm']
+        return norms
 
     def store_grad_norms(self):
         """Calculates the norm of the current gradient and stores it."""

@@ -46,10 +46,12 @@ every combination as the code behaves today.
 Each EphemeralLinear layer holds per-sequence `candidate_weights` of shape
 `[batch, out, in]`, starting at zero. A fixed random mask marks `--plast_proportion` of each
 layer's entries as ephemeral, with plasticity α = `--plast_clip`. The rest are slow weights
-with plasticity 1, and the output layers (`i2o`, `self_grad`) have plasticity 1 everywhere.
-At the start of every sequence, `wipe()` replaces each sequence's copy with the batch mean
-and zeroes the ephemeral entries in every layer. Forgetting multiplies the ephemeral
-entries by `1 - forget_rate`.
+with plasticity 1. The output layers (`i2o`, `self_grad`) have no ephemeral entries: their
+mask is empty, so they have plasticity 1 everywhere and are never decayed or wiped (the
+W&B `high_lr` and `effective_lr` config values therefore describe the hidden layers and
+`i2h` only). At the start of every sequence, `wipe()` replaces each sequence's copy with
+the batch mean and zeroes the ephemeral entries. Forgetting multiplies the ephemeral
+entries by `1 - forget_rate`. Layers without ephemeral entries log no high-plasticity norms.
 
 | `--updater` | `--model_type ephemeral` | `--model_type rnn` (SimpleRNN baseline) |
 | --- | --- | --- |
@@ -81,8 +83,8 @@ the forget step was moved after the update.
 
 - **Backprop applies α twice (α²) on ephemeral weights.** The backprop branch calls
   `rnn.scale_gradients(plast_clip)` (`train.py:180`), which multiplies masked gradients by
-  α (`ephemeral_model.py:249-255`). `apply_unified_updates` then multiplies by
-  `plasticity`, which is α on the mask (`ephemeral_model.py:49`, `:152`). DFA does not call
+  α (`ephemeral_model.py:256-262`). `apply_unified_updates` then multiplies by
+  `plasticity`, which is α on the mask (`ephemeral_model.py:56`, `:159`). DFA does not call
   `scale_gradients`, so it applies α once. BPTT calls it and then takes a plain SGD step
   (`train.py:247-258`), so it also applies α once. Measured with α = 7, the masked step is
   49·lr·g under backprop and 7·lr·g under DFA; slow weights get 1·lr·g under both.
@@ -97,8 +99,8 @@ the forget step was moved after the update.
 - **`i2h` gets no gradient under DFA or backprop (by design; under review).** The DFA
   branch never populates or updates `i2h` (`train.py:145-157`). Under backprop, the hidden
   state is detached every step (`train.py:91-92`), and `i2h`'s output feeds only the next
-  step (`ephemeral_model.py:395-402`). So `i2h.candidate_weights.grad` is `None`, and
-  `apply_unified_updates` returns immediately (`ephemeral_model.py:140-141`). This is
+  step (`ephemeral_model.py:407-414`). So `i2h.candidate_weights.grad` is `None`, and
+  `apply_unified_updates` returns immediately (`ephemeral_model.py:147-148`). This is
   probably intended. The ephemeral weights are meant to replace the recurrent connection
   as the short-term memory (paper Fig. 1 caption, `paper/paper_content.tex:117`), while the
   slow weights keep learning as usual. `i2h` is likely vestigial in the ephemeral model,
@@ -106,31 +108,37 @@ the forget step was moved after the update.
   baseline's `i2h` also gets no gradient under backprop, for the same detach reason.)
   Consequence: `i2h`'s candidate weights stay at their initial zeros, so under DFA or
   backprop the hidden state is `tanh(i2h.bias)` with `--enable_recurrence True` and zero
-  with it off (`ephemeral_model.py:396-402`). It is constant either way, so recurrence
+  with it off (`ephemeral_model.py:408-414`). It is constant either way, so recurrence
   contributes no information.
 - **Ephemeral + BPTT: fast weights are frozen within a sequence.** BPTT is the contrast to
   per-step backprop and DFA in the permutation grid above. Its only update comes after the
   last step (`train.py:240`), and `wipe()` zeroes the ephemeral entries at the start of the
-  next sequence (`train.py:80`, `ephemeral_model.py:74-79`). Updates to ephemeral entries
+  next sequence (`train.py:80`, `ephemeral_model.py:81-86`). Updates to ephemeral entries
   therefore never reach a training forward pass, and only slow weights and biases learn. As
   a result, `--plast_clip` and `--forget_rate` do not affect ephemeral BPTT training. (The
-  forget set is exactly the mask, `ephemeral_model.py:47-55`.) This path also ignores `--grad_clip`, `--clip_weights` and
+  forget set is exactly the mask, `ephemeral_model.py:47-62`.) This path also ignores `--grad_clip`, `--clip_weights` and
   `--normalize`, because it never calls `apply_unified_updates` or `_apply_regularization`
   (`train.py:254-258`), and it does not increment `training_instance`. Checked on a small
   model: changing `--plast_clip`, `--forget_rate`, `--grad_clip` or `--clip_weights` leaves
   a four-sequence BPTT loss trajectory bit-identical.
 - **`--normalize` rescales the candidate weights only, as one tensor.**
   `_apply_regularization` divides each layer's `candidate_weights` by their L2 norm after
-  each update (`ephemeral_model.py:212-220`). The norm is taken over the whole
+  each update (`ephemeral_model.py:219-227`). The norm is taken over the whole
   `[batch, out, in]` tensor, not per sequence. `plasticity`, `forgetting_factor`, the bias,
   the feedback weights, the traces and the logged update norms are left alone (until
   2026-09 they were all rescaled, so α and the forget rate drifted from the CLI values
   after the first update). Layers whose update returns early (`i2h` under backprop) are
   not rescaled. `--clip_weights` is applied after the normalization, so a clip of 1 or
   more never binds when `--normalize` is on.
+- **Old checkpoints keep ephemeral entries in the output layers.** The mask is a state-dict
+  parameter, so a checkpoint saved before the output layers' masks were emptied (2026-09)
+  restores its old non-empty `i2o`/`self_grad` mask, and the matching `forgetting_factor`.
+  Those entries keep being decayed and wiped. This is deliberate: re-deriving the mask on
+  load would silently change a resumed run's dynamics. `train.py` prints a warning on such
+  a resume; start fresh to get the current behaviour.
 - **`EphemeralLinear._update_bias` is dead code with a flipped sign.** Nothing calls it,
-  and it adds `+lr·projected_error` (`ephemeral_model.py:203-210`). The live bias update is
-  `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:172-186`).
+  and it adds `+lr·projected_error` (`ephemeral_model.py:210-217`). The live bias update is
+  `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:179-193`).
 
 ## Paper settings & stability
 

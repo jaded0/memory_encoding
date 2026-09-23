@@ -525,6 +525,12 @@ def main():
 
         # Check if plast_clip has changed and update plasticity parameters if needed
         if isinstance(rnn, EphemeralRNN):
+            # The mask comes from the state dict. Checkpoints saved before last layers lost
+            # their ephemeral entries keep them; left as saved so the run continues unchanged.
+            stale = [name for name in ('i2o', 'self_grad') if getattr(rnn, name).mask.any()]
+            if stale:
+                print(f"WARNING: checkpoint predates empty last-layer masks: {', '.join(stale)} keep "
+                      "their saved ephemeral entries (decayed and wiped). Start fresh for the current behaviour.")
             loaded_plast_clip = loaded_config.get('plast_clip', 1.0)
             current_plast_clip = config.get('plast_clip', 1.0)
 

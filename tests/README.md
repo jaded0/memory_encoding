@@ -63,12 +63,12 @@ zero during the second sequence, so it would take a third.
 
 | Updater | Loss | Forget calls | Gradient-scale calls | Unified-update calls (linear / `i2h`) | `training_instance` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| DFA | 1.4015091658 | 4 | 0 | 4 / 0 | 4 |
-| Backprop | 1.4013973176 | 4 | 4 | 4 / 4 (all no-ops: `i2h` gradient is `None`) | 4 |
+| DFA | 1.4015654325 | 4 | 0 | 4 / 0 | 4 |
+| Backprop | 1.4014256299 | 4 | 4 | 4 / 4 (all no-ops: `i2h` gradient is `None`) | 4 |
 | BPTT | 1.3995014429 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
-| DFA, `normalize_clip_2seq` | 1.6188724041, 1.5682410002 | 8 | 0 | 8 / 0 | 8 |
-| Backprop, `normalize_clip_2seq` | 1.6121615767, 1.5185782313 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
-| BPTT, `normalize_clip_2seq` | 1.3995014429, 1.3863281012 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
+| DFA, `normalize_clip_2seq` | 1.6278324127, 1.5768324137 | 8 | 0 | 8 / 0 | 8 |
+| Backprop, `normalize_clip_2seq` | 1.6137693822, 1.5223413408 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
+| BPTT, `normalize_clip_2seq` | 1.3995014429, 1.3863253593 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
 
 In `normalize_clip_2seq`, BPTT's first loss equals the base case's, because the
 update comes after the last step and BPTT ignores `normalize` and
@@ -112,4 +112,5 @@ Pass `--output PATH` to write somewhere else for comparison.
 | 2026-08-28 | 43b34c4 | Initial baseline (manticore, CPU, Python 3.11.12, Torch 2.5.1, NumPy 2.2.5, one thread) |
 | 2026-09-23 | 8860326 | Added cases `dfa/normalize_clip_2seq`, `backprop/normalize_clip_2seq` and `bptt/normalize_clip_2seq` for normalize/clip_weights/2×BPTT. The three base entries are byte-identical (patience diff: additions only). Same machine and versions as the initial baseline |
 | 2026-09-23 | 092d434 | Forget step moved after the update in all three updaters (the paper's order, `w ← (1 − forget_rate)·(w − lr·α·g)`); under DFA and backprop it now also follows the clamp and normalize. All six traces change. DFA and backprop losses move by 1.6e-5 to 1e-2 (base about 3e-5 and 2e-5 lower; `normalize_clip_2seq` 0.6e-3 to 1e-2 lower). BPTT losses are unchanged (its update comes after the last step, and `wipe()` zeroes the decayed entries before the next forward pass); only its final state and event log differ |
-| 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | `--normalize` now rescales only each layer's `candidate_weights`, no longer `plasticity`, `forgetting_factor`, the bias, the feedback weights, the traces or the logged update norms. Only `dfa/normalize_clip_2seq` and `backprop/normalize_clip_2seq` change; the other four traces are identical. Their losses drop a lot: DFA 1.862 → 1.619 and 1.640 → 1.568, backprop 1.931 → 1.612 and 1.606 → 1.519 (α stays 3.0 instead of shrinking to about 0.1, and the logged norms are real values, not about 1) |
+| 2026-09-23 | a017f44 | `--normalize` now rescales only each layer's `candidate_weights`, no longer `plasticity`, `forgetting_factor`, the bias, the feedback weights, the traces or the logged update norms. Only `dfa/normalize_clip_2seq` and `backprop/normalize_clip_2seq` change; the other four traces are identical. Their losses drop a lot: DFA 1.862 → 1.619 and 1.640 → 1.568, backprop 1.931 → 1.612 and 1.606 → 1.519 (α stays 3.0 instead of shrinking to about 0.1, and the logged norms are real values, not about 1) |
+| 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Last layers (`i2o`, `self_grad`) now have an empty mask, so none of their entries are decayed or wiped. All six traces change: those layers' `mask` and `forgetting_factor` are all zero, and their high-plasticity update norm is 0. The hidden-layer and `i2h` masks and all feedback weights are identical. Losses rise slightly: DFA base +5.6e-5, backprop base +2.8e-5, DFA `normalize_clip_2seq` +9.0e-3 and +8.6e-3, backprop `normalize_clip_2seq` +1.6e-3 and +3.8e-3. BPTT's base loss is identical and its second `normalize_clip_2seq` loss moves by -2.7e-6 (the `i2o` update after the first sequence is no longer partly wiped) |
