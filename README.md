@@ -314,6 +314,22 @@ checkpoint starts fresh with a new seed.
 To rerun an experiment exactly, start fresh with `--seed <logged seed>` (plus `--deterministic True`
 for bitwise-deterministic Torch ops; on GPU this sets `CUBLAS_WORKSPACE_CONFIG`).
 
+### First-time cluster setup
+
+Compute nodes have no internet, and training never preprocesses Hugging Face
+datasets itself. Before the first `sbatch slurm_run.sh`, run this once from the
+repo root on the login node:
+
+```bash
+setup_cluster/setup.sh          # add --redo to re-download and overwrite the processed data
+```
+
+This command downloads the raw datasets on the login node. It then submits a
+short test-QOS job that preprocesses them offline into `$EPHEMERAL_DATA_DIR`
+(default `./processed_datasets/`) and smoke-tests the `slurm_run.sh` config on a
+GPU. See [setup_cluster/README.md](setup_cluster/README.md). For local runs on
+a Hugging Face dataset, run `python preprocess.py roneneldan/tinystories` once.
+
 ### SLURM time limits
 
 The sbatch scripts request `#SBATCH --signal=B:USR1@600` and launch training through
