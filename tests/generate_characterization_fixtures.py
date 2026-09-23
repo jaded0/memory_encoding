@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from tests.characterization import UPDATERS, run_characterization
+from tests.characterization import all_trace_keys, run_characterization
 
 
 DEFAULT_OUTPUT = Path(__file__).parent / "fixtures" / "training_traces.json"
@@ -27,8 +27,8 @@ def main():
             "torch_threads": 1,
         },
         "traces": {
-            updater: run_characterization(updater)
-            for updater in UPDATERS
+            key: run_characterization(updater, case=case)
+            for key, updater, case in all_trace_keys()
         },
     }
 

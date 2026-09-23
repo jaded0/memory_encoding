@@ -120,6 +120,16 @@ the forget-rate terminology table (next section) was added.
   (`train.py:257-261`), and it does not increment `training_instance`. Checked on a small
   model: changing `--plast_clip`, `--forget_rate`, `--grad_clip` or `--clip_weights` leaves
   a four-sequence BPTT loss trajectory bit-identical.
+- **`--normalize` also rescales plasticity and forgetting.** `_apply_regularization`
+  divides every float parameter of the layer by its L2 norm after each update
+  (`ephemeral_model.py:216-225`): the candidate weights, but also `plasticity`,
+  `forgetting_factor`, the bias, the feedback weights and the traces. After the first
+  update the ephemeral α and forget rate are no longer `--plast_clip` and `--forget_rate`
+  (in the golden trace, α 3.0 becomes about 0.11). The logged high/low-plasticity update
+  norms are scalar parameters too, so they are rescaled to about 1 before they are logged.
+  Layers whose update returns early (`i2h` under backprop) are not rescaled.
+  `--clip_weights` is applied after the normalization, so a clip of 1 or more never binds
+  when `--normalize` is on.
 - **`EphemeralLinear._update_bias` is dead code with a flipped sign.** Nothing calls it,
   and it adds `+lr·projected_error` (`ephemeral_model.py:207-214`). The live bias update is
   `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:176-190`).

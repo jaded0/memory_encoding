@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 
-from tests.characterization import UPDATERS, run_characterization
+from tests.characterization import all_trace_keys, run_characterization
 
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "training_traces.json"
@@ -47,10 +47,13 @@ class TrainingCharacterizationTest(unittest.TestCase):
             "golden traces must be regenerated after changing Torch versions",
         )
 
-        for updater in UPDATERS:
-            with self.subTest(updater=updater):
-                actual = run_characterization(updater)
-                self.assert_nested_close(fixture["traces"][updater], actual, updater)
+        self.assertEqual(
+            set(fixture["traces"]), {key for key, _updater, _case in all_trace_keys()}
+        )
+        for key, updater, case in all_trace_keys():
+            with self.subTest(trace=key):
+                actual = run_characterization(updater, case=case)
+                self.assert_nested_close(fixture["traces"][key], actual, key)
 
     def test_seed_changes_model_mask(self):
         first = run_characterization("dfa", seed=1729)

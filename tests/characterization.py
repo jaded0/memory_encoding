@@ -11,6 +11,41 @@ from reproducibility import seed_everything
 UPDATERS = ("dfa", "backprop", "bptt")
 CHARACTERIZATION_SEED = 1729
 
+# The base case (case=None) is the original trace, stored under the bare updater name.
+# Each extra case overrides some settings and may run several consecutive train() calls on
+# the same model; it is stored as "<updater>/<case>".
+SEQUENCES = (
+    [[0, 1, 2, 3, 0], [3, 1, 0, 2, 3]],
+    [[2, 0, 3, 1, 2], [1, 3, 2, 0, 1]],
+)
+BASE_SETTINGS = {
+    "normalize": False,
+    "clip_weights": 0,
+    "learning_rate": 0.01,
+    "num_sequences": 1,
+}
+CASES = {
+    # clip_weights 0.2 binds after normalize; 1 would not (a unit-norm tensor has no entry
+    # above 1). lr 1.0 makes the second BPTT sequence's hidden-layer step (~lr**2) large
+    # enough for the rel 1e-6 comparison instead of falling under abs_tol 1e-7.
+    "normalize_clip_2seq": {
+        "normalize": True,
+        "clip_weights": 0.2,
+        "learning_rate": 1.0,
+        "num_sequences": 2,
+    },
+}
+
+
+def trace_key(updater, case=None):
+    return updater if case is None else f"{updater}/{case}"
+
+
+def all_trace_keys():
+    for case in (None, *CASES):
+        for updater in UPDATERS:
+            yield trace_key(updater, case), updater, case
+
 
 def _tensor_values(tensor):
     tensor = tensor.detach().cpu()
@@ -132,21 +167,28 @@ def _module_snapshot(layer):
     }
 
 
-def run_characterization(updater, seed=CHARACTERIZATION_SEED):
+def _onehot(sequence_indices, charset):
+    return torch.nn.functional.one_hot(
+        sequence_indices, num_classes=len(charset)
+    ).to(torch.float32)
+
+
+def run_characterization(updater, seed=CHARACTERIZATION_SEED, case=None):
     if updater not in UPDATERS:
         raise ValueError(f"unknown updater: {updater}")
+    if case is not None and case not in CASES:
+        raise ValueError(f"unknown case: {case}")
+    settings = {**BASE_SETTINGS, **(CASES[case] if case is not None else {})}
 
     torch.set_num_threads(1)
     seed_everything(seed, deterministic=True)
 
     charset = list("abcd")
     batch_size = 2
-    sequence_indices = torch.tensor(
-        [[0, 1, 2, 3, 0], [3, 1, 0, 2, 3]], dtype=torch.long
-    )
-    onehot_sequence = torch.nn.functional.one_hot(
-        sequence_indices, num_classes=len(charset)
-    ).to(torch.float32)
+    sequences = [
+        torch.tensor(SEQUENCES[index], dtype=torch.long)
+        for index in range(settings["num_sequences"])
+    ]
 
     with redirect_stdout(StringIO()):
         model = EphemeralRNN(
@@ -155,9 +197,9 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED):
             output_size=len(charset),
             num_layers=1,
             charset=charset,
-            normalize=False,
+            normalize=settings["normalize"],
             residual_connection=False,
-            clip_weights=0,
+            clip_weights=settings["clip_weights"],
             updater=updater,
             plast_clip=3.0,
             batch_size=batch_size,
@@ -171,7 +213,7 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED):
     optimizer = (
         None
         if updater == "dfa"
-        else torch.optim.SGD(model.parameters(), lr=0.01)
+        else torch.optim.SGD(model.parameters(), lr=settings["learning_rate"])
     )
     config = {
         "updater": updater,
@@ -179,52 +221,67 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED):
         "input_mode": "last_two",
         "pe_matrix": None,
         "self_grad": 0.0,
-        "learning_rate": 0.01,
+        "learning_rate": settings["learning_rate"],
         "grad_clip": 0.2,
         "plast_clip": 3.0,
     }
     state = {"training_instance": 0, "log_norms_now": True}
 
-    with redirect_stdout(StringIO()):
-        output, loss, _step_preds, _step_losses, step_outputs, step_labels = train(
-            sequence_indices,
-            onehot_sequence,
-            model,
-            config,
-            state,
-            optimizer=optimizer,
-            log_outputs=True,
-        )
+    calls = []
+    for sequence_indices in sequences:
+        with redirect_stdout(StringIO()):
+            output, loss, _step_preds, _step_losses, step_outputs, step_labels = train(
+                sequence_indices,
+                _onehot(sequence_indices, charset),
+                model,
+                config,
+                state,
+                optimizer=optimizer,
+                log_outputs=True,
+            )
+        calls.append({
+            "sequence_indices": _tensor_values(sequence_indices),
+            "loss": loss,
+            "final_output": _tensor_values(output),
+            "step_outputs": [_tensor_values(value) for value in step_outputs],
+            "step_labels": [_tensor_values(value) for value in step_labels],
+        })
 
-    return {
+    configuration = {
+        "batch_size": batch_size,
+        "sequence_length": sequences[0].shape[1],
+        "input_mode": "last_two",
+        "hidden_size": 4,
+        "num_layers": 1,
+        "normalize": settings["normalize"],
+        "residual_connection": False,
+        "clip_weights": settings["clip_weights"],
+        "learning_rate": settings["learning_rate"],
+        "grad_clip": 0.2,
+        "plast_clip": 3.0,
+        "forget_rate": 0.25,
+        "plast_proportion": 0.5,
+        "enable_recurrence": True,
+    }
+    trace = {
         "schema_version": 1,
         "updater": updater,
         "seed": seed,
-        "configuration": {
-            "batch_size": batch_size,
-            "sequence_length": sequence_indices.shape[1],
-            "input_mode": "last_two",
-            "hidden_size": 4,
-            "num_layers": 1,
-            "normalize": False,
-            "residual_connection": False,
-            "clip_weights": 0,
-            "learning_rate": 0.01,
-            "grad_clip": 0.2,
-            "plast_clip": 3.0,
-            "forget_rate": 0.25,
-            "plast_proportion": 0.5,
-            "enable_recurrence": True,
-        },
-        "sequence_indices": _tensor_values(sequence_indices),
-        "loss": loss,
-        "final_output": _tensor_values(output),
-        "step_outputs": [_tensor_values(value) for value in step_outputs],
-        "step_labels": [_tensor_values(value) for value in step_labels],
+        "configuration": configuration,
+    }
+    if case is None:
+        # Original single-call layout, kept flat so the base traces stay byte-identical.
+        trace.update(calls[0])
+    else:
+        trace["case"] = case
+        configuration["num_sequences"] = settings["num_sequences"]
+        trace["calls"] = calls
+    trace.update({
         "state": state,
         "modules": {
             name: _module_snapshot(layer)
             for name, layer in _named_ephemeral_layers(model)
         },
         "events": events,
-    }
+    })
+    return trace
