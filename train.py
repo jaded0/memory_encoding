@@ -154,7 +154,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     layer.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2h.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2o.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
-                
+
                 # Forget after the whole update (incl. clamp/normalize), as in the paper
                 rnn.apply_forget_step()
                 
@@ -218,7 +218,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     layer.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2h.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2o.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
-                
+
                 # Forget after the whole update (incl. clamp/normalize), as in the paper
                 rnn.apply_forget_step()
                 

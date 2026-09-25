@@ -146,14 +146,14 @@ class EphemeralLinear(nn.Linear):
 
     def forward(self, input):
         batch_size = input.size(0)
-        
+
         # Perform a batched matrix multiplication.
         # input: [B, in_features] -> reshape to [B, in_features, 1]
         input_unsq = input.unsqueeze(2)
 
         # The output will be [B, out_features, 1] and then we can squeeze the last dimension.
         output = torch.bmm(self.per_sample_weights, input_unsq).squeeze(2)
-        
+
         # Optionally add a bias if needed.
         if self.bias is not None:
             output = output + self.bias
@@ -181,7 +181,7 @@ class EphemeralLinear(nn.Linear):
 
         # Per-sequence gradient: outer product with the input trace, [batch_size, out_features, in_features]
         gradient = dfa_per_sample_gradient(projected_error, self.in_traces.data)
-        
+
         # Populate per_sample_weights.grad
         if self.per_sample_weights.grad is None:
             self.per_sample_weights.grad = gradient
@@ -190,7 +190,7 @@ class EphemeralLinear(nn.Linear):
 
     def apply_update(self, learning_rate, update_clamp, state):
         """Update step shared by DFA and backprop.
-        
+
         Args:
             learning_rate: Learning rate for updates
             update_clamp: Element-wise clamp on the alpha-scaled update of the ephemeral
@@ -199,31 +199,31 @@ class EphemeralLinear(nn.Linear):
         """
         if self.per_sample_weights.grad is None:
             return
-            
+
         # Get the gradient (already populated by either DFA or backprop)
         update = -self.per_sample_weights.grad
-        
+
         # Apply plasticity scaling and masking (same for both methods)
         if not self.is_last_layer:
             plasticity_expanded = self.plasticity.unsqueeze(0)  # [1, out_features, in_features]
             mask_expanded = self.ephemeral_mask.unsqueeze(0)  # [1, out_features, in_features]
-            
+
             # Scale by plasticity and mask
             update = update * plasticity_expanded
             # update = update * mask_expanded
-            
+
             # Clamp the ephemeral entries of the update element-wise
             if update_clamp > 0:
-                update = torch.where(mask_expanded, 
-                                    torch.clamp(update, -update_clamp, update_clamp), 
+                update = torch.where(mask_expanded,
+                                    torch.clamp(update, -update_clamp, update_clamp),
                                     update)
-        
+
         self.per_sample_weights.data = self.per_sample_weights.data + learning_rate * update
-        
+
         # Log norms if requested
         if state.get("log_norms_now", False):
             self._log_update_norms(update)
-        
+
         # Update bias using the gradient if this is DFA
         self._update_bias_from_grad(learning_rate)
         # Apply normalization and weight clipping if enabled
@@ -242,21 +242,21 @@ class EphemeralLinear(nn.Linear):
                     bias_update = -learning_rate * self.bias.grad
                     self.bias.data += bias_update
 
-    
+
     def _log_update_norms(self, update):
         """Helper method to log update norms."""
         with torch.no_grad():
             mask_expanded = self.ephemeral_mask.unsqueeze(0).expand_as(update)
-            
+
             ephemeral_update = update[mask_expanded]
             slow_update = update[~mask_expanded]
-            
+
             ephemeral_norm = torch.norm(ephemeral_update).item() if ephemeral_update.numel() > 0 else 0.0
             self.last_ephemeral_step_norm.data.fill_(ephemeral_norm)
-            
+
             slow_norm = torch.norm(slow_update).item() if slow_update.numel() > 0 else 0.0
             self.last_slow_step_norm.data.fill_(slow_norm)
-    
+
     def _update_bias(self, projected_error, learning_rate):
         """Helper method to update bias consistently."""
         if hasattr(self, 'bias') and self.bias is not None and self.updater == 'dfa':
@@ -265,7 +265,7 @@ class EphemeralLinear(nn.Linear):
             if len(bias_update.shape) > 1:
                 bias_update = bias_update.mean(dim=0)
             self.bias.data += bias_update
-    
+
     def _apply_regularization(self):
         """Helper method to apply normalization and weight clipping."""
         # Each sequence's [out, in] slice is rescaled independently. Plasticity, biases,
@@ -303,7 +303,7 @@ class EphemeralLinear(nn.Linear):
             # self.ephemeral_mask is [out, in], grad is [B, out, in]
             scaling_factor = torch.ones_like(self.ephemeral_mask, dtype=torch.float)
             scaling_factor[self.ephemeral_mask] = lr_scale
-            
+
             # Apply scaling
             self.per_sample_weights.grad *= scaling_factor.unsqueeze(0)
 
@@ -482,11 +482,11 @@ class EphemeralRNN(torch.nn.Module):
         self.i2h.scale_ephemeral_grads(plasticity)
         self.i2o.scale_ephemeral_grads(plasticity)
 
-    
+
     def get_all_norms(self):
         """Aggregates norms from all EphemeralLinear layers."""
         all_norms = {}
-        
+
         def _collect_norms(layers_list, prefix):
             for i, layer in enumerate(layers_list):
                 if isinstance(layer, EphemeralLinear):
@@ -517,16 +517,16 @@ class EphemeralRNN(torch.nn.Module):
     def set_plasticity(self, value):
         """Sets the ephemeral plasticity (alpha) in all EphemeralLinear layers (used on resume)."""
         print(f"Setting plasticity from checkpoint resume: {value}")
-        
+
         # Update all linear layers
         for i, layer in enumerate(self.linear_layers):
             if isinstance(layer, EphemeralLinear):
                 layer.set_plasticity(value)
-        
+
         # Update i2h layer
         if isinstance(self.i2h, EphemeralLinear):
             self.i2h.set_plasticity(value)
-        
+
         # Note: i2o is a last layer, so it doesn't use plasticity scaling
         # in the same way, but we'll update them for consistency
         if isinstance(self.i2o, EphemeralLinear) and not self.i2o.is_last_layer:
