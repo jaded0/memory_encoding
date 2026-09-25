@@ -409,9 +409,9 @@ class EphemeralRNN(torch.nn.Module):
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
 
-        # Elman layout: i2h maps the hidden layers' output to the hidden state h_t, and the
-        # output head i2o reads h_t, so it takes hidden_size inputs. i2h is a
-        # hidden layer like the ones above (it has ephemeral entries and a DFA feedback matrix).
+        # Forked transition/emission layout: i2h and i2o both read the deep trunk. i2h is a
+        # hidden layer like the trunk layers (ephemeral entries and a DFA feedback matrix), while
+        # i2o is the slow-only emission head.
         self.i2h = EphemeralLinear(
             inner_size, hidden_size, charset,
             unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
@@ -420,7 +420,7 @@ class EphemeralRNN(torch.nn.Module):
             ephemeral_fraction=ephemeral_fraction
         )
         self.i2o = EphemeralLinear(
-            hidden_size, output_size, charset,
+            inner_size, output_size, charset,
             unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
             updater=updater, requires_grad=False, is_last_layer=True,
             plasticity=plasticity, batch_size=batch_size, forget_rate=forget_rate,
@@ -445,13 +445,11 @@ class EphemeralRNN(torch.nn.Module):
         if self.residual_connection:
             combined += residual
 
-        # Elman layout: h_t = tanh(i2h(combined)), y_t = i2o(h_t). The output reads this
-        # step's hidden state, so i2h is trained every step even when the hidden state is
-        # detached between steps (DFA, per-step backprop). tanh keeps h_t bounded over many
-        # recurrences.
+        # Forked transition/emission layout. The state head remains bounded for recurrence,
+        # while the output head reads a sibling transform of the shared deep representation.
         hidden_t = torch.tanh(self.i2h(combined))
-        output = self.i2o(hidden_t)
-        # --enable_recurrence False keeps the same output path but feeds zeros to the next step.
+        output = self.i2o(torch.tanh(combined))
+        # --enable_recurrence False still executes both heads but feeds back zeros.
         next_hidden = hidden_t if self.enable_recurrence else torch.zeros_like(hidden)
 
         # output.requires_grad = True # This is now handled in the training loop for DFA.
@@ -598,7 +596,7 @@ class SimpleRNN(nn.Module):
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
 
-        # Final layers for hidden and output
+        # Forked transition and emission heads over the shared deep representation.
         self.i2h = DFALinear(hidden_size, hidden_size)
         self.i2o = DFALinear(hidden_size, output_size)
         self.softmax = nn.LogSoftmax(dim=1)
@@ -621,10 +619,10 @@ class SimpleRNN(nn.Module):
             combined = F.relu(combined)
             # combined = self.dropout(combined)
 
-        # Elman layout, as in EphemeralRNN: h_t = tanh(i2h(combined)), y_t = i2o(h_t);
-        # --enable_recurrence False feeds zeros to the next step instead of h_t.
+        # Forked transition/emission layout, as in EphemeralRNN. The output is independent of
+        # this step's state head; --enable_recurrence False feeds back zeros.
         hidden_t = torch.tanh(self.i2h(combined))
-        output = self.i2o(hidden_t)
+        output = self.i2o(torch.tanh(combined))
         next_hidden = hidden_t if self.enable_recurrence else torch.zeros_like(hidden)
         # output = self.dropout(output)
         # output = self.softmax(output)

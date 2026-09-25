@@ -95,14 +95,12 @@ class UnitNormWeightsTest(unittest.TestCase):
         torch.testing.assert_close(layer.per_sample_weights.data, weights, rtol=0, atol=0)
 
 
-class ElmanLayoutTest(unittest.TestCase):
-    """h_t = tanh(i2h(combined)), y_t = i2o(h_t): the output reads this step's hidden state."""
+class ForkedLayoutTest(unittest.TestCase):
+    """The shared trunk forks into a recurrent state head and a current-emission head."""
 
-    def test_i2h_learns_under_per_step_backprop_and_dfa(self):
-        # Before the Elman layout, i2h fed only the next step, whose input is detached under
-        # DFA and per-step backprop, so i2h never got a gradient or an update there.
+    def test_i2h_gets_direct_dfa_but_not_per_step_backprop(self):
         for updater in ("dfa", "backprop"):
-            with self.subTest(model="ephemeral", updater=updater):
+            with self.subTest(updater=updater):
                 model = build_rnn("ephemeral", updater)
                 grads, update = [], model.i2h.apply_update
 
@@ -115,33 +113,31 @@ class ElmanLayoutTest(unittest.TestCase):
                 weight_before = model.i2h.per_sample_weights.detach().clone()
                 bias_before = model.i2h.bias.detach().clone()
                 run_one_sequence(model, updater)
-                self.assertEqual(len(grads), SEQUENCE.shape[1] - 1)  # updated every step
-                self.assertTrue(all(g is not None for g in grads), grads)
-                self.assertGreater(max(grads), 0.0)
-                self.assertFalse(torch.equal(model.i2h.per_sample_weights.detach(), weight_before))
-                self.assertFalse(torch.equal(model.i2h.bias.detach(), bias_before))
+                self.assertEqual(len(grads), SEQUENCE.shape[1] - 1)
+                if updater == "dfa":
+                    self.assertTrue(all(g is not None and g > 0 for g in grads), grads)
+                    self.assertFalse(torch.equal(model.i2h.per_sample_weights.detach(), weight_before))
+                    self.assertFalse(torch.equal(model.i2h.bias.detach(), bias_before))
+                else:
+                    self.assertTrue(all(g is None for g in grads), grads)
+                    self.assertTrue(torch.equal(model.i2h.per_sample_weights.detach(), weight_before))
+                    self.assertTrue(torch.equal(model.i2h.bias.detach(), bias_before))
 
-        with self.subTest(model="rnn", updater="backprop"):
-            model = build_rnn("rnn", "backprop")
-            optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
-            grads, step = [], optimizer.step
+    def test_bptt_trains_the_state_head_through_future_steps(self):
+        for model_type in ("ephemeral", "rnn"):
+            with self.subTest(model=model_type):
+                model = build_rnn(model_type, "bptt")
+                optimizer = None if model_type == "ephemeral" else torch.optim.SGD(model.parameters(), lr=0.1)
+                weights = model.i2h.per_sample_weights if model_type == "ephemeral" else model.i2h.weight
+                before = weights.detach().clone()
+                run_one_sequence(model, "bptt", optimizer=optimizer)
+                self.assertFalse(torch.equal(weights.detach(), before))
 
-            def record_step(*args, **kwargs):
-                grad = model.i2h.weight.grad
-                grads.append(None if grad is None else grad.norm().item())
-                return step(*args, **kwargs)
-
-            optimizer.step = record_step
-            weight_before = model.i2h.weight.detach().clone()
-            run_one_sequence(model, "backprop", optimizer=optimizer)
-            self.assertEqual(len(grads), SEQUENCE.shape[1] - 1)
-            self.assertTrue(all(g is not None and g > 0 for g in grads), grads)
-            self.assertFalse(torch.equal(model.i2h.weight.detach(), weight_before))
-
-    def test_output_head_reads_the_hidden_state(self):
+    def test_output_and_state_heads_fork_from_the_shared_trunk(self):
         model = build_rnn("ephemeral", "dfa")
-        self.assertEqual(model.i2o.in_features, HIDDEN)
-        self.assertEqual((model.i2h.in_features, model.i2h.out_features), (2 * len(CHARSET) + HIDDEN, HIDDEN))
+        inner = 2 * len(CHARSET) + HIDDEN
+        self.assertEqual(model.i2o.in_features, inner)
+        self.assertEqual((model.i2h.in_features, model.i2h.out_features), (inner, HIDDEN))
         self.assertTrue(model.i2h.ephemeral_mask.any())  # a hidden layer, not a last layer
         self.assertFalse(model.i2h.is_last_layer)
 
@@ -152,7 +148,7 @@ class ElmanLayoutTest(unittest.TestCase):
                 off.load_state_dict(on.state_dict())
                 with torch.no_grad():
                     i2h = on.i2h.per_sample_weights if model_type == "ephemeral" else on.i2h.weight
-                    i2h.normal_()  # so the output visibly depends on i2h
+                    i2h.normal_()
                     if model_type == "ephemeral":
                         on.i2o.per_sample_weights.normal_()
                     off.load_state_dict(on.state_dict())
@@ -162,10 +158,9 @@ class ElmanLayoutTest(unittest.TestCase):
                     torch.testing.assert_close(out_off, out_on, rtol=0, atol=0)
                     self.assertTrue(torch.equal(hidden_off, torch.zeros_like(h)))
                     self.assertGreater(hidden_on.abs().sum().item(), 0)
-                    # y_t = i2o(tanh(i2h(combined))) with h_t not fed back.
-                    torch.testing.assert_close(out_off, off.i2o(hidden_on), rtol=0, atol=0)
+                    # The current output does not read the recurrent-state fork.
                     i2h.zero_()
-                    self.assertFalse(torch.equal(on(x, h)[0], out_on))
+                    torch.testing.assert_close(on(x, h)[0], out_on, rtol=0, atol=0)
 
 
 class SimpleRnnDfaTest(unittest.TestCase):

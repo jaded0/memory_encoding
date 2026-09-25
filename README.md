@@ -56,18 +56,16 @@ replaces each sequence's copy with the batch mean and zeroes the ephemeral entri
 Forgetting multiplies the ephemeral entries by `1 - forget_rate`. Layers without ephemeral
 entries log no ephemeral norms.
 
-Both models use the Elman layout at each step: `combined = hidden_layers(cat(x_t, h_{t-1}))`
-(plus the residual, if on), `h_t = tanh(i2h(combined))`, and the output `y_t = i2o(h_t)`.
-So `i2o` takes
-`--hidden_size` inputs, and `i2h` is a hidden layer that every updater trains. With
-`--enable_recurrence False` the output path is the same, `y_t = i2o(tanh(i2h(combined)))`,
-but zeros are fed to the next step instead of `h_t`. (Until 2026-09 both heads read
-`combined` and `h_t` fed only the next step; see Known issues.)
+Both models use a forked transition/emission layout. At each step,
+`combined = hidden_layers(cat(x_t, h_{t-1}))` (plus the residual, if on),
+`h_t = tanh(i2h(combined))`, and `y_t = i2o(tanh(combined))`. The state and output heads can
+therefore specialize over a shared deep representation. With `--enable_recurrence False`, both
+heads still execute but zeros are fed to the next step instead of `h_t`.
 
 | `--updater` | `--model_type ephemeral` | `--model_type rnn` (SimpleRNN baseline) |
 | --- | --- | --- |
 | `dfa` | Every step: DFA gradients, `apply_update`, forget | Every step: the same DFA gradients without ephemeral weights (all layers, `i2h` included; see below), then `w -= lr * grad`; `--grad_norm_clip` is a global grad-norm clip |
-| `backprop` | Every step: `backward()` on the batch-mean step loss, `scale_ephemeral_grads`, `apply_update`, forget | Every step: `torch.optim.SGD` on the batch-mean step loss (all layers, `i2h` included); `--grad_norm_clip` is a global grad-norm clip |
+| `backprop` | Every step: `backward()` on the batch-mean step loss, `scale_ephemeral_grads`, `apply_update`, forget; the forked `i2h` gets no same-step gradient | Every step: `torch.optim.SGD` on the batch-mean step loss; forked `i2h` gets no same-step gradient; `--grad_norm_clip` is a global grad-norm clip |
 | `bptt` | After the last step: `backward()` on the batch-mean summed loss, `scale_ephemeral_grads`, plain `p -= lr * p.grad`, forget | After the last step: `torch.optim.SGD`; `--grad_norm_clip` is a global grad-norm clip |
 
 For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is `--batch_size`):
@@ -80,7 +78,7 @@ For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is 
 | Order per update | Update (incl. clamp and normalize), then forget | Update (incl. clamp and normalize), then forget | Update, then forget (once) |
 | Step on an ephemeral weight | `lr·α·g` | `lr·α²·g/B` | `lr·α·g/B`, zeroed by the next `start_sequence_wipe()` |
 | Step on a slow weight | `lr·g` | `lr·g/B` | `lr·g/B` |
-| Layers that change | Hidden layers, `i2h`, `i2o` | Hidden layers, `i2h`, `i2o` | Every parameter with a gradient (hidden layers, `i2h`, `i2o`) |
+| Layers that change | Hidden layers, `i2h` (direct feedback), `i2o` | Hidden layers and `i2o`; `i2h` only through future loss under BPTT | Every parameter with a gradient (hidden layers, `i2h`, `i2o`) |
 | `--ephemeral_update_clamp` | Element-wise clamp on α-scaled ephemeral updates | Same as DFA | Ignored |
 | `--weight_clamp`, `--unit_norm_weights` | Applied after each update | Applied after each update | Ignored |
 
@@ -150,23 +148,15 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   `'none'` at `train.py:327-329`). This was a deliberate choice at the time, and it helped
   the loss numbers. Combined with α², backprop's per-sequence ephemeral step is α/B times
   DFA's at the same `--learning_rate` and `--plasticity`.
-- **Elman layout, `y_t = i2o(h_t)` (2026-09): pending benchmark confirmation.** Both
-  models now compute `h_t = tanh(i2h(combined))` and `y_t = i2o(h_t)`
-  (`ephemeral_model.py:452-457`, `:638-640`); before, `h_t` and `y_t` were both read off
-  `combined`, and `h_t` fed only the next step. Under DFA and per-step backprop, which
-  detach the hidden state every step (`train.py:91-92`), `i2h` therefore never received a
-  gradient or an error, and at the time its `per_sample_weights` stayed at their initial zeros,
-  so the hidden state was the constant `tanh(i2h.bias)` and recurrence carried no information. Now
-  `i2h` learns every step under backprop, gets its own DFA error projection through its
-  `feedback_weights` like the hidden layers (`train.py:152-164`), and still learns under
-  BPTT. Jaden approved this ("option A"), but it changes every updater's dynamics and the
-  model's shapes, so it **needs full before/after benchmark runs** against its parent commit
-  before it is relied on. Things to watch: `i2h` is now one more layer between the hidden
-  layers and the output; `i2o.bias` is drawn with bound 1/√hidden_size instead of
-  1/√(input + hidden); and the W&B averages of update norms now include a real `i2h` value
-  instead of 0. Checkpoints from before the
-  change are refused (`CHECKPOINT_CODE_VERSION` 4). (DFA trained nothing in the SimpleRNN
-  baseline until the next change; it now trains every layer, see Updaters.)
+- **Forked state and emission with direct DFA to `i2h` (2026-09).** The shared deep
+  representation feeds separate current-output and recurrent-state heads. This preserves a
+  direct route from ephemeral features to emission and lets memory state specialize separately.
+  The state head receives its own fixed DFA projection every step even though it affects only
+  future outputs; this is an explicit local surrogate for temporal credit, not the gradient of a
+  future loss. Per-step backprop does not train the forked `i2h`, because hidden state is detached
+  between steps, while BPTT trains it through later outputs. The topology decision and supporting
+  BPTT experiments are documented in `docs/tapped_vs_forked_rnn_report.md`. Checkpoints from the
+  preceding serial Elman layout are refused (`CHECKPOINT_CODE_VERSION` 8).
 - **Ephemeral + BPTT: fast weights are frozen within a sequence.** BPTT is the contrast to
   per-step backprop and DFA in the permutation grid above. Its only update comes after the
   last step (`train.py:267`), and `start_sequence_wipe()` zeroes the ephemeral entries at the

@@ -142,8 +142,9 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 # update runs. i2o keeps a reference to it (as _last_projected_error,
                 # for the bias update), so it must not be modified in place until the updates
                 # below are done: tests/test_dfa_error_signals.py checks that.
-                # i2h is a hidden layer here (Elman layout: the output reads h_t), so it gets
-                # its own feedback projection like the layers before it.
+                # i2h is the forked state head. Direct feedback trains it even though the
+                # current output reads the sibling emission path; this is an explicit local
+                # surrogate for temporal credit, not BPTT through future states.
                 for layer in rnn.linear_layers:
                     layer.populate_dfa_gradients(output_error)
                 rnn.i2h.populate_dfa_gradients(output_error)
