@@ -47,6 +47,16 @@ def recurrent_trunk_size(input_size, hidden_size):
     return input_size + hidden_size
 
 
+def regularized_weight(weight, unit_norm_weights, weight_clamp, norm_dims):
+    """Return weights normalized over norm_dims, then element-wise clamped; biases are excluded."""
+    if unit_norm_weights:
+        norms = torch.linalg.vector_norm(weight, ord=2, dim=norm_dims, keepdim=True)
+        weight = weight / (norms + 1e-6)
+    if weight_clamp != 0:
+        weight.clamp_(-weight_clamp, weight_clamp)
+    return weight
+
+
 class EphemeralLinear(nn.Linear):
     def __init__(self, in_features, out_features, charset, bias=True, unit_norm_weights=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
@@ -258,17 +268,10 @@ class EphemeralLinear(nn.Linear):
     
     def _apply_regularization(self):
         """Helper method to apply normalization and weight clipping."""
-        if self.unit_norm_weights:
-            # Only the weights forward() uses. plasticity, the bias, the
-            # feedback weights, the traces and the logged update norms are left alone.
-            # Each sequence's [out, in] slice is rescaled to unit L2 norm on its own, so one
-            # sequence's scale never depends on the others in the batch.
-            weights = self.per_sample_weights.data
-            norms = torch.linalg.vector_norm(weights, ord=2, dim=(1, 2), keepdim=True)  # [B, 1, 1]
-            self.per_sample_weights.data = weights / (norms + 1e-6)
-        
-        if self.weight_clamp != 0:
-            self.per_sample_weights.data.clamp_(-self.weight_clamp, self.weight_clamp)
+        # Each sequence's [out, in] slice is rescaled independently. Plasticity, biases,
+        # feedback matrices, traces, and logged norms are intentionally excluded.
+        self.per_sample_weights.data = regularized_weight(
+            self.per_sample_weights.data, self.unit_norm_weights, self.weight_clamp, (1, 2))
 
 
     def apply_forget_step(self):
@@ -542,8 +545,11 @@ class DFALinear(nn.Linear):
     what EphemeralRNN's slow weights amount to: each copy takes its own sequence's step, and
     start_sequence_wipe() sets every copy to the batch mean."""
 
-    def __init__(self, in_features, out_features, bias=True):
+    def __init__(self, in_features, out_features, bias=True,
+                 unit_norm_weights=False, weight_clamp=0):
         super().__init__(in_features, out_features, bias)
+        self.unit_norm_weights = unit_norm_weights
+        self.weight_clamp = weight_clamp
         self.is_last_layer = False
         self.register_buffer('feedback_weights', None)  # set by enable_dfa for non-last layers
         self.in_traces = None  # this step's input, recorded by forward (not saved)
@@ -577,12 +583,17 @@ class DFALinear(nn.Linear):
             self.weight -= learning_rate * self.weight.grad
             if self.bias is not None:
                 self.bias -= learning_rate * self.bias.grad
+            self.apply_regularization()
+
+    def apply_regularization(self):
+        self.weight.data = regularized_weight(
+            self.weight.data, self.unit_norm_weights, self.weight_clamp, (0, 1))
 
 
 class SimpleRNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1,
                  init_type='zero', enable_recurrence=True, updater=None,
-                 residual_connection=False):
+                 residual_connection=False, unit_norm_weights=False, weight_clamp=0):
         """updater: 'dfa' gives the hidden layers and i2h fixed random DFA feedback matrices (drawn
         after every layer is initialised, so the layers start the same as under the other
         updaters at the same seed). Other values leave it a plain backprop/BPTT model."""
@@ -597,16 +608,17 @@ class SimpleRNN(nn.Module):
         inner_size = recurrent_trunk_size(input_size, hidden_size)
 
         # Standard linear layers (DFALinear is an nn.Linear that can also take DFA updates)
-        self.linear_layers = nn.ModuleList([DFALinear(inner_size, inner_size)])
+        layer_options = {"unit_norm_weights": unit_norm_weights, "weight_clamp": weight_clamp}
+        self.linear_layers = nn.ModuleList([DFALinear(inner_size, inner_size, **layer_options)])
         for _ in range(1, num_layers):
-            self.linear_layers.append(DFALinear(inner_size, inner_size))
+            self.linear_layers.append(DFALinear(inner_size, inner_size, **layer_options))
 
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
 
         # Forked transition and emission heads over the shared deep representation.
-        self.i2h = DFALinear(inner_size, hidden_size)
-        self.i2o = DFALinear(inner_size, output_size)
+        self.i2h = DFALinear(inner_size, hidden_size, **layer_options)
+        self.i2o = DFALinear(inner_size, output_size, **layer_options)
         self.softmax = nn.LogSoftmax(dim=1)
 
         if updater == 'dfa':
@@ -616,6 +628,12 @@ class SimpleRNN(nn.Module):
     def dfa_layers(self):
         """Every layer DFA trains, in update order: the hidden layers, i2h, then i2o."""
         return [*self.linear_layers, self.i2h, self.i2o]
+
+    def apply_regularization(self):
+        """Apply the configured weights-only normalization and clamp after an SGD step."""
+        with torch.no_grad():
+            for layer in self.dfa_layers():
+                layer.apply_regularization()
 
     def forward(self, input, hidden):
         # print(f"input shape: {input.shape}, hidden shape: {hidden.shape}")

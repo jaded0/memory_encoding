@@ -141,7 +141,8 @@ def str2bool(v):
 # 8: forked transition/emission layout; i2h receives direct DFA while i2o reads the shared trunk.
 # 9: the forked output reads the shared trunk directly instead of through tanh.
 # 10: SimpleRNN matches EphemeralRNN's shared-width GELU trunk and residual placement.
-CHECKPOINT_CODE_VERSION = 10
+# 11: unit_norm_weights and weight_clamp also regularize SimpleRNN's shared weights.
+CHECKPOINT_CODE_VERSION = 11
 
 
 def check_checkpoint_code_version(checkpoint, checkpoint_path="<checkpoint>"):

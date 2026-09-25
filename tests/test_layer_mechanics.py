@@ -291,6 +291,19 @@ class SimpleRnnDfaTest(unittest.TestCase):
                 torch.testing.assert_close(record["weight_after"] - record["weight"], -LEARNING_RATE * record["weight_grad"],
                                            rtol=1e-4, atol=1e-7, msg=key)
 
+    def test_normalization_and_weight_clamp_apply_under_every_updater(self):
+        for updater in ("dfa", "backprop", "bptt"):
+            with self.subTest(updater=updater):
+                seed_everything(99, deterministic=True)
+                model = SimpleRNN(2 * len(CHARSET), HIDDEN, len(CHARSET), 1,
+                                  updater=updater, unit_norm_weights=True, weight_clamp=0.1)
+                optimizer = (None if updater == "dfa" else
+                             torch.optim.SGD(model.parameters(), lr=LEARNING_RATE))
+                run_one_sequence(model, updater, optimizer=optimizer)
+                for layer in model.dfa_layers():
+                    self.assertLessEqual(layer.weight.norm().item(), 1.000001)
+                    self.assertLessEqual(layer.weight.abs().max().item(), 0.100001)
+
     def test_rnn_without_dfa_state_refuses_dfa(self):
         model = build_rnn("rnn", "backprop")
         with self.assertRaises(ValueError):

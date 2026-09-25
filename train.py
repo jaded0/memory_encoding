@@ -239,6 +239,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
                 
                 optimizer.step()
+                rnn.apply_regularization()
                 loss_total += step_loss.mean().item() if step_loss.dim() > 0 else step_loss.item()
             
         elif updater == 'bptt':
@@ -288,6 +289,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                         torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
                     
                     optimizer.step()
+                    rnn.apply_regularization()
 
         num_steps += 1
         step_preds.append(output.detach().argmax(dim=1))
@@ -589,7 +591,8 @@ def main():
         print(f"Initializing SimpleRNN model with '{args.updater}' updater.")
         rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"],
                        dropout_rate=0, enable_recurrence=args.enable_recurrence, updater=args.updater,
-                       residual_connection=args.residual_connection)
+                       residual_connection=args.residual_connection,
+                       unit_norm_weights=args.unit_norm_weights, weight_clamp=args.weight_clamp)
     elif args.model_type == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{args.updater}' updater.")
         rnn = EphemeralRNN(

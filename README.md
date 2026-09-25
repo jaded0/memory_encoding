@@ -104,9 +104,10 @@ removed, so the two models can be compared under DFA. SimpleRNN's layers are `DF
   to the batch mean before the next sequence, so each step's contribution to the batch-mean
   weight is the same `lr·mean_B(g)`.
 - There is no plasticity, ephemeral mask, forgetting or wiping. `--ephemeral_update_clamp`
-  is ignored, since it only clamps ephemeral entries. `--weight_clamp` and `--unit_norm_weights`
-  are ignored, as SimpleRNN ignores them under every updater. `--grad_norm_clip` clips the
-  global norm of the DFA gradients before the step, as it does for the SGD gradients under
+  is ignored, since it only clamps ephemeral entries. `--unit_norm_weights` normalizes each
+  shared layer's complete weight matrix and `--weight_clamp` then clamps its entries, after
+  every DFA or SGD update; biases and feedback matrices are excluded. `--grad_norm_clip` clips
+  the global norm of the DFA gradients before the step, as it does for the SGD gradients under
   backprop and BPTT.
 - The feedback matrices are drawn after every layer is initialised, so rnn + dfa starts
   from the same weights as rnn + backprop at the same seed. They are buffers, and only an
