@@ -1,4 +1,9 @@
-# DFA throughput benchmark
+# Benchmarks
+
+- `3pal_architecture_initialization.md`: seven-seed historical topology-by-slow-initialization
+  factorial on the three-palindrome task.
+
+## DFA throughput benchmark
 
 `benchmark_dfa_throughput.py` compares three single-thread CPU paths on identical pre-generated
 batches and matched 6-symbol, 64-hidden, two-layer, batch-16 models:
