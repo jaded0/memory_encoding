@@ -588,7 +588,8 @@ def main():
     if args.model_type == 'rnn':
         print(f"Initializing SimpleRNN model with '{args.updater}' updater.")
         rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"],
-                       dropout_rate=0, enable_recurrence=args.enable_recurrence, updater=args.updater)
+                       dropout_rate=0, enable_recurrence=args.enable_recurrence, updater=args.updater,
+                       residual_connection=args.residual_connection)
     elif args.model_type == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{args.updater}' updater.")
         rnn = EphemeralRNN(

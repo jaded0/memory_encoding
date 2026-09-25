@@ -158,6 +158,32 @@ class ForkedLayoutTest(unittest.TestCase):
                 output_hook.remove()
                 torch.testing.assert_close(head_inputs["output"], head_inputs["state"], rtol=0, atol=0)
 
+    def test_model_types_share_trunk_dimensions_activation_and_residual(self):
+        input_size, hidden_size, layers = 11, 5, 2
+        simple = SimpleRNN(input_size, hidden_size, 4, layers, residual_connection=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            ephemeral = EphemeralRNN(input_size, hidden_size, 4, layers, CHARSET,
+                                     batch_size=2, residual_connection=True)
+        inner = input_size + hidden_size
+        for model in (simple, ephemeral):
+            self.assertEqual([(layer.in_features, layer.out_features)
+                              for layer in model.linear_layers], [(inner, inner)] * layers)
+            self.assertEqual((model.i2h.in_features, model.i2o.in_features), (inner, inner))
+
+        simple_no_residual = SimpleRNN(input_size, hidden_size, 4, layers)
+        simple_no_residual.load_state_dict(simple.state_dict())
+        x, h = torch.randn(2, input_size), torch.randn(2, hidden_size)
+        trunk = torch.cat((x, h), dim=1)
+        for layer in simple.linear_layers:
+            trunk = torch.nn.functional.gelu(layer(trunk))
+        output_without_residual, _ = simple_no_residual(x, h)
+        expected_without_residual = torch.nn.functional.linear(
+            trunk, simple_no_residual.i2o.weight, simple_no_residual.i2o.bias)
+        expected_with_residual = torch.nn.functional.linear(
+            trunk + torch.cat((x, h), dim=1), simple.i2o.weight, simple.i2o.bias)
+        torch.testing.assert_close(output_without_residual, expected_without_residual)
+        torch.testing.assert_close(simple(x, h)[0], expected_with_residual)
+
     def test_recurrence_off_keeps_the_output_path_and_feeds_back_zeros(self):
         for model_type in ("ephemeral", "rnn"):
             with self.subTest(model=model_type):
@@ -247,7 +273,9 @@ class SimpleRnnDfaTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             SimpleRNN(2 * len(CHARSET), HIDDEN, len(CHARSET), 1)
         for layer in (dfa.linear_layers[0], dfa.i2h):
-            torch.testing.assert_close(layer.feedback_weights, init_feedback_weights(len(CHARSET), HIDDEN), rtol=0, atol=0)
+            torch.testing.assert_close(layer.feedback_weights,
+                                       init_feedback_weights(len(CHARSET), layer.out_features),
+                                       rtol=0, atol=0)
         self.assertIsNone(dfa.i2o.feedback_weights)
 
     def test_grad_norm_clip_clips_the_dfa_gradients(self):

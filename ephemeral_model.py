@@ -42,6 +42,11 @@ def dfa_bias_update(projected_error, learning_rate):
     return bias_update
 
 
+def recurrent_trunk_size(input_size, hidden_size):
+    """Width shared by the recurrent models' concatenated input/state trunk."""
+    return input_size + hidden_size
+
+
 class EphemeralLinear(nn.Linear):
     def __init__(self, in_features, out_features, charset, bias=True, unit_norm_weights=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
@@ -373,7 +378,7 @@ class EphemeralRNN(torch.nn.Module):
         self.num_layers = num_layers
         self.dropout_rate = dropout_rate
         self.init_type = init_type
-        inner_size = input_size + hidden_size
+        inner_size = recurrent_trunk_size(input_size, hidden_size)
         self.residual_connection = residual_connection
         self.batch_size = batch_size
         self.forget_rate = forget_rate
@@ -575,7 +580,9 @@ class DFALinear(nn.Linear):
 
 
 class SimpleRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1, init_type='zero', enable_recurrence=True, updater=None):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1,
+                 init_type='zero', enable_recurrence=True, updater=None,
+                 residual_connection=False):
         """updater: 'dfa' gives the hidden layers and i2h fixed random DFA feedback matrices (drawn
         after every layer is initialised, so the layers start the same as under the other
         updaters at the same seed). Other values leave it a plain backprop/BPTT model."""
@@ -586,18 +593,20 @@ class SimpleRNN(nn.Module):
         self.init_type = init_type
         self.enable_recurrence = enable_recurrence
         self.updater = updater
+        self.residual_connection = residual_connection
+        inner_size = recurrent_trunk_size(input_size, hidden_size)
 
         # Standard linear layers (DFALinear is an nn.Linear that can also take DFA updates)
-        self.linear_layers = nn.ModuleList([DFALinear(input_size + hidden_size, hidden_size)])
+        self.linear_layers = nn.ModuleList([DFALinear(inner_size, inner_size)])
         for _ in range(1, num_layers):
-            self.linear_layers.append(DFALinear(hidden_size, hidden_size))
+            self.linear_layers.append(DFALinear(inner_size, inner_size))
 
         # Dropout layers
         self.dropout = nn.Dropout(dropout_rate)
 
         # Forked transition and emission heads over the shared deep representation.
-        self.i2h = DFALinear(hidden_size, hidden_size)
-        self.i2o = DFALinear(hidden_size, output_size)
+        self.i2h = DFALinear(inner_size, hidden_size)
+        self.i2o = DFALinear(inner_size, output_size)
         self.softmax = nn.LogSoftmax(dim=1)
 
         if updater == 'dfa':
@@ -611,12 +620,17 @@ class SimpleRNN(nn.Module):
     def forward(self, input, hidden):
         # print(f"input shape: {input.shape}, hidden shape: {hidden.shape}")
         combined = torch.cat((input, hidden), dim=1)
+        if self.residual_connection:
+            residual = combined.clone()
 
-        # Pass through the linear layers with ReLU and Dropout
+        # Match EphemeralRNN's shared-width GELU trunk.
         for layer in self.linear_layers:
             combined = layer(combined)
-            combined = F.relu(combined)
+            combined = F.gelu(combined)
             # combined = self.dropout(combined)
+
+        if self.residual_connection:
+            combined += residual
 
         # Forked transition/emission layout, as in EphemeralRNN. The output is independent of
         # this step's state head; --enable_recurrence False feeds back zeros.

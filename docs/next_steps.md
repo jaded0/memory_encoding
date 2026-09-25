@@ -11,19 +11,7 @@ Guiding rule from Jaden: **both model architectures (`EphemeralRNN`, `SimpleRNN`
 same hyperparameters, except where it fundamentally makes no sense; in that case a curt
 comment at the point of use says why.**
 
-## 1. SimpleRNN baseline matches the ephemeral model's architecture automatically
-Jaden: "parameterized/computed to automatically match when run with otherwise same
-parameters." Today SimpleRNN's hidden layers use **ReLU** (EphemeralRNN: **GELU**) and are
-**`hidden_size` wide** (EphemeralRNN's hidden layers are `input + hidden` wide, `inner_size`).
-- Make SimpleRNN compute its layer widths and activation the same way EphemeralRNN does, from
-  the same constructor arguments, ideally via one shared helper so they cannot drift.
-- Check residual connection and positional-encoding handling match too.
-- Changes rnn/backprop, rnn/bptt and `dfa/rnn` behaviour: regenerate traces, bump the code
-  version, and note that old SimpleRNN runs aren't comparable.
-- The README's Updaters section ("The architectures still differ outside DFA …") must then be
-  updated.
-
-## 2. rnn + dfa (and SimpleRNN generally) applies `--weight_clamp` and `--unit_norm_weights`
+## 1. rnn + dfa (and SimpleRNN generally) applies `--weight_clamp` and `--unit_norm_weights`
 Today SimpleRNN ignores both under every updater. Apply them after each update, the same way
 `EphemeralLinear._apply_regularization` does (per-sequence unit norm there; SimpleRNN has one
 shared weight copy, so the unit norm is over the layer's `[out, in]` weight). Put the logic in a
@@ -31,7 +19,7 @@ shared helper used by both `EphemeralLinear` and `DFALinear` (and by the SimpleR
 path, per the rule above). Decide and document whether the bias is included (in the ephemeral
 model it is not).
 
-## 3. Hyperparameter parity audit (Jaden's rule above)
+## 2. Hyperparameter parity audit (Jaden's rule above)
 Go through every flag in `train.py`'s parser and make each apply to both models, or add a
 curt comment where it cannot. Known cases:
 - `--grad_norm_clip` (SimpleRNN; also under rnn+dfa) vs `--ephemeral_update_clamp` (ephemeral
@@ -40,14 +28,14 @@ curt comment where it cannot. Known cases:
   model should support `--grad_norm_clip` too (on backprop/BPTT that is well defined).
 - `--plasticity`, `--ephemeral_fraction`, `--forget_rate`: fundamentally ephemeral-only
   (SimpleRNN has no ephemeral entries); a one-line comment suffices.
-- `--weight_clamp`, `--unit_norm_weights`: §2.
+- `--weight_clamp`, `--unit_norm_weights`: §1.
 - Ephemeral BPTT ignores `--ephemeral_update_clamp`, `--weight_clamp`, `--unit_norm_weights`
   (tests/README.md, pinned behaviours). Decide whether that is "fundamental" (fast weights never
   reach a forward pass under BPTT) and comment accordingly.
 - `run_training.sh` / `slurm_run.sh` choose `GRAD_CLIP_FLAG` by model type; simplify once flags
   are unified.
 
-## 4. Batch-mean DFA step for SimpleRNN's shared weights: document the justification
+## 3. Batch-mean DFA step for SimpleRNN's shared weights: document the justification
 Jaden: keep the batch mean, "but this should be well thought-out with documented
 justification." Write it in the README (Updaters, rnn + dfa) and at `DFALinear`'s update:
 - SimpleRNN has one weight copy for the whole batch. The ephemeral model's slow entries are
@@ -64,7 +52,7 @@ justification." Write it in the README (Updaters, rnn + dfa) and at `DFALinear`'
 - Consider a small test pinning that the rnn+dfa step equals the mean of the per-sequence DFA
   gradients.
 
-## 5. Research, not code yet
+## 4. Research, not code yet
 - **DFA and f′** (README "Known issues"): examine whether DFA should include the activation
   derivative (Nøkland 2016). Any change goes in the shared `dfa_*` helpers for both models.
 - **α² in backprop** and the **1/B factor**: fix only with full before/after runs.
@@ -79,6 +67,8 @@ justification." Write it in the README (Updaters, rnn + dfa) and at `DFALinear`'
 - Main-code DFA throughput was benchmarked against the scratch harness and profiled. Allocation
   and gradient-clearing changes improved native throughput 15-20% without changing any golden
   trace; methodology and raw results are under `benchmarks/`.
+- SimpleRNN now derives the same `input + hidden` trunk width, GELU activation, residual
+  placement, forked heads, recurrence switch, and positional input width as EphemeralRNN.
 
 ## Already decided, nothing to do
 - `EPHEMERAL_AUTO_PREPROCESS=1` forces preprocessing even under SLURM: already implemented

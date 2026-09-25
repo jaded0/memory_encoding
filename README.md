@@ -110,11 +110,11 @@ removed, so the two models can be compared under DFA. SimpleRNN's layers are `DF
   backprop and BPTT.
 - The feedback matrices are drawn after every layer is initialised, so rnn + dfa starts
   from the same weights as rnn + backprop at the same seed. They are buffers, and only an
-  rnn + dfa model has them (`CHECKPOINT_CODE_VERSION` 5). rnn + backprop and rnn + BPTT
-  are unchanged.
-- The architectures still differ outside DFA: SimpleRNN's hidden layers use ReLU (the
-  ephemeral model's use GELU), and they are `--hidden_size` wide (the ephemeral model's are
-  input + hidden).
+  rnn + dfa model has them (added in `CHECKPOINT_CODE_VERSION` 5).
+- Both models use the same `input + hidden`-wide GELU trunk, forked heads, optional residual,
+  recurrence switch, and positional dimensions. They differ in the weights and updates:
+  SimpleRNN has one shared `nn.Linear` copy per layer, while EphemeralRNN has per-sequence
+  fast/slow weights, plasticity, forgetting, and sequence wipes (`CHECKPOINT_CODE_VERSION` 10).
 
 Under DFA, `output_error` (`train.py:136`) is a single tensor, and the same object is passed
 to every layer's `populate_dfa_gradients`. It is ∂loss/∂output per sequence. It used to have two names,
@@ -191,8 +191,7 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   `projected = output_error @ feedback_weights` (`dfa_projected_error`,
   `ephemeral_model.py:21-27`), and that is used as is for the weight step (outer product with
   the input) and the bias step. It is never multiplied by the derivative of the layer's
-  activation: gelu′ for the ephemeral model's hidden layers (`ephemeral_model.py:440`),
-  relu′ for SimpleRNN's (`:633`), and tanh′ for `i2h` in both (`:452`, `:638`). This differs
+  activation: gelu′ for both models' hidden layers and tanh′ for `i2h` in both. This differs
   from Nøkland's formulation (2016, "Direct Feedback Alignment Provides Learning in Deep
   Neural Networks"), where a hidden layer's update is δa_l = (B_l·e) ⊙ f′(a_l), with a_l the
   layer's pre-activation, e the output error, and δW_l = −δa_l·h_{l−1}ᵀ. Only the output

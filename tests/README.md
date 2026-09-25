@@ -46,7 +46,8 @@ thread, CPU. There are two cases per updater, and one SimpleRNN case under DFA:
   second sequence (about lr², since it goes through the `i2o` weights the first
   sequence set) sits well above the comparison's `abs_tol` of 1e-7.
 - **`rnn`** (key `dfa/rnn`, DFA only): the SimpleRNN baseline (one layer,
-  hidden size 4, `last_two` input, recurrence on) with `updater='dfa'`, lr 0.1,
+  hidden size 4, 12-wide `input + hidden` GELU trunk, `last_two` input, recurrence on) with
+  `updater='dfa'`, lr 0.1,
   `grad_norm_clip` 0, and the same two consecutive calls. It stores each call
   as above, and after both calls each layer's `weight`, `bias`, their
   gradients, `feedback_weights` (none for `i2o`) and input trace, plus a
@@ -80,7 +81,7 @@ from the default initialization.
 | DFA, `normalize_clip_2seq` | 1.5828555822, 1.5795941353 | 8 | 0 | 8 / 8 | 8 |
 | Backprop, `normalize_clip_2seq` | 1.6084581614, 1.5166777074 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
 | BPTT, `normalize_clip_2seq` | 1.4008217752, 1.3696093559 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
-| DFA, `rnn` (SimpleRNN) | 1.4461491108, 1.4713594913 | 0 | 0 | 8 / 8 (`apply_dfa_update`; `i2o` 8 too) | 8 |
+| DFA, `rnn` (SimpleRNN) | 1.4085035324, 1.4315583706 | 0 | 0 | 8 / 8 (`apply_dfa_update`; `i2o` 8 too) | 8 |
 
 In `normalize_clip_2seq`, BPTT's first loss equals the base case's, because the
 update comes after the last step and BPTT ignores `unit_norm_weights` and
@@ -135,3 +136,4 @@ Pass `--output PATH` to write somewhere else for comparison.
 | 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Slow entries of every `EphemeralLinear.per_sample_weights` now start from the layer's already-drawn default `nn.Linear.weight`, repeated over the batch; fast entries remain zero. All six ephemeral traces change from the first forward pass. Masks and feedback matrices are identical because initialization adds no RNG draws, and `dfa/rnn` is byte-identical. Base losses: DFA 1.4558 → 1.4534, backprop 1.4556 → 1.4530, BPTT 1.4539 → 1.4507. `normalize_clip_2seq`: DFA 1.6721 → 1.6770 and 1.6016 → 1.6151; backprop 1.5848 → 1.6608 and 1.5525 → 1.5241; BPTT 1.4539 → 1.4507 and 1.3889 → 1.3847. `CHECKPOINT_CODE_VERSION` 6 → 7 |
 | 2026-09-24 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Restored a forked transition/emission graph while retaining tanh on output features: `h_t = tanh(i2h(combined))`, `y_t = i2o(tanh(combined))`. `i2h` remains explicitly direct-feedback-trained under DFA, gets no same-step per-step-backprop gradient, and receives future credit under BPTT. Every trace changes, including `dfa/rnn`; base losses are DFA 1.4025, backprop 1.4026, BPTT 1.4004. `CHECKPOINT_CODE_VERSION` 7 → 8. See `docs/tapped_vs_forked_rnn_report.md` |
 | 2026-09-24 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Removed tanh from only the forked output-feature path: `y_t = i2o(combined)` while recurrent state remains `tanh(i2h(combined))`. Every trace changes slightly; base losses are DFA 1.4029, backprop 1.4031, BPTT 1.4008. `CHECKPOINT_CODE_VERSION` 8 → 9. See `docs/tapped_vs_forked_rnn_report.md`, "Output activation after locking the fork" |
+| 2026-09-24 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Matched SimpleRNN's architecture to EphemeralRNN: every trunk layer is `input + hidden` wide, uses GELU, and supports the same residual placement. Only `dfa/rnn` changes; its losses are 1.4085 and 1.4316. `CHECKPOINT_CODE_VERSION` 9 → 10 |
