@@ -195,3 +195,11 @@ _minted-*
 tikz-cache/ 
 build/
 *.zip
+# Local archive of old runs (W&B export, offline run dirs, checkpoints); destined for homelab backup
+archive/
+
+# Debug dumps
+debug_output*.txt
+
+# Preprocessed Hugging Face datasets (preprocess.py; override with EPHEMERAL_DATA_DIR)
+processed_datasets/

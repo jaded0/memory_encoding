@@ -1,0 +1,5 @@
+# Raw experiment outputs are reproducible from the adjacent scripts.
+results.json
+*_results.json
+*_smoke.json
+pilot*.json

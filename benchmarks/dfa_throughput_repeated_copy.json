@@ -1,0 +1,63 @@
+{
+  "configuration": {
+    "task": "repeated_copy",
+    "warmup_batches": 50,
+    "timed_batches": 500,
+    "repeats": 7,
+    "batch_size": 16,
+    "hidden_size": 64,
+    "num_layers": 2,
+    "vocab_size": 6,
+    "threads": 1
+  },
+  "results": [
+    {
+      "path": "main_native",
+      "elapsed_seconds": [
+        8.663845269009471,
+        8.612860313965939,
+        8.159402701072395,
+        8.23837395501323,
+        8.686080703046173,
+        8.639057988068089,
+        8.730798090924509
+      ],
+      "sequences_per_second_median": 926.0268898587404,
+      "sequences_per_second_iqr": 27.75884443701966,
+      "tokens_per_second_median": 7408.215118869924,
+      "tokens_per_second_iqr": 222.0707554961573
+    },
+    {
+      "path": "main_core",
+      "elapsed_seconds": [
+        7.286351496935822,
+        7.157986619044095,
+        7.1382689700694755,
+        7.08075203304179,
+        7.22861374495551,
+        7.194758356898092,
+        7.2186995319789276
+      ],
+      "sequences_per_second_median": 1111.920595961346,
+      "sequences_per_second_iqr": 11.703427634088257,
+      "tokens_per_second_median": 8895.364767690768,
+      "tokens_per_second_iqr": 93.62742107270606
+    },
+    {
+      "path": "scratch_core",
+      "elapsed_seconds": [
+        5.37858293694444,
+        5.086304815020412,
+        5.249303609947674,
+        4.951711636967957,
+        5.017285905079916,
+        5.023220304981805,
+        4.84247797599528
+      ],
+      "sequences_per_second_median": 1592.6038505748907,
+      "sequences_per_second_iqr": 56.61388956538849,
+      "tokens_per_second_median": 12740.830804599125,
+      "tokens_per_second_iqr": 452.9111165231079
+    }
+  ]
+}

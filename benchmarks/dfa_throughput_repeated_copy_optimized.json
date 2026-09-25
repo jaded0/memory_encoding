@@ -1,0 +1,47 @@
+{
+  "configuration": {
+    "task": "repeated_copy",
+    "warmup_batches": 50,
+    "timed_batches": 500,
+    "repeats": 7,
+    "batch_size": 16,
+    "hidden_size": 64,
+    "num_layers": 2,
+    "vocab_size": 6,
+    "threads": 1
+  },
+  "results": [
+    {
+      "path": "main_native",
+      "elapsed_seconds": [
+        7.1657844230066985,
+        7.285132725955918,
+        7.238856779993512,
+        7.223137713968754,
+        7.402892736019567,
+        7.159873459953815,
+        7.220640662009828
+      ],
+      "sequences_per_second_median": 1107.5519139734633,
+      "sequences_per_second_iqr": 10.538840808811528,
+      "tokens_per_second_median": 8860.415311787707,
+      "tokens_per_second_iqr": 84.31072647049223
+    },
+    {
+      "path": "main_core",
+      "elapsed_seconds": [
+        5.843756783055142,
+        5.841497442917898,
+        6.0415691449306905,
+        6.1602735290071,
+        6.205691338982433,
+        6.2760749029694125,
+        5.945914069074206
+      ],
+      "sequences_per_second_median": 1324.1593049899252,
+      "sequences_per_second_iqr": 63.33064401771094,
+      "tokens_per_second_median": 10593.274439919402,
+      "tokens_per_second_iqr": 506.6451521416875
+    }
+  ]
+}
