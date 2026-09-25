@@ -11,29 +11,7 @@ Guiding rule from Jaden: **both model architectures (`EphemeralRNN`, `SimpleRNN`
 same hyperparameters, except where it fundamentally makes no sense; in that case a curt
 comment at the point of use says why.**
 
-## 1. Profile main-code training against the scratch DFA harness
-
-This is the top follow-up after the forked topology and output-activation changes are committed.
-Benchmark equivalent small, recurrence-clipped DFA workloads in the final main trainer and the
-standalone implementation under `scratch/dfa_forked_output_activation/experiment.py`. Use one
-CPU thread first, fixed seeds, the same batch/model sizes, warmup, and enough repeated batches to
-report sequences/s and tokens/s. Separate preprocessing/data-loader time from `train.train()`.
-
-If main code is materially slower, profile before editing (for example `torch.profiler` or
-`cProfile`) and report time in model forward, DFA outer products, per-layer updates,
-regularization/forgetting, metric collection, checkpointing, and W&B/logging. Preserve exact
-training semantics; do not optimize by changing update order, per-sequence weights, wiping,
-forgetting, DFA signals, or deterministic behavior. Add a focused benchmark script and only
-commit an optimization when tests/golden traces remain unchanged or the behavioral change is
-explicitly approved.
-
-Relevant scratch references:
-
-- `scratch/dfa_forked_output_activation/`: faithful small DFA/fast-weight harness and results.
-- `scratch/tapped_vs_forked_rnn/`: BPTT topology and activation harnesses.
-- `scratch/output_activation_report.md`: combined output-tanh conclusion.
-
-## 2. SimpleRNN baseline matches the ephemeral model's architecture automatically
+## 1. SimpleRNN baseline matches the ephemeral model's architecture automatically
 Jaden: "parameterized/computed to automatically match when run with otherwise same
 parameters." Today SimpleRNN's hidden layers use **ReLU** (EphemeralRNN: **GELU**) and are
 **`hidden_size` wide** (EphemeralRNN's hidden layers are `input + hidden` wide, `inner_size`).
@@ -45,7 +23,7 @@ parameters." Today SimpleRNN's hidden layers use **ReLU** (EphemeralRNN: **GELU*
 - The README's Updaters section ("The architectures still differ outside DFA …") must then be
   updated.
 
-## 3. rnn + dfa (and SimpleRNN generally) applies `--weight_clamp` and `--unit_norm_weights`
+## 2. rnn + dfa (and SimpleRNN generally) applies `--weight_clamp` and `--unit_norm_weights`
 Today SimpleRNN ignores both under every updater. Apply them after each update, the same way
 `EphemeralLinear._apply_regularization` does (per-sequence unit norm there; SimpleRNN has one
 shared weight copy, so the unit norm is over the layer's `[out, in]` weight). Put the logic in a
@@ -53,7 +31,7 @@ shared helper used by both `EphemeralLinear` and `DFALinear` (and by the SimpleR
 path, per the rule above). Decide and document whether the bias is included (in the ephemeral
 model it is not).
 
-## 4. Hyperparameter parity audit (Jaden's rule above)
+## 3. Hyperparameter parity audit (Jaden's rule above)
 Go through every flag in `train.py`'s parser and make each apply to both models, or add a
 curt comment where it cannot. Known cases:
 - `--grad_norm_clip` (SimpleRNN; also under rnn+dfa) vs `--ephemeral_update_clamp` (ephemeral
@@ -62,14 +40,14 @@ curt comment where it cannot. Known cases:
   model should support `--grad_norm_clip` too (on backprop/BPTT that is well defined).
 - `--plasticity`, `--ephemeral_fraction`, `--forget_rate`: fundamentally ephemeral-only
   (SimpleRNN has no ephemeral entries); a one-line comment suffices.
-- `--weight_clamp`, `--unit_norm_weights`: §3.
+- `--weight_clamp`, `--unit_norm_weights`: §2.
 - Ephemeral BPTT ignores `--ephemeral_update_clamp`, `--weight_clamp`, `--unit_norm_weights`
   (tests/README.md, pinned behaviours). Decide whether that is "fundamental" (fast weights never
   reach a forward pass under BPTT) and comment accordingly.
 - `run_training.sh` / `slurm_run.sh` choose `GRAD_CLIP_FLAG` by model type; simplify once flags
   are unified.
 
-## 5. Batch-mean DFA step for SimpleRNN's shared weights: document the justification
+## 4. Batch-mean DFA step for SimpleRNN's shared weights: document the justification
 Jaden: keep the batch mean, "but this should be well thought-out with documented
 justification." Write it in the README (Updaters, rnn + dfa) and at `DFALinear`'s update:
 - SimpleRNN has one weight copy for the whole batch. The ephemeral model's slow entries are
@@ -86,7 +64,7 @@ justification." Write it in the README (Updaters, rnn + dfa) and at `DFALinear`'
 - Consider a small test pinning that the rnn+dfa step equals the mean of the per-sequence DFA
   gradients.
 
-## 6. Research, not code yet
+## 5. Research, not code yet
 - **DFA and f′** (README "Known issues"): examine whether DFA should include the activation
   derivative (Nøkland 2016). Any change goes in the shared `dfa_*` helpers for both models.
 - **α² in backprop** and the **1/B factor**: fix only with full before/after runs.
@@ -98,6 +76,9 @@ justification." Write it in the README (Updaters, rnn + dfa) and at `DFALinear`'
 - Slow entries of `per_sample_weights` start from `nn.Linear`'s default initialization,
   repeated over the batch without another RNG draw; fast entries start at zero. Implemented
   after Jaden accepted the proposed fix on 2026-09-23. Full before/after benchmarks remain.
+- Main-code DFA throughput was benchmarked against the scratch harness and profiled. Allocation
+  and gradient-clearing changes improved native throughput 15-20% without changing any golden
+  trace; methodology and raw results are under `benchmarks/`.
 
 ## Already decided, nothing to do
 - `EPHEMERAL_AUTO_PREPROCESS=1` forces preprocessing even under SLURM: already implemented

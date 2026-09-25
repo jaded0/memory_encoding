@@ -121,15 +121,11 @@ class EphemeralLinear(nn.Linear):
         # Aggregate across the batch (e.g., average) to get a single copy:
         aggregated = self.per_sample_weights.mean(dim=0, keepdim=True)
         # Then set every sequence's copy in the batch to this aggregated value:
-        self.per_sample_weights.data.copy_(aggregated.repeat(self.batch_size, 1, 1))
-        
-        # Ensure the mask is broadcastable or repeated along the batch dimension
-        batch_mask = self.ephemeral_mask.unsqueeze(0).repeat(self.batch_size, 1, 1)  # Shape: [B, out_features, in_features]
+        self.per_sample_weights.data.copy_(aggregated.expand_as(self.per_sample_weights))
 
         # Apply the mask
         self.weight[self.ephemeral_mask] = 0
-        # Use .data to modify the tensor in-place without interfering with autograd
-        self.per_sample_weights.data[batch_mask] = 0
+        self.per_sample_weights.data.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
 
@@ -159,9 +155,8 @@ class EphemeralLinear(nn.Linear):
         error_signal is train.py's output_error, [B, vocab], the same object for every layer.
         Last layers use it as is: _last_projected_error is then that shared object, not a copy,
         and _update_bias_from_grad reads it. Other layers project it with feedback_weights into a
-        new tensor. Nothing here modifies error_signal. The gradient is a new tensor, and
-        .grad gets its own copy of it (train.py's zero_grad() leaves .grad None, so the clone()
-        branch is the one that runs there)."""
+        new tensor. Nothing here modifies error_signal. The new gradient tensor is assigned
+        directly to .grad after train.py clears the preceding DFA step's value."""
         # Project error signal using feedback weights (DFA-specific); last layers use it as is.
         # error_signal: [batch_size, vocab_size] -> projected_error: [batch_size, out_features]
         projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer)
@@ -174,7 +169,7 @@ class EphemeralLinear(nn.Linear):
         
         # Populate per_sample_weights.grad
         if self.per_sample_weights.grad is None:
-            self.per_sample_weights.grad = gradient.clone()
+            self.per_sample_weights.grad = gradient
         else:
             self.per_sample_weights.grad.copy_(gradient)
 
@@ -191,7 +186,7 @@ class EphemeralLinear(nn.Linear):
             return
             
         # Get the gradient (already populated by either DFA or backprop)
-        update = -self.per_sample_weights.grad.clone()
+        update = -self.per_sample_weights.grad
         
         # Apply plasticity scaling and masking (same for both methods)
         if not self.is_last_layer:
@@ -276,14 +271,11 @@ class EphemeralLinear(nn.Linear):
         so each call keeps
         1 - forget_rate of every ephemeral weight. train.py calls this after each update (after
         the clamp and normalization too), as in the paper: w <- (1 - forget_rate) * (w - lr*alpha*g).
-        This is done with no_grad to prevent interference with backprop."""
+        This is done through .data under no_grad to avoid recording the update in autograd."""
         with torch.no_grad():
-            # Use non-inplace multiplication to avoid RuntimeError during backprop.
-            # The original `mul_` was an inplace operation that corrupted the
-            # computation graph needed by autograd for the backward pass.
             # forget_rate * bool mask is float32 forget_rate on the mask and 0 elsewhere, the same
             # values the old stored forgetting_factor tensor held.
-            self.per_sample_weights.data = self.per_sample_weights.data * (1 - self.forget_rate * self.ephemeral_mask)
+            self.per_sample_weights.data.mul_(1 - self.forget_rate * self.ephemeral_mask)
 
     def scale_ephemeral_grads(self, plasticity):
         """Scales the gradients of the ephemeral weights by plasticity (alpha) before the update."""
@@ -467,6 +459,13 @@ class EphemeralRNN(torch.nn.Module):
             layer.apply_forget_step()
         self.i2h.apply_forget_step()
         self.i2o.apply_forget_step()
+
+    def clear_dfa_gradients(self):
+        """Clear the only gradients manually populated by the DFA updater."""
+        for layer in self.linear_layers:
+            layer.per_sample_weights.grad = None
+        self.i2h.per_sample_weights.grad = None
+        self.i2o.per_sample_weights.grad = None
 
     def scale_ephemeral_grads(self, plasticity):
         """Calls scale_ephemeral_grads on all EphemeralLinear layers."""

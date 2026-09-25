@@ -134,10 +134,10 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             # output or of grad_outputs) that needs no grad. It was two names, global_error and
             # reward_update, bound to this one object; there was never a second tensor.
             output_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
-            rnn.zero_grad()
 
             # Apply DFA updates
             if isinstance(rnn, EphemeralRNN):
+                rnn.clear_dfa_gradients()
                 # Every layer is given this same object, and all of them are populated before any
                 # update runs. i2o keeps a reference to it (as _last_projected_error,
                 # for the bias update), so it must not be modified in place until the updates
@@ -159,7 +159,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 rnn.apply_forget_step()
                 
                 # Clear gradients after the updates
-                rnn.zero_grad()
+                rnn.clear_dfa_gradients()
             elif isinstance(rnn, SimpleRNN):
                 # The same DFA as above, minus the ephemeral entries, plasticity, forgetting and
                 # wiping (see DFALinear): the hidden layers and i2h project output_error through

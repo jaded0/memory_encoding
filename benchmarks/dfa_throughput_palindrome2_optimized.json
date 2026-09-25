@@ -1,0 +1,47 @@
+{
+  "configuration": {
+    "task": "palindrome2",
+    "warmup_batches": 50,
+    "timed_batches": 500,
+    "repeats": 7,
+    "batch_size": 16,
+    "hidden_size": 64,
+    "num_layers": 2,
+    "vocab_size": 6,
+    "threads": 1
+  },
+  "results": [
+    {
+      "path": "main_native",
+      "elapsed_seconds": [
+        3.9686215999536216,
+        3.9810572130372748,
+        3.9444213199894875,
+        3.9691803489113227,
+        3.834297696943395,
+        3.7708411869825795,
+        3.779645250993781
+      ],
+      "sequences_per_second_median": 2028.180904371879,
+      "sequences_per_second_iqr": 85.84483066106077,
+      "tokens_per_second_median": 8112.723617487516,
+      "tokens_per_second_iqr": 343.3793226442431
+    },
+    {
+      "path": "main_core",
+      "elapsed_seconds": [
+        3.4102490439545363,
+        3.404950861004181,
+        3.3924995770212263,
+        3.222201431985013,
+        3.290798160014674,
+        3.262204347993247,
+        3.219777326914482
+      ],
+      "sequences_per_second_median": 2431.02117206858,
+      "sequences_per_second_iqr": 113.72046981214771,
+      "tokens_per_second_median": 9724.08468827432,
+      "tokens_per_second_iqr": 454.88187924859085
+    }
+  ]
+}
