@@ -20,7 +20,7 @@ CUDA_VISIBLE_DEVICES="" python -m pytest tests/ -q
 | `test_dfa_error_signals.py` | The DFA path's per-layer error tensors (every layer, `i2h` included, is populated each step), projected errors, gradients and bias steps, checked at populate and at update time against values computed independently. It fails on an in-place change to the shared `output_error` (see the main README) |
 | `test_preprocess.py` | Processed-dataset naming (the code hash ignores comment-only and docstring-only edits, not code edits), saved rows and batches (against the old one-hot pipeline), and a missing processed dataset: prepared automatically outside SLURM, the setup-hint error under SLURM, and the `EPHEMERAL_AUTO_PREPROCESS` override both ways (raw download mocked) |
 | `test_metrics.py` | Interval metrics, recall targets and chance levels |
-| `test_layer_mechanics.py` | Single mechanics checked in isolation: `--unit_norm_weights` rescales each sequence's slice independently. In the forked layout, output and state read the shared trunk independently; `i2h` gets explicit DFA every step, no same-step backprop gradient, and future credit under BPTT; recurrence-off still executes both heads but feeds back zeros. SimpleRNN DFA mechanics and clipping are checked independently |
+| `test_layer_mechanics.py` | Single mechanics checked in isolation: `--unit_norm_weights` rescales each sequence's slice independently. In the forked layout, output and state heads receive the same shared trunk tensor directly; `i2h` gets explicit DFA every step, no same-step backprop gradient, and future credit under BPTT; recurrence-off still executes both heads but feeds back zeros. SimpleRNN DFA mechanics and clipping are checked independently |
 | `legacy/test_plast_clip_update.py` | Changing `--plasticity` on resume updates checkpoint plasticity; RNG round-trip |
 
 ## What the golden trace is
@@ -74,13 +74,13 @@ from the default initialization.
 
 | Updater | Loss | Forget calls | Gradient-scale calls | `apply_update` calls (linear / `i2h`) | `training_instance` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| DFA | 1.4024642706 | 4 | 0 | 4 / 4 | 4 |
-| Backprop | 1.4026465416 | 4 | 4 | 4 / 4 (all `i2h` no-ops) | 4 |
-| BPTT | 1.4003649950 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
-| DFA, `normalize_clip_2seq` | 1.5828732252, 1.5748171806 | 8 | 0 | 8 / 8 | 8 |
-| Backprop, `normalize_clip_2seq` | 1.6082669795, 1.5170544088 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
-| BPTT, `normalize_clip_2seq` | 1.4003649950, 1.3702043295 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
-| DFA, `rnn` (SimpleRNN) | 1.4461380243, 1.4681148529 | 0 | 0 | 8 / 8 (`apply_dfa_update`; `i2o` 8 too) | 8 |
+| DFA | 1.4029185772 | 4 | 0 | 4 / 4 | 4 |
+| Backprop | 1.4031186402 | 4 | 4 | 4 / 4 (all `i2h` no-ops) | 4 |
+| BPTT | 1.4008217752 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
+| DFA, `normalize_clip_2seq` | 1.5828555822, 1.5795941353 | 8 | 0 | 8 / 8 | 8 |
+| Backprop, `normalize_clip_2seq` | 1.6084581614, 1.5166777074 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
+| BPTT, `normalize_clip_2seq` | 1.4008217752, 1.3696093559 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
+| DFA, `rnn` (SimpleRNN) | 1.4461491108, 1.4713594913 | 0 | 0 | 8 / 8 (`apply_dfa_update`; `i2o` 8 too) | 8 |
 
 In `normalize_clip_2seq`, BPTT's first loss equals the base case's, because the
 update comes after the last step and BPTT ignores `unit_norm_weights` and
@@ -134,3 +134,4 @@ Pass `--output PATH` to write somewhere else for comparison.
 | 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Removed the `self_grad` head and `--self_grad` (an abandoned experiment; see `docs/self_grad.md`). The traces only lose the `self_grad` layer's entries; everything else, losses included, is identical (it was the last layer built and consumed no RNG afterwards, and `--self_grad 0` never touched the error). `CHECKPOINT_CODE_VERSION` 5 → 6 |
 | 2026-09-23 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Slow entries of every `EphemeralLinear.per_sample_weights` now start from the layer's already-drawn default `nn.Linear.weight`, repeated over the batch; fast entries remain zero. All six ephemeral traces change from the first forward pass. Masks and feedback matrices are identical because initialization adds no RNG draws, and `dfa/rnn` is byte-identical. Base losses: DFA 1.4558 → 1.4534, backprop 1.4556 → 1.4530, BPTT 1.4539 → 1.4507. `normalize_clip_2seq`: DFA 1.6721 → 1.6770 and 1.6016 → 1.6151; backprop 1.5848 → 1.6608 and 1.5525 → 1.5241; BPTT 1.4539 → 1.4507 and 1.3889 → 1.3847. `CHECKPOINT_CODE_VERSION` 6 → 7 |
 | 2026-09-24 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Restored a forked transition/emission graph while retaining tanh on output features: `h_t = tanh(i2h(combined))`, `y_t = i2o(tanh(combined))`. `i2h` remains explicitly direct-feedback-trained under DFA, gets no same-step per-step-backprop gradient, and receives future credit under BPTT. Every trace changes, including `dfa/rnn`; base losses are DFA 1.4025, backprop 1.4026, BPTT 1.4004. `CHECKPOINT_CODE_VERSION` 7 → 8. See `docs/tapped_vs_forked_rnn_report.md` |
+| 2026-09-24 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Removed tanh from only the forked output-feature path: `y_t = i2o(combined)` while recurrent state remains `tanh(i2h(combined))`. Every trace changes slightly; base losses are DFA 1.4029, backprop 1.4031, BPTT 1.4008. `CHECKPOINT_CODE_VERSION` 8 → 9. See `docs/tapped_vs_forked_rnn_report.md`, "Output activation after locking the fork" |

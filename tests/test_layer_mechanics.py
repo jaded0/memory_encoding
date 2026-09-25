@@ -134,12 +134,29 @@ class ForkedLayoutTest(unittest.TestCase):
                 self.assertFalse(torch.equal(weights.detach(), before))
 
     def test_output_and_state_heads_fork_from_the_shared_trunk(self):
-        model = build_rnn("ephemeral", "dfa")
-        inner = 2 * len(CHARSET) + HIDDEN
-        self.assertEqual(model.i2o.in_features, inner)
-        self.assertEqual((model.i2h.in_features, model.i2h.out_features), (inner, HIDDEN))
-        self.assertTrue(model.i2h.ephemeral_mask.any())  # a hidden layer, not a last layer
-        self.assertFalse(model.i2h.is_last_layer)
+        for model_type in ("ephemeral", "rnn"):
+            with self.subTest(model=model_type):
+                model = build_rnn(model_type, "dfa")
+                if model_type == "ephemeral":
+                    inner = 2 * len(CHARSET) + HIDDEN
+                    self.assertEqual(model.i2o.in_features, inner)
+                    self.assertEqual((model.i2h.in_features, model.i2h.out_features), (inner, HIDDEN))
+                    self.assertTrue(model.i2h.ephemeral_mask.any())
+                    self.assertFalse(model.i2h.is_last_layer)
+
+                head_inputs = {}
+
+                def record_head_input(name):
+                    def record(_module, inputs):
+                        head_inputs[name] = inputs[0].detach().clone()
+                    return record
+
+                state_hook = model.i2h.register_forward_pre_hook(record_head_input("state"))
+                output_hook = model.i2o.register_forward_pre_hook(record_head_input("output"))
+                model(torch.randn(2, 2 * len(CHARSET)), torch.randn(2, HIDDEN))
+                state_hook.remove()
+                output_hook.remove()
+                torch.testing.assert_close(head_inputs["output"], head_inputs["state"], rtol=0, atol=0)
 
     def test_recurrence_off_keeps_the_output_path_and_feeds_back_zeros(self):
         for model_type in ("ephemeral", "rnn"):

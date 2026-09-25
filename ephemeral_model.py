@@ -448,7 +448,7 @@ class EphemeralRNN(torch.nn.Module):
         # Forked transition/emission layout. The state head remains bounded for recurrence,
         # while the output head reads a sibling transform of the shared deep representation.
         hidden_t = torch.tanh(self.i2h(combined))
-        output = self.i2o(torch.tanh(combined))
+        output = self.i2o(combined)
         # --enable_recurrence False still executes both heads but feeds back zeros.
         next_hidden = hidden_t if self.enable_recurrence else torch.zeros_like(hidden)
 
@@ -622,7 +622,7 @@ class SimpleRNN(nn.Module):
         # Forked transition/emission layout, as in EphemeralRNN. The output is independent of
         # this step's state head; --enable_recurrence False feeds back zeros.
         hidden_t = torch.tanh(self.i2h(combined))
-        output = self.i2o(torch.tanh(combined))
+        output = self.i2o(combined)
         next_hidden = hidden_t if self.enable_recurrence else torch.zeros_like(hidden)
         # output = self.dropout(output)
         # output = self.softmax(output)

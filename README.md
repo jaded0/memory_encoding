@@ -58,7 +58,7 @@ entries log no ephemeral norms.
 
 Both models use a forked transition/emission layout. At each step,
 `combined = hidden_layers(cat(x_t, h_{t-1}))` (plus the residual, if on),
-`h_t = tanh(i2h(combined))`, and `y_t = i2o(tanh(combined))`. The state and output heads can
+`h_t = tanh(i2h(combined))`, and `y_t = i2o(combined)`. The state and output heads can
 therefore specialize over a shared deep representation. With `--enable_recurrence False`, both
 heads still execute but zeros are fed to the next step instead of `h_t`.
 
@@ -157,6 +157,13 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   between steps, while BPTT trains it through later outputs. The topology decision and supporting
   BPTT experiments are documented in `docs/tapped_vs_forked_rnn_report.md`. Checkpoints from the
   preceding serial Elman layout are refused (`CHECKPOINT_CODE_VERSION` 8).
+- **No tanh on the forked output path (2026-09).** Tanh remains on `i2h`'s recurrent carrier,
+  where it bounds values fed repeatedly through recurrence, but `i2o` reads the shared deep
+  representation directly. Matched scratch panels found no learned-task benefit from output
+  tanh: direct output modestly improved BPTT copy and substantially improved recurrence-clipped
+  DFA recall when fast weights generated large features. See
+  `docs/tapped_vs_forked_rnn_report.md`, section "Output activation after locking the fork,"
+  and `scratch/output_activation_report.md`. `CHECKPOINT_CODE_VERSION` is 9.
 - **Ephemeral + BPTT: fast weights are frozen within a sequence.** BPTT is the contrast to
   per-step backprop and DFA in the permutation grid above. Its only update comes after the
   last step (`train.py:267`), and `start_sequence_wipe()` zeroes the ephemeral entries at the

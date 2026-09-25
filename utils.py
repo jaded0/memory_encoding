@@ -139,7 +139,8 @@ def str2bool(v):
 # are removed (its layer is gone from the state dict). 7: EphemeralLinear slow entries start
 # from nn.Linear's default weight initialization; fast entries still start at zero.
 # 8: forked transition/emission layout; i2h receives direct DFA while i2o reads the shared trunk.
-CHECKPOINT_CODE_VERSION = 8
+# 9: the forked output reads the shared trunk directly instead of through tanh.
+CHECKPOINT_CODE_VERSION = 9
 
 
 def check_checkpoint_code_version(checkpoint, checkpoint_path="<checkpoint>"):
