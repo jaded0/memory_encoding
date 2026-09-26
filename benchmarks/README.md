@@ -89,3 +89,36 @@ gives 3.1× on the A6000. On the A100 and H100 `train_batch` is CPU/launch-bound
 bookkeeping costs 27–35% relative to `main_core` (a `.item()` host sync every step is one
 source), and even `fused_core` stays far from the bandwidth floor. Raw results are on ORC under
 `~/memory_encoding_speed/2026-09-25_head-panel-speed/speed_results`.
+
+## `--fused_update` and host-sync removal (2026-09-26)
+
+**Dynamics.** `sweeps/orc_fused_equivalence.sbatch` (ORC arrays 13899359 on A100, 13899360 on
+H100, code 6fb78e2) trained the unfused and fused step on 3-char reversal at lr·α = 3, 200k
+iterations, seeds 2718, 3141 and 4241. All 12 runs completed.
+- Every run's recall, lag recall and loss agree to printed precision (3–4 decimals) at every
+  5,000-iteration interval, fused against unfused and A100 against H100. Final recall is 67.8%,
+  75.3% and 68.8% for the three seeds in all four arms.
+- The final weights differ, so the paths really differ, but only slightly:
+
+| Seed | fused vs unfused, H100 | fused vs unfused, A100 | unfused A100 vs H100 (yardstick) | fused A100 vs H100 |
+|---:|---:|---:|---:|---:|
+| 2718 | 4.0e-4 | 6.3e-4 | 9.4e-4 | 6.6e-4 |
+| 3141 | 1.3e-2 | 1.5e-3 | 4.2e-4 | 1.4e-2 |
+| 4241 | 2.4e-4 | 1.4e-4 | 2.2e-4 | 1.4e-4 |
+
+These are maximum relative differences over every `per_sample_weights` and bias entry. The
+training dynamics do not amplify the rounding differences. The fused step's deviation is of the
+same order as changing GPU model. The one larger value (seed 3141 on H100) came with identical
+metrics.
+
+**Speed.** End-to-end `train.py` rates from those runs (plasticity 3e3), and the benchmark script
+at the same size:
+
+| GPU | `train.py` at 5e088af | `train.py` without per-step syncs | `train.py --fused_update` | benchmark `main_native` → `fused_native` |
+|---|---:|---:|---:|---:|
+| A100 | 36.7 | 48.0 | 68.5 | 52.1 → 83.9 |
+| H100 | 52.7 | 72.1 | 81.1 | 79.8 → 91.8 |
+| RTX A6000 | | | | 22.5 → 76.2 |
+
+On H100 `fused_core` reaches 112.9, so train_batch's remaining bookkeeping (loss autograd,
+metrics) still costs about 19% there.

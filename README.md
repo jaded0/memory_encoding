@@ -451,8 +451,10 @@ stops the same way with `end_reason: terminated` and exit code 143.
 Almost all of a DFA step's GPU time is spent in elementwise passes over each layer's
 `[B, out, in]` per-sample weights: outer product, plasticity, clamp, add, forget. `--fused_update`
 compiles each layer's step into one kernel with `torch.compile`, and it never materializes the
-gradient. On an RTX A6000 at the 3-palindrome benchmark size `train_batch` goes from 22.5 to 76
-batches/s; `benchmarks/README.md` has results for other GPUs.
+gradient. At the 3-palindrome benchmark size, end-to-end training goes from 48 to 68 it/s on an
+A100 and from 72 to 81 on an H100 (both already without the old per-step host syncs), and
+`train_batch` goes from 22.5 to 76 batches/s on an RTX A6000. Over 200k iterations, fused and
+unfused runs agree on every logged metric (`benchmarks/README.md`).
 
 The step is `dfa_layer_step` in `ephemeral_model.py`. It is composed from the same helpers
 `apply_update` and `apply_forget_step` use, in the same order, so the update rule is written once.

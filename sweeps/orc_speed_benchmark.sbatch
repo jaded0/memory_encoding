@@ -62,7 +62,8 @@ train=(--input_mode last_one --learning_rate 1e-3 --plasticity 1e3 --forget_rate
        --track false --seed 2718 --deterministic true)
 for arm in ephemeral:dfa:false:false rnn:dfa:true:false rnn:bptt:true:false "${fused_arm[@]}"; do
     IFS=: read -r model updater recurrence fuse <<< "$arm"
-    name=${model}_${updater}$([[ $fuse == true ]] && echo _fused)
+    name=${model}_$updater
+    if [[ $fuse == true ]]; then name+=_fused; fi
     python -u train.py "${train[@]}" --model_type "$model" --updater "$updater" \
         --enable_recurrence "$recurrence" --fused_update "$fuse" --checkpoint_dir "$out/checkpoints_$name" \
         > "$out/train_$name.log" 2>&1

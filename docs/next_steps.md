@@ -134,9 +134,10 @@ task, threshold range, and training regime.
   - The update is refactored into shared helpers, again byte-identical.
   - `--fused_update` compiles those same helpers: bit-identical uncompiled, equal to rounding
     compiled, 3.4× on an A6000.
-  - Running: `sweeps/orc_fused_equivalence.sbatch`, arrays 13899359 (A100) and 13899360 (H100).
-    It pairs unfused and fused runs on 3-char reversal at lr·α = 3 for 200k iterations, 3 seeds,
-    so fused-vs-unfused can be compared with the unfused A100-vs-H100 difference.
+  - Done: `sweeps/orc_fused_equivalence.sbatch` (arrays 13899359, 13899360). Fused and unfused
+    runs agree on every logged metric over 200k iterations, and their weight differences are of
+    the same order as A100 vs H100 (`benchmarks/README.md`). End to end: A100 36.7 → 68.5 it/s,
+    H100 52.7 → 81.1. Jaden accepted the rounding difference on 2026-09-26.
 - Speed (`sweeps/orc_speed_benchmark.sbatch`, `benchmarks/benchmark_dfa_throughput.py
   --device cuda`). Main is 1.2× (P100) to 1.7× (H100) slower than the scratch harness. Both
   are 5–10× below the memory-bandwidth floor, because every step makes about 15 elementwise
