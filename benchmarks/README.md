@@ -4,6 +4,8 @@
   factorial on the three-palindrome task.
 - `3pal_head_panel.md`: seven-seed panel at current code (5e088af): ephemeral + DFA against
   SimpleRNN under DFA and BPTT on the three-palindrome task.
+- `memory_tasks_head.md`: fast weights against a no-fast-weights ablation and SimpleRNN + BPTT
+  on six memory tasks with recurrence clipped, at lr·α = 10 and 3.
 
 ## DFA throughput benchmark
 

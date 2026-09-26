@@ -128,10 +128,14 @@ task, threshold range, and training regime.
   `benchmarks/3pal_head_panel.md`. At lr·α = 1 and 250k iterations the ephemeral model reaches
   45% recall (chance 14%), mostly at lag 1. Its lag-5 and final-character accuracy are at the
   always-predict-padding baseline, while SimpleRNN + BPTT solves the task on every seed.
-- Running: `sweeps/orc_memory_tasks.sbatch`. It asks whether the fast weights replace the
-  clipped recurrence across six memory tasks (reversal, binary reversal, resequencing) at lr·α = 10 (the 2025 regime that reached 90%+
-  on 3-char palindromes after 1–3M iterations), with a no-fast-weights ablation and a
-  SimpleRNN + BPTT reference. Jaden: the speed fixes come after this verification.
+- Done: `sweeps/orc_memory_tasks.sbatch` (arrays 13897313, 13897527), results in
+  `benchmarks/memory_tasks_head.md`. With recurrence clipped, the fast weights clearly carry the
+  memory on every task where training stays stable: 3-char reversal peaks at 81% recall against
+  7% without fast weights. They stay short of SimpleRNN + BPTT, which gets 100% on reversals.
+  Runs are unstable late: slow-weight norms grow until the loss explodes and recall collapses
+  (every α 1e4 run on 7+ token tasks, 2 of 4 at α 3e3). **Next:** test stabilizers on 3-char
+  reversal before long runs (`--unit_norm_weights`, output tanh, slow-weight decay, tighter
+  weight clamp). Speed fixes wait on Jaden's call (he gated them on this verification).
 - Speed (`sweeps/orc_speed_benchmark.sbatch`, `benchmarks/benchmark_dfa_throughput.py
   --device cuda`). Main is 1.2× (P100) to 1.7× (H100) slower than the scratch harness. Both
   are 5–10× below the memory-bandwidth floor, because every step makes about 15 elementwise
