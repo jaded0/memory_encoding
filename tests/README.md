@@ -20,6 +20,7 @@ CUDA_VISIBLE_DEVICES="" python -m pytest tests/ -q
 | `test_dfa_error_signals.py` | The DFA path's per-layer error tensors (every layer, `i2h` included, is populated each step), projected errors, gradients and bias steps, checked at populate and at update time against values computed independently. It fails on an in-place change to the shared `output_error` (see the main README) |
 | `test_preprocess.py` | Processed-dataset naming (the code hash ignores comment-only and docstring-only edits, not code edits), saved rows and batches (against the old one-hot pipeline), and a missing processed dataset: prepared automatically outside SLURM, the setup-hint error under SLURM, and the `EPHEMERAL_AUTO_PREPROCESS` override both ways (raw download mocked) |
 | `test_metrics.py` | Interval metrics, recall targets and chance levels |
+| `test_grad_norm_clip.py` | The ephemeral model's per-sequence `--grad_norm_clip`: a threshold that never binds is bit-identical to no clip under every updater; at batch size 1 it equals `clip_grad_norm_` over every trained gradient (backprop, BPTT, and DFA with the bias errors); each sequence is clipped independently, to the threshold, with direction kept; the norm is of the raw, pre-α gradient; the DFA order is clip, α, update clamp, update, weight clamp, forget |
 | `test_layer_mechanics.py` | Single mechanics checked in isolation: `--unit_norm_weights` rescales each ephemeral sequence slice independently and each SimpleRNN shared matrix as a whole; normalization then weight clamp applies under all updaters. In the forked layout, output and state heads receive the same shared trunk tensor directly; `i2h` gets explicit DFA every step, no same-step backprop gradient, and future credit under BPTT; recurrence-off still executes both heads but feeds back zeros. SimpleRNN DFA mechanics and gradient clipping are checked independently |
 | `legacy/test_plast_clip_update.py` | Changing `--plasticity` on resume updates checkpoint plasticity; RNG round-trip |
 
@@ -79,13 +80,13 @@ from the default initialization.
 | Backprop | 1.4031186402 | 4 | 4 | 4 / 4 (all `i2h` no-ops) | 4 |
 | BPTT | 1.4008217752 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
 | DFA, `normalize_clip_2seq` | 1.5828555822, 1.5795941353 | 8 | 0 | 8 / 8 | 8 |
-| Backprop, `normalize_clip_2seq` | 1.6084581614, 1.5166777074 | 8 | 8 | 8 / 8 (`i2h` all no-ops) | 8 |
-| BPTT, `normalize_clip_2seq` | 1.4008217752, 1.3696093559 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
+| Backprop, `normalize_clip_2seq` | 1.6084297001, 1.5168787539 | 8 | 8 | 8 / 8 (`i2h` only regularized) | 8 |
+| BPTT, `normalize_clip_2seq` | 1.4008217752, 1.3782653511 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
 | DFA, `rnn` (SimpleRNN) | 1.4085035324, 1.4315583706 | 0 | 0 | 8 / 8 (`apply_dfa_update`; `i2o` 8 too) | 8 |
 
 In `normalize_clip_2seq`, BPTT's first loss equals the base case's, because the
-update comes after the last step and BPTT ignores `unit_norm_weights` and
-`weight_clamp`.
+update, and the `unit_norm_weights` and `weight_clamp` that follow it, come after
+the last step.
 
 ### Pinned known bugs
 
@@ -97,7 +98,7 @@ under review". A fix to any of them is expected to fail the golden test.
 | --- | --- | --- |
 | Backprop's ephemeral step is α² (`scale_ephemeral_grads` multiplies by α, then `apply_update` multiplies by `plasticity`); DFA and BPTT apply α once | `train.py` backprop branch; `ephemeral_model.py` `scale_ephemeral_grads`, `apply_update` | backprop |
 | `ephemeral_update_clamp` clamps the α-scaled update on masked entries only; it binds in the DFA trace at 0.2 | `apply_update` | DFA |
-| Ephemeral BPTT ignores `ephemeral_update_clamp`, `weight_clamp` and `unit_norm_weights` | `train.py` BPTT branch | `bptt/normalize_clip_2seq` if weight clamping or unit-norm rescaling is added; `bptt` (base) if the update clamp is |
+| Ephemeral BPTT ignores `ephemeral_update_clamp` (by design: it clamps only fast entries, which BPTT wipes before any forward pass reads them) | `train.py` BPTT branch | `bptt` (base) if the update clamp is added |
 | Forked `i2h` gets direct same-step DFA as a surrogate for temporal credit, while per-step backprop cannot train it | `EphemeralRNN.forward`, `SimpleRNN.forward`; `train.py` DFA branch | all seven if topology or credit routing changes |
 | DFA omits the activation derivative: hidden layers and `i2h` use `output_error @ feedback_weights` without ⊙ f′(a) (Nøkland 2016 includes it); under review, not a confirmed bug (main README) | `ephemeral_model.py` `dfa_projected_error`, shared by `EphemeralLinear` and `DFALinear` | `dfa`, `dfa/normalize_clip_2seq`, `dfa/rnn` |
 | Ephemeral BPTT never increments `training_instance` | `train.py` BPTT branch | BPTT |
@@ -138,3 +139,4 @@ Pass `--output PATH` to write somewhere else for comparison.
 | 2026-09-24 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Removed tanh from only the forked output-feature path: `y_t = i2o(combined)` while recurrent state remains `tanh(i2h(combined))`. Every trace changes slightly; base losses are DFA 1.4029, backprop 1.4031, BPTT 1.4008. `CHECKPOINT_CODE_VERSION` 8 → 9. See `docs/tapped_vs_forked_rnn_report.md`, "Output activation after locking the fork" |
 | 2026-09-24 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Matched SimpleRNN's architecture to EphemeralRNN: every trunk layer is `input + hidden` wide, uses GELU, and supports the same residual placement. Only `dfa/rnn` changes; its losses are 1.4085 and 1.4316. `CHECKPOINT_CODE_VERSION` 9 → 10 |
 | 2026-09-24 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Applied `--unit_norm_weights` and `--weight_clamp` to SimpleRNN after every DFA, backprop, and BPTT update. The fixture uses both settings off for `dfa/rnn`, so regenerated traces are byte-identical. `CHECKPOINT_CODE_VERSION` 10 → 11 |
+| 2026-09-25 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Parity with SimpleRNN, which regularizes every layer after every update (Jaden's rule). (1) Ephemeral BPTT now applies `--unit_norm_weights` and `--weight_clamp` after its SGD step: they bound the slow weights, which BPTT trains; only `--ephemeral_update_clamp` stays ignored, since its fast entries are wiped unread. (2) A layer with no gradient in a step (the forked `i2h` under per-step backprop) is still regularized; `apply_update` used to return before regularizing it. `bptt/normalize_clip_2seq`: first loss identical (1.4008217752, the update comes after the last step), second 1.3696093559 → 1.3782653511. `backprop/normalize_clip_2seq`: 1.6084581614 → 1.6084297001 and 1.5166777074 → 1.5168787539. The other five traces are byte-identical. Same commit: `--grad_norm_clip` now also clips the ephemeral model, per sequence and before α; it is 0 in every trace, and `tests/test_grad_norm_clip.py` pins it. Same machine and versions. `CHECKPOINT_CODE_VERSION` 11 → 12 |

@@ -149,6 +149,9 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     layer.populate_dfa_gradients(output_error)
                 rnn.i2h.populate_dfa_gradients(output_error)
                 rnn.i2o.populate_dfa_gradients(output_error)
+                # --grad_norm_clip: each sequence's raw gradient, before alpha and the clamps.
+                if config.get('grad_norm_clip', 0) > 0:
+                    rnn.clip_grad_norm_per_sequence(config['grad_norm_clip'])
                 # Apply the updates using the DFA-populated gradients
                 for layer in rnn.linear_layers:
                     layer.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
@@ -170,9 +173,11 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     raise ValueError("SimpleRNN was built without DFA feedback matrices; pass updater='dfa'.")
                 for layer in rnn.dfa_layers():
                     layer.populate_dfa_gradients(output_error)
-                # --grad_norm_clip is the rnn baseline's global grad-norm clip under every updater.
+                # --grad_norm_clip: the global norm of the shared (batch-mean) DFA gradients. Non-zero,
+                # it breaks the exact match with the ephemeral model's DFA, which clips per sequence.
                 if config.get('grad_norm_clip', 0) > 0:
-                    torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
+                    norm = torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
+                    rnn.grad_clip_stats.record(norm, config['grad_norm_clip'])
                 for layer in rnn.dfa_layers():
                     layer.apply_dfa_update(config["learning_rate"])
                 # The grads are left in place (the next step's zero_grad clears them) so that
@@ -194,7 +199,11 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 # Compute gradients through the entire network (true backprop)
                 total_loss = step_loss.mean() if step_loss.dim() > 0 else step_loss
                 total_loss.backward(retain_graph=False)
-                
+
+                # --grad_norm_clip: each sequence's raw gradient, before alpha and the clamps.
+                if config.get('grad_norm_clip', 0) > 0:
+                    rnn.clip_grad_norm_per_sequence(config['grad_norm_clip'])
+
                 # Scale the ephemeral weights' gradients
                 rnn.scale_ephemeral_grads(config["plasticity"])
                 
@@ -236,7 +245,8 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 total_loss.backward()
                 
                 if config['grad_norm_clip'] > 0:
-                    torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
+                    norm = torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
+                    rnn.grad_clip_stats.record(norm, config['grad_norm_clip'])
                 
                 optimizer.step()
                 rnn.apply_regularization()
@@ -262,7 +272,12 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     # EphemeralRNN with BPTT - backward through entire accumulated loss
                     total_loss = accumulated_loss.mean() if accumulated_loss.dim() > 0 else accumulated_loss
                     total_loss.backward(retain_graph=False)
-                    
+
+                    # --grad_norm_clip: each sequence's raw gradient (summed over the sequence's
+                    # steps), before alpha. BPTT has no ephemeral_update_clamp.
+                    if config.get('grad_norm_clip', 0) > 0:
+                        rnn.clip_grad_norm_per_sequence(config['grad_norm_clip'])
+
                     # Scale the ephemeral weights' gradients
                     rnn.scale_ephemeral_grads(config["plasticity"])
                     
@@ -276,6 +291,10 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                             if param.grad is not None:
                                 param.data -= config["learning_rate"] * param.grad
                                 param.grad.zero_()
+                    # The slow weights persist, so --unit_norm_weights and --weight_clamp apply
+                    # as under the other updaters. --ephemeral_update_clamp does not: the fast
+                    # entries it clamps are wiped before any forward pass reads them.
+                    rnn.apply_regularization()
 
                     # Forget after the update (only once here), as in the paper
                     rnn.apply_forget_step()
@@ -286,7 +305,8 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     total_loss.backward()
                     
                     if config['grad_norm_clip'] > 0:
-                        torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
+                        norm = torch.nn.utils.clip_grad_norm_(rnn.parameters(), config['grad_norm_clip'])
+                        rnn.grad_clip_stats.record(norm, config['grad_norm_clip'])
                     
                     optimizer.step()
                     rnn.apply_regularization()
@@ -395,8 +415,9 @@ def build_parser():
                   help='EphemeralRNN (DFA and backprop): clamp each alpha-scaled update of an ephemeral '
                        'weight to [-v, v] (0 = off). Ignored by BPTT and by the rnn baseline (no ephemeral weights).')
     _add_argument(parser, '--grad_norm_clip', type=float, default=0,
-                  help='rnn baseline (SimpleRNN): clip_grad_norm_ on all parameters before each '
-                       'update, SGD or DFA (0 = off). Ignored by the ephemeral model.')
+                  help='Gradient-norm clipping before each update, under every updater (0 = off). '
+                       'rnn: clip_grad_norm_ on all parameters. ephemeral: each sequence\'s raw '
+                       'gradient (its weight copies and bias shares), before plasticity scaling.')
     # Old name for whichever of the two applies to --model_type; see resolve_deprecated_args.
     parser.add_argument('--grad_clip', type=float, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     parser.add_argument('--hidden_size', type=int, default=1024, help='Size of hidden layers in RNN')
@@ -601,7 +622,8 @@ def main():
             weight_clamp=args.weight_clamp, updater=args.updater,
             plasticity=config["plasticity"], batch_size=config["batch_size"],
             forget_rate=config["forget_rate"], ephemeral_fraction=config["ephemeral_fraction"],
-            enable_recurrence=args.enable_recurrence
+            enable_recurrence=args.enable_recurrence,
+            retain_sequence_bias_grads=args.grad_norm_clip > 0 and args.updater != 'dfa'
         )
     else:
         raise ValueError(f"Unknown model_type: {args.model_type}")
@@ -887,6 +909,7 @@ def main():
             # ==============================================================
             if args.print_freq > 0 and iter % args.print_freq == 0:
                 metrics = interval.summary()
+                metrics.update(rnn.grad_clip_stats.summary())
                 metrics["iters_per_sec"] = interval.iterations / (time.time() - interval_start)
                 avg_loss_plot = metrics.get("loss", float("nan"))
 

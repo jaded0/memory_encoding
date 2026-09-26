@@ -304,6 +304,34 @@ class SimpleRnnDfaTest(unittest.TestCase):
                     self.assertLessEqual(layer.weight.norm().item(), 1.000001)
                     self.assertLessEqual(layer.weight.abs().max().item(), 0.100001)
 
+    def test_rnn_dfa_gradient_is_the_batch_mean_of_per_sequence_outer_products(self):
+        model = build_rnn("rnn", "dfa", num_layers=2)
+        batch = SEQUENCE.shape[0]
+        onehot = torch.nn.functional.one_hot(SEQUENCE, len(CHARSET)).float()
+        output, _ = model(torch.cat([onehot[:, 1], onehot[:, 0]], dim=1), model.initHidden(batch))
+        output_error = torch.softmax(output, 1) - onehot[:, 2]
+        for layer in model.dfa_layers():
+            layer.populate_dfa_gradients(output_error)
+            projected = output_error if layer.is_last_layer else output_error @ layer.feedback_weights
+            per_sequence = [torch.outer(projected[b], layer.in_traces[b]) for b in range(batch)]
+            torch.testing.assert_close(layer.weight.grad, torch.stack(per_sequence).mean(0), rtol=1e-6, atol=1e-8)
+            torch.testing.assert_close(layer.bias.grad, projected.mean(0), rtol=1e-6, atol=1e-8)
+
+    def test_ephemeral_weight_clamp_applies_under_every_updater(self):
+        for updater in ("dfa", "backprop", "bptt"):
+            with self.subTest(updater=updater):
+                seed_everything(99, deterministic=True)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    model = EphemeralRNN(2 * len(CHARSET), HIDDEN, len(CHARSET), 1, CHARSET,
+                                         unit_norm_weights=False, weight_clamp=0.05, updater=updater,
+                                         plasticity=3.0, batch_size=2, forget_rate=0.25,
+                                         ephemeral_fraction=0.5)
+                initial = max(layer.per_sample_weights.abs().max().item() for layer in model.trained_layers())
+                self.assertGreater(initial, 0.05)  # the clamp has something to bind
+                run_one_sequence(model, updater)
+                for layer in model.trained_layers():
+                    self.assertLessEqual(layer.per_sample_weights.abs().max().item(), 0.050001)
+
     def test_rnn_without_dfa_state_refuses_dfa(self):
         model = build_rnn("rnn", "backprop")
         with self.assertRaises(ValueError):
