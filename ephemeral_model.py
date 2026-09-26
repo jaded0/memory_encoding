@@ -184,7 +184,8 @@ class EphemeralLinear(nn.Linear):
         self.per_sample_weights.data.copy_(aggregated.expand_as(self.per_sample_weights))
 
         # Apply the mask
-        self.weight[self.ephemeral_mask] = 0
+        # masked_fill_, not boolean indexing: the same values without a host sync.
+        self.weight.data.masked_fill_(self.ephemeral_mask, 0)
         self.per_sample_weights.data.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
