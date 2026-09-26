@@ -98,8 +98,8 @@ INPUT_MODE='last_one'        # last_one | last_two
 # --- Learning Rates & Clipping ---
 LEARNING_RATE=1e-5           # Base learning rate
 PLAST_CLIP=1e3               # Plasticity (learning-rate multiplier) of ephemeral weights, alpha
-GRAD_CLIP=0                  # ephemeral: element-wise clamp on ephemeral-weight updates; rnn: grad-norm clip, also under dfa (0 = off)
-GRAD_CLIP_FLAG=$([[ $MODEL_TYPE == rnn ]] && echo --grad_norm_clip || echo --ephemeral_update_clamp)
+GRAD_NORM_CLIP=0             # Gradient-norm clip, both models and every updater (ephemeral: per sequence, before alpha; 0 = off)
+EPHEMERAL_UPDATE_CLAMP=0     # Ephemeral only: element-wise clamp on alpha-scaled ephemeral-weight updates (0 = off)
 
 # --- Ephemeral Weights (ignored by the rnn baseline) ---
 FORGET_RATE=0.1              # Fraction of each ephemeral weight removed per step: w <- (1 - FORGET_RATE) w
@@ -147,7 +147,8 @@ forward_signals python -u train.py \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
     --plasticity $PLAST_CLIP \
-    $GRAD_CLIP_FLAG $GRAD_CLIP \
+    --grad_norm_clip $GRAD_NORM_CLIP \
+    --ephemeral_update_clamp $EPHEMERAL_UPDATE_CLAMP \
     --forget_rate $FORGET_RATE \
     --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \

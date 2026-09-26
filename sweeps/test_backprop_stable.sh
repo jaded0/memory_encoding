@@ -12,6 +12,9 @@ NOTES="Testing stable backprop with EphemeralRNN"
 
 # --- Training Parameters ---
 MODEL_TYPE='ephemeral'           # ephemeral | rnn
+# GRAD_CLIP keeps the old --grad_clip meaning: the ephemeral update clamp or the rnn grad-norm
+# clip, never both (--grad_norm_clip now also applies to the ephemeral model).
+GRAD_CLIP_FLAG=$([[ $MODEL_TYPE == rnn ]] && echo --grad_norm_clip || echo --ephemeral_update_clamp)
 UPDATER='backprop'              # dfa | backprop | bptt
 INPUT_MODE='last_one'           # last_one | last_two
 
@@ -60,8 +63,7 @@ python -u train.py \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
     --plasticity $PLAST_CLIP \
-    --ephemeral_update_clamp $GRAD_CLIP \
-    --grad_norm_clip $GRAD_CLIP \
+    $GRAD_CLIP_FLAG $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
     --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \

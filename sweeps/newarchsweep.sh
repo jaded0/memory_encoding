@@ -72,6 +72,9 @@ idx_mt=$(((SLURM_ARRAY_TASK_ID / (num_enable_recurrence * num_updaters)) % num_m
 
 # Get the actual parameter values
 MODEL_TYPE=${model_types[$idx_mt]}
+# GRAD_CLIP keeps the old --grad_clip meaning: the ephemeral update clamp or the rnn grad-norm
+# clip, never both (--grad_norm_clip now also applies to the ephemeral model).
+GRAD_CLIP_FLAG=$([[ $MODEL_TYPE == rnn ]] && echo --grad_norm_clip || echo --ephemeral_update_clamp)
 UPDATER=${updaters[$idx_up]}
 ENABLE_RECURRENCE=${enable_recurrence[$idx_er]}
 
@@ -124,8 +127,7 @@ forward_signals python -u train.py \
     --input_mode $INPUT_MODE \
     --learning_rate $LEARNING_RATE \
     --plasticity $PLAST_CLIP \
-    --ephemeral_update_clamp $GRAD_CLIP \
-    --grad_norm_clip $GRAD_CLIP \
+    $GRAD_CLIP_FLAG $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
     --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
