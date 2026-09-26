@@ -446,6 +446,30 @@ The sbatch scripts request `#SBATCH --signal=B:USR1@600` and launch training thr
 records `end_reason: time_limit` in W&B, and exits with code 124; resume with `--resume`. A SIGTERM
 stops the same way with `end_reason: terminated` and exit code 143.
 
+### Speed: `--fused_update` (ephemeral + DFA)
+
+Almost all of a DFA step's GPU time is spent in elementwise passes over each layer's
+`[B, out, in]` per-sample weights: outer product, plasticity, clamp, add, forget. `--fused_update`
+compiles each layer's step into one kernel with `torch.compile`, and it never materializes the
+gradient. On an RTX A6000 at the 3-palindrome benchmark size `train_batch` goes from 22.5 to 76
+batches/s; `benchmarks/README.md` has results for other GPUs.
+
+The step is `dfa_layer_step` in `ephemeral_model.py`. It is composed from the same helpers
+`apply_update` and `apply_forget_step` use, in the same order, so the update rule is written once.
+- Run uncompiled, it is bit-identical to the unfused step. Compiled, it is the same math with
+  different rounding (fused multiply-adds): about 2e-7 relative per step, and the gap stays
+  below 5e-7 over 200 batches, because the sequence wipe resets the fast weights.
+- Fused runs are deterministic run to run on the same hardware.
+- Steps that log update norms take the unfused step. `--grad_norm_clip` works (closed-form
+  rank-1 norms, equal to rounding).
+- Only `--model_type ephemeral --updater dfa` accepts the flag. A GPU below compute capability
+  7.0 (the P100, which Triton does not support) falls back to the unfused step, and
+  `fused_update_active` records which path ran. `tests/test_fused_update.py` pins all of this.
+
+Changing the update rule means editing a helper, which changes both paths. A new operation in
+the step has to be added to `dfa_layer_step` too. The bit-identity test fails if the two
+diverge.
+
 ### Advanced Features
 
 - **Positional Encoding**: Add positional information with `--positional_encoding_dim N`

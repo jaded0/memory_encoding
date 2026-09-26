@@ -128,7 +128,15 @@ task, threshold range, and training regime.
   Runs are unstable late: slow-weight norms grow until the loss explodes and recall collapses
   (every α 1e4 run on 7+ token tasks, 2 of 4 at α 3e3). **Next:** test stabilizers on 3-char
   reversal before long runs (`--unit_norm_weights`, output tanh, slow-weight decay, tighter
-  weight clamp). Speed fixes wait on Jaden's call (he gated them on this verification).
+  weight clamp).
+- Speed (2026-09-26, Jaden: "make sure the speed changes are truly just that"):
+  - The per-step host syncs are gone, with the fixture byte-identical.
+  - The update is refactored into shared helpers, again byte-identical.
+  - `--fused_update` compiles those same helpers: bit-identical uncompiled, equal to rounding
+    compiled, 3.4× on an A6000.
+  - Running: `sweeps/orc_fused_equivalence.sbatch`, arrays 13899359 (A100) and 13899360 (H100).
+    It pairs unfused and fused runs on 3-char reversal at lr·α = 3 for 200k iterations, 3 seeds,
+    so fused-vs-unfused can be compared with the unfused A100-vs-H100 difference.
 - Speed (`sweeps/orc_speed_benchmark.sbatch`, `benchmarks/benchmark_dfa_throughput.py
   --device cuda`). Main is 1.2× (P100) to 1.7× (H100) slower than the scratch harness. Both
   are 5–10× below the memory-bandwidth floor, because every step makes about 15 elementwise
