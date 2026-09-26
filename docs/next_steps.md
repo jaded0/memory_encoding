@@ -11,37 +11,24 @@ Guiding rule from Jaden: **both model architectures (`EphemeralRNN`, `SimpleRNN`
 same hyperparameters, except where it fundamentally makes no sense; in that case a curt
 comment at the point of use says why.**
 
-## 1. Hyperparameter parity audit (Jaden's rule above)
-Go through every flag in `train.py`'s parser and make each apply to both models, or add a
-curt comment where it cannot. Known cases:
-- `--grad_norm_clip` (SimpleRNN; also under rnn+dfa) vs `--ephemeral_update_clamp` (ephemeral
-  only). Keep `--grad_norm_clip` under rnn+dfa (Jaden: keep it) and add a comment that it breaks
-  the exact match with the ephemeral model's DFA when non-zero. Consider whether the ephemeral
-  model should support `--grad_norm_clip` too (on backprop/BPTT that is well defined).
-- `--plasticity`, `--ephemeral_fraction`, `--forget_rate`: fundamentally ephemeral-only
-  (SimpleRNN has no ephemeral entries); a one-line comment suffices.
-- Ephemeral BPTT ignores `--ephemeral_update_clamp`, `--weight_clamp`, `--unit_norm_weights`
-  (tests/README.md, pinned behaviours). Decide whether that is "fundamental" (fast weights never
-  reach a forward pass under BPTT) and comment accordingly.
-- `run_training.sh` / `slurm_run.sh` choose `GRAD_CLIP_FLAG` by model type; simplify once flags
-  are unified.
+## 1. Hyperparameter parity audit (Jaden's rule above): done 2026-09-25
+- `--grad_norm_clip` now applies to both models under every updater. The ephemeral model clips
+  each sequence's raw gradient (its weight slices and bias shares) before α
+  (`EphemeralRNN.clip_grad_norm_per_sequence`; Jaden chose per sequence over whole batch).
+  SimpleRNN keeps `clip_grad_norm_` on its shared gradients. `tests/test_grad_norm_clip.py`.
+- Ephemeral BPTT now applies `--weight_clamp` and `--unit_norm_weights`, which bound the slow
+  weights it trains. A layer with no gradient in a step (`i2h` under per-step backprop) is now
+  regularized too. `--ephemeral_update_clamp` stays ephemeral DFA/backprop only; README
+  "Updaters" explains why. `CHECKPOINT_CODE_VERSION` 12.
+- `run_training.sh` and `slurm_run.sh` set `GRAD_NORM_CLIP` and `EPHEMERAL_UPDATE_CLAMP`
+  separately. The four old sweeps that passed one `$GRAD_CLIP` to both flags now pass only
+  the model's historical one, so rerunning them never applies both clips.
+- `--plasticity`, `--ephemeral_fraction`, `--forget_rate` remain ephemeral-only (no ephemeral
+  entries in SimpleRNN).
 
-## 2. Batch-mean DFA step for SimpleRNN's shared weights: document the justification
-Jaden: keep the batch mean, "but this should be well thought-out with documented
-justification." Write it in the README (Updaters, rnn + dfa) and at `DFALinear`'s update:
-- SimpleRNN has one weight copy for the whole batch. The ephemeral model's slow entries are
-  per sequence during a sequence and are averaged over the batch at `start_sequence_wipe()`,
-  so over a sequence their net step is the batch mean of the per-sequence steps.
-  Taking the batch mean each step in SimpleRNN gives the same expected step size per sequence,
-  independent of batch size, and matches the DFA bias step (already a batch mean in both).
-- A batch sum would scale the effective learning rate with B, making `--learning_rate`
-  mean different things at different batch sizes and in the two models.
-- Caveat to state: averaging per step vs averaging at sequence end are not identical when the
-  weights feed back into later steps within a sequence (the ephemeral model's per-sequence copies
-  diverge during a sequence, SimpleRNN's don't). Also note the backprop/BPTT 1/B (batch-mean
-  loss) is a related but separate choice (README "Known issues").
-- Consider a small test pinning that the rnn+dfa step equals the mean of the per-sequence DFA
-  gradients.
+## 2. Batch-mean DFA step for SimpleRNN's shared weights: done
+The justification is in the README (Updaters, rnn + dfa) and at `DFALinear`.
+`test_rnn_dfa_gradient_is_the_batch_mean_of_per_sequence_outer_products` pins the step.
 
 ## 3. Research, not code yet
 - **DFA and f′** (README "Known issues"): examine whether DFA should include the activation
@@ -80,6 +67,12 @@ Do this work on its own branch/worktree so it does not mix with the architecture
    help in that sweep." Do not edit the paper until the audit and controlled runs are reviewed.
 
 ### 4b. Implementation/characterization tests
+
+Status 2026-09-25: `--grad_norm_clip` for the ephemeral model is implemented and tested
+(section 1). A threshold that never binds (e.g. `1e30`) is bit-identical to no clip and logs
+`grad_norm_mean`, `grad_norm_max` and `grad_norm_clip_fraction` per print interval, which is
+the measurement the pilot needs. The α-scaled update norms are the existing
+`*_ephemeral_update_norm` / `*_slow_update_norm` logs.
 
 Before launching a new sweep, define `--grad_norm_clip` for the ephemeral model without changing
 the existing two clamp operations. Match the SimpleRNN convention: compute the norm over all live
@@ -122,6 +115,37 @@ Report paired seed differences and uncertainty, not only the best threshold or m
 Only make the broad paper claim about conventional gradient clipping if the global-norm panel
 supports it. Otherwise name the exact operation tested and scope the conclusion to the updater,
 task, threshold range, and training regime.
+
+## 5. Current-code benchmark and speed (2026-09-25)
+- Done: `sweeps/orc_3pal_head_panel.sbatch` (ORC array 13896047), results in
+  `benchmarks/3pal_head_panel.md`. At lr·α = 1 and 250k iterations the ephemeral model reaches
+  45% recall (chance 14%), mostly at lag 1. Its lag-5 and final-character accuracy are at the
+  always-predict-padding baseline, while SimpleRNN + BPTT solves the task on every seed.
+- Done: `sweeps/orc_memory_tasks.sbatch` (arrays 13897313, 13897527), results in
+  `benchmarks/memory_tasks_head.md`. With recurrence clipped, the fast weights clearly carry the
+  memory on every task where training stays stable: 3-char reversal peaks at 81% recall against
+  7% without fast weights. They stay short of SimpleRNN + BPTT, which gets 100% on reversals.
+  Runs are unstable late: slow-weight norms grow until the loss explodes and recall collapses
+  (every α 1e4 run on 7+ token tasks, 2 of 4 at α 3e3). **Next:** test stabilizers on 3-char
+  reversal before long runs (`--unit_norm_weights`, output tanh, slow-weight decay, tighter
+  weight clamp).
+- Speed (2026-09-26, Jaden: "make sure the speed changes are truly just that"):
+  - The per-step host syncs are gone, with the fixture byte-identical.
+  - The update is refactored into shared helpers, again byte-identical.
+  - `--fused_update` compiles those same helpers: bit-identical uncompiled, equal to rounding
+    compiled, 3.4× on an A6000.
+  - Running: `sweeps/orc_fused_equivalence.sbatch`, arrays 13899359 (A100) and 13899360 (H100).
+    It pairs unfused and fused runs on 3-char reversal at lr·α = 3 for 200k iterations, 3 seeds,
+    so fused-vs-unfused can be compared with the unfused A100-vs-H100 difference.
+- Speed (`sweeps/orc_speed_benchmark.sbatch`, `benchmarks/benchmark_dfa_throughput.py
+  --device cuda`). Main is 1.2× (P100) to 1.7× (H100) slower than the scratch harness. Both
+  are 5–10× below the memory-bandwidth floor, because every step makes about 15 elementwise
+  passes over each `[B, out, in]` per-sample weight tensor. On H100 the trainer is also
+  CPU/launch-bound (`.item()` every step in `train_batch`). A fused `torch.compile` path
+  (`fused_core`) measures the ceiling: 3.1× on an A6000, 1.6× on A100, 1.35× on H100
+  (`benchmarks/README.md`). Candidate changes: drop the per-step sync, then optionally fuse
+  the update behind a flag. Fusion changes GPU floating point (FMA), so treat
+  it as a new numerical path.
 
 ## Implemented from this handoff
 - Slow entries of `per_sample_weights` start from `nn.Linear`'s default initialization,
