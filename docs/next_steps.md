@@ -116,6 +116,29 @@ Only make the broad paper claim about conventional gradient clipping if the glob
 supports it. Otherwise name the exact operation tested and scope the conclusion to the updater,
 task, threshold range, and training regime.
 
+## 5. Current-code benchmark and speed (2026-09-25)
+- Done: `sweeps/orc_3pal_head_panel.sbatch` (ORC array 13896047), results in
+  `benchmarks/3pal_head_panel.md`. At lr·α = 1 and 250k iterations the ephemeral model reaches
+  45% recall (chance 14%), mostly at lag 1. Its lag-5 and final-character accuracy are at the
+  always-predict-padding baseline, while SimpleRNN + BPTT solves the task on every seed.
+- Done: `sweeps/orc_memory_tasks.sbatch` (arrays 13897313, 13897527), results in
+  `benchmarks/memory_tasks_head.md`. With recurrence clipped, the fast weights clearly carry the
+  memory on every task where training stays stable: 3-char reversal peaks at 81% recall against
+  7% without fast weights. They stay short of SimpleRNN + BPTT, which gets 100% on reversals.
+  Runs are unstable late: slow-weight norms grow until the loss explodes and recall collapses
+  (every α 1e4 run on 7+ token tasks, 2 of 4 at α 3e3). **Next:** test stabilizers on 3-char
+  reversal before long runs (`--unit_norm_weights`, output tanh, slow-weight decay, tighter
+  weight clamp). Speed fixes wait on Jaden's call (he gated them on this verification).
+- Speed (`sweeps/orc_speed_benchmark.sbatch`, `benchmarks/benchmark_dfa_throughput.py
+  --device cuda`). Main is 1.2× (P100) to 1.7× (H100) slower than the scratch harness. Both
+  are 5–10× below the memory-bandwidth floor, because every step makes about 15 elementwise
+  passes over each `[B, out, in]` per-sample weight tensor. On H100 the trainer is also
+  CPU/launch-bound (`.item()` every step in `train_batch`). A fused `torch.compile` path
+  (`fused_core`) measures the ceiling: 3.1× on an A6000, 1.6× on A100, 1.35× on H100
+  (`benchmarks/README.md`). Candidate changes: drop the per-step sync, then optionally fuse
+  the update behind a flag. Fusion changes GPU floating point (FMA), so treat
+  it as a new numerical path.
+
 ## Implemented from this handoff
 - Slow entries of `per_sample_weights` start from `nn.Linear`'s default initialization,
   repeated over the batch without another RNG draw; fast entries start at zero. Implemented
