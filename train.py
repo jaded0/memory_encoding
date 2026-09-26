@@ -138,7 +138,12 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             output_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
 
             # Apply DFA updates
-            if isinstance(rnn, EphemeralRNN):
+            if isinstance(rnn, EphemeralRNN) and rnn.fused_layer_step is not None and not state.get('log_norms_now', False):
+                # --fused_update: the same step as the branch below, one kernel per layer. Steps that
+                # log update norms take the branch below, which materializes the update.
+                rnn.fused_dfa_step(output_error, config["learning_rate"], config["ephemeral_update_clamp"],
+                                   config.get('grad_norm_clip', 0))
+            elif isinstance(rnn, EphemeralRNN):
                 rnn.clear_dfa_gradients()
                 # Every layer is given this same object, and all of them are populated before any
                 # update runs. i2o keeps a reference to it (as _last_projected_error,
@@ -420,6 +425,11 @@ def build_parser():
                   help='Gradient-norm clipping before each update, under every updater (0 = off). '
                        'rnn: clip_grad_norm_ on all parameters. ephemeral: each sequence\'s raw '
                        'gradient (its weight copies and bias shares), before plasticity scaling.')
+    parser.add_argument('--fused_update', type=str2bool, nargs='?', const=True, default=False,
+                        help='Ephemeral + DFA only: compile each layer\'s DFA update, clamps and forgetting '
+                             'into one kernel (torch.compile). The same math with different rounding, about '
+                             '1e-7 relative per step. Needs compute capability 7.0+; a P100 falls back '
+                             'to the unfused step. Norm-logging steps always run unfused.')
     # Old name for whichever of the two applies to --model_type; see resolve_deprecated_args.
     parser.add_argument('--grad_clip', type=float, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     parser.add_argument('--hidden_size', type=int, default=1024, help='Size of hidden layers in RNN')
@@ -476,9 +486,15 @@ def resolve_deprecated_args(args, parser):
     return args
 
 
+def check_argument_combinations(args, parser):
+    if args.fused_update and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
+        parser.error("--fused_update supports only --model_type ephemeral --updater dfa.")
+    return args
+
+
 def parse_args(argv=None):
     parser = build_parser()
-    return resolve_deprecated_args(parser.parse_args(argv), parser)
+    return check_argument_combinations(resolve_deprecated_args(parser.parse_args(argv), parser), parser)
 
 
 def main():
@@ -487,7 +503,7 @@ def main():
     print("SLURM Job ID:", job_id)
     
     parser = build_parser()
-    args = resolve_deprecated_args(parser.parse_args(), parser)
+    args = check_argument_combinations(resolve_deprecated_args(parser.parse_args(), parser), parser)
 
     # Define the path to the latest checkpoint
     latest_checkpoint_path = os.path.join(args.checkpoint_dir, "latest_checkpoint.pth")
@@ -677,6 +693,18 @@ def main():
         rnn = rnn.to(device)
     # else: model remains on CPU if no checkpoint and no CUDA
 
+    # --fused_update compiles the DFA step with Triton, which needs compute capability 7.0.
+    config["fused_update_active"] = False
+    if args.fused_update:
+        weights_device = next(rnn.parameters()).device
+        if weights_device.type == "cuda" and torch.cuda.get_device_capability(weights_device)[0] < 7:
+            print(f"--fused_update: {torch.cuda.get_device_name(weights_device)} is below compute "
+                  "capability 7.0, which Triton needs; using the unfused step.")
+        else:
+            rnn.enable_fused_update()
+            config["fused_update_active"] = True
+            print("--fused_update: the DFA step is compiled per layer (first steps include compilation).")
+
     if args.track:
         # wandb initialization
         wandb_config = {
@@ -689,6 +717,8 @@ def main():
             "residual_connection": args.residual_connection,
             "ephemeral_update_clamp": args.ephemeral_update_clamp,
             "grad_norm_clip": args.grad_norm_clip,
+            "fused_update": args.fused_update,
+            "fused_update_active": config["fused_update_active"],
             "n_hidden": args.hidden_size,
             "n_layers": args.num_layers,
             "dataset": args.dataset,

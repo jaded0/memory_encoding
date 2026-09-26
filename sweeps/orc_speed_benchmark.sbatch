@@ -39,15 +39,17 @@ paths=(--task palindrome3 --symbols 7 --hidden-size 1024 --num-layers 3 --batch-
        --learning-rate 1e-3 --plasticity 1e3 --forget-rate 0.01 --weight-clamp 1
        --device cuda --threads "$SLURM_CPUS_PER_TASK"
        --warmup-batches 20 --timed-batches 200 --repeats 3)
-python -u benchmarks/benchmark_dfa_throughput.py "${paths[@]}" --profile 10 \
-    --output "$out/paths_deterministic.json" > "$out/paths_deterministic.log" 2>&1
-# fused_core (a torch.compile ceiling) needs Triton, which needs compute capability 7.0 (not P100).
-fused=()
+# The --fused_update paths need Triton, which needs compute capability 7.0 (not the P100).
+fused=() fused_arm=()
 if python -c 'import sys, torch; sys.exit(torch.cuda.get_device_capability()[0] < 7)'; then
-    fused=(fused_core --check-batches 50)
+    fused=(fused_core fused_native --check-batches 50)
+    fused_arm=(ephemeral:dfa:false:true)
 fi
+python -u benchmarks/benchmark_dfa_throughput.py "${paths[@]}" --profile 10 \
+    --paths main_native main_core scratch_core "${fused[@]}" \
+    --output "$out/paths_deterministic.json" > "$out/paths_deterministic.log" 2>&1
 python -u benchmarks/benchmark_dfa_throughput.py "${paths[@]}" --no-deterministic \
-    --paths main_native scratch_core "${fused[@]}" \
+    --paths main_native scratch_core \
     --output "$out/paths_nondeterministic.json" > "$out/paths_nondeterministic.log" 2>&1
 
 # The panel's shared settings; the arms differ only in model, updater and recurrence.
@@ -58,10 +60,11 @@ train=(--input_mode last_one --learning_rate 1e-3 --plasticity 1e3 --forget_rate
        --dataset 3_palindrome_dataset_vary_length --batch_size 16
        --n_iters 3000 --print_freq 500 --checkpoint_save_freq 100000 --resume false
        --track false --seed 2718 --deterministic true)
-for arm in ephemeral:dfa:false rnn:dfa:true rnn:bptt:true; do
-    IFS=: read -r model updater recurrence <<< "$arm"
+for arm in ephemeral:dfa:false:false rnn:dfa:true:false rnn:bptt:true:false "${fused_arm[@]}"; do
+    IFS=: read -r model updater recurrence fuse <<< "$arm"
+    name=${model}_${updater}$([[ $fuse == true ]] && echo _fused)
     python -u train.py "${train[@]}" --model_type "$model" --updater "$updater" \
-        --enable_recurrence "$recurrence" --checkpoint_dir "$out/checkpoints_${model}_$updater" \
-        > "$out/train_${model}_$updater.log" 2>&1
-    echo "$model $updater: $(grep iters_per_sec "$out/train_${model}_$updater.log" | tail -4 | awk '{print $2}' | tr '\n' ' ')"
+        --enable_recurrence "$recurrence" --fused_update "$fuse" --checkpoint_dir "$out/checkpoints_$name" \
+        > "$out/train_$name.log" 2>&1
+    echo "$name: $(grep iters_per_sec "$out/train_$name.log" | tail -4 | awk '{print $2}' | tr '\n' ' ')"
 done | tee "$out/train_rates.txt"

@@ -40,8 +40,8 @@ from scratch.dfa_forked_output_activation.experiment import (
 from train import train_batch
 
 
-PATHS = ("main_native", "main_core", "scratch_core", "fused_core")
-DEFAULT_PATHS = PATHS[:3]  # fused_core needs torch.compile (Triton on CUDA: sm_70 or newer)
+PATHS = ("main_native", "main_core", "scratch_core", "fused_core", "fused_native")
+DEFAULT_PATHS = PATHS[:3]  # the fused paths need torch.compile (Triton on CUDA: sm_70 or newer)
 
 
 def build_models(cfg: ScratchConfig, seed: int, device: torch.device):
@@ -156,57 +156,41 @@ def scratch_core_batch(model, batch, cfg, _state):
             layer.per_sample_weights.mul_(1 - layer.forget_rate * layer.ephemeral_mask)
 
 
-@torch.compile(dynamic=False)
-def fused_layer_update(weights, projected, inputs, plasticity, forget_keep, bias,
-                       learning_rate: float, weight_clamp: float):
-    """main_core's per-layer DFA step (outer product, plasticity, update, weight clamp,
-    forget) as one compiled kernel over per_sample_weights, which it writes in place."""
-    updated = weights - learning_rate * (projected.unsqueeze(2) * inputs.unsqueeze(1)) * plasticity
-    if weight_clamp:
-        updated = updated.clamp(-weight_clamp, weight_clamp)
-    weights.copy_(updated * forget_keep)
-    bias.sub_(learning_rate * projected.mean(0))
-
-
 @torch.no_grad()
 def fused_core_batch(model, batch, cfg, _state):
-    """main_core with each layer's update fused (a speed ceiling, not a production path).
-    Needs update clamp and unit-norm off; every layer's projected error depends only on this
-    step's output error and its own input trace, so updating layer by layer is equivalent."""
-    assert not cfg.ephemeral_update_clamp and not cfg.unit_norm_weights
+    """main_core through the production --fused_update step (EphemeralRNN.fused_dfa_step)."""
     _, onehot = batch
     model.start_sequence_wipe()
     hidden = model.initHidden(cfg.batch_size)
-    layers = [*model.linear_layers, model.i2h, model.i2o]
-    if not hasattr(model, "_forget_keep"):
-        model._forget_keep = [(1 - layer.forget_rate * layer.ephemeral_mask).float()
-                              for layer in layers]
     for step in range(onehot.shape[1] - 1):
         logits, hidden = model(onehot[:, step], hidden)
         output_error = torch.softmax(logits, 1) - onehot[:, step + 1]
-        for layer, forget_keep in zip(layers, model._forget_keep):
-            projected = output_error if layer.is_last_layer else output_error @ layer.feedback_weights
-            fused_layer_update(layer.per_sample_weights.data, projected, layer.in_traces.data,
-                               layer.plasticity, forget_keep, layer.bias.data,
-                               cfg.learning_rate, cfg.weight_clamp)
+        model.fused_dfa_step(output_error, cfg.learning_rate, cfg.ephemeral_update_clamp)
+
+
+def fused(model):
+    model.enable_fused_update()
+    return model
 
 
 RUNNERS = {
     "main_native": lambda pair: (pair[0], main_native_batch),
     "main_core": lambda pair: (pair[0], main_core_batch),
     "scratch_core": lambda pair: (pair[1], scratch_core_batch),
-    "fused_core": lambda pair: (pair[0], fused_core_batch),
+    "fused_core": lambda pair: (fused(pair[0]), fused_core_batch),
+    "fused_native": lambda pair: (fused(pair[0]), main_native_batch),
 }
+UNFUSED = {"fused_core": "main_core", "fused_native": "main_native"}
 
 
-def compare_to_main_core(path, batches, cfg, seed, device, count):
-    """Largest relative difference in any layer's per_sample_weights between `path` and
-    main_core after `count` batches from the same initialization."""
+def fused_difference(path, batches, cfg, seed, device, count):
+    """Largest relative difference in any layer's per_sample_weights between a fused path and its
+    unfused counterpart after `count` batches from the same initialization."""
     state = {"training_instance": 0, "log_norms_now": False}
-    reference, _ = RUNNERS["main_core"](build_models(cfg, seed, device))
+    reference, reference_runner = RUNNERS[UNFUSED[path]](build_models(cfg, seed, device))
     candidate, runner = RUNNERS[path](build_models(cfg, seed, device))
     for index in range(count):
-        main_core_batch(reference, batches[index % len(batches)], cfg, state)
+        reference_runner(reference, batches[index % len(batches)], cfg, state)
         runner(candidate, batches[index % len(batches)], cfg, state)
     pairs = zip([*reference.linear_layers, reference.i2h, reference.i2o],
                 [*candidate.linear_layers, candidate.i2h, candidate.i2o])
@@ -322,7 +306,7 @@ def main():
     parser.add_argument("--forget-rate", type=float)
     parser.add_argument("--weight-clamp", type=float)
     parser.add_argument("--check-batches", type=int, default=0, metavar="BATCHES",
-                        help="Report fused_core's weight difference from main_core after this many batches")
+                        help="Report each fused path's weight difference from its unfused path after this many batches")
     parser.add_argument("--profile", type=int, default=0, metavar="BATCHES",
                         help="Also print a torch.profiler table over this many batches per path")
     parser.add_argument("--output", type=Path)
@@ -374,9 +358,9 @@ def main():
         "bandwidth_floor_batches_per_second": bandwidth_floor(cfg, steps, bandwidth),
         "results": results,
     }
-    if args.check_batches and "fused_core" in args.paths:
-        payload["fused_core_max_relative_weight_difference"] = compare_to_main_core(
-            "fused_core", batches, cfg, args.seed, device, args.check_batches)
+    for path in [path for path in args.paths if path in UNFUSED] if args.check_batches else ():
+        payload[f"{path}_max_relative_weight_difference"] = fused_difference(
+            path, batches, cfg, args.seed, device, args.check_batches)
     rendered = json.dumps(payload, indent=2)
     print(rendered)
     if args.output:
