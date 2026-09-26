@@ -75,15 +75,37 @@ For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is 
 | Error signal | Per-sequence `output_error`; hidden layers receive it through fixed random `feedback_weights` | Autograd | Autograd |
 | Hidden state | Detached every step | Detached every step | Not detached |
 | When weights change | Every step | Every step | Once, after the last step |
-| Order per update | Update (incl. clamp and normalize), then forget | Update (incl. clamp and normalize), then forget | Update, then forget (once) |
+| Order per update | Grad-norm clip, α, update clamp, update, normalize, weight clamp, then forget | Same as DFA | Grad-norm clip, α, update, then forget (once) |
 | Step on an ephemeral weight | `lr·α·g` | `lr·α²·g/B` | `lr·α·g/B`, zeroed by the next `start_sequence_wipe()` |
 | Step on a slow weight | `lr·g` | `lr·g/B` | `lr·g/B` |
 | Layers that change | Hidden layers, `i2h` (direct feedback), `i2o` | Hidden layers and `i2o`; `i2h` only through future loss under BPTT | Every parameter with a gradient (hidden layers, `i2h`, `i2o`) |
+| `--grad_norm_clip` | Each sequence's raw gradient rescaled to norm ≤ c, before α | Same as DFA | Same, on the gradient summed over the sequence |
 | `--ephemeral_update_clamp` | Element-wise clamp on α-scaled ephemeral updates | Same as DFA | Ignored |
-| `--weight_clamp`, `--unit_norm_weights` | Applied after each update | Applied after each update | Ignored |
+| `--weight_clamp`, `--unit_norm_weights` | Applied after each update | Applied after each update | Applied after the update (since `CHECKPOINT_CODE_VERSION` 12) |
 
-`--grad_norm_clip` applies only to the `rnn` baseline, and `--ephemeral_update_clamp` only to
-the ephemeral model. They used to be one flag, `--grad_clip`; see [Renamed flags](#renamed-flags-2026-09).
+Three separate clipping mechanisms exist, and only the first is gradient clipping in the usual
+sense. They used to be confused under one flag, `--grad_clip`; see [Renamed flags](#renamed-flags-2026-09).
+
+- `--grad_norm_clip c` (both models, every updater) rescales a gradient to norm at most `c`
+  before the step, with torch's coefficient `min(1, c / (norm + 1e-6))`. SimpleRNN clips the
+  global norm of its shared gradients (`clip_grad_norm_`). The ephemeral model has one weight
+  copy per sequence, so it clips each sequence's gradient separately
+  (`EphemeralRNN.clip_grad_norm_per_sequence`). The norm covers that sequence's slice of every
+  layer's `per_sample_weights.grad` and its share of every bias gradient: the projected error
+  under DFA, and under backprop and BPTT the gradient of the layer's output, which is retained
+  for this. The threshold then does not depend on the batch size, one sequence never rescales
+  another, and at batch size 1 this is exactly `clip_grad_norm_`. It is taken on the raw
+  gradient, before α. After α, the α-scaled fast entries would dominate the norm, and the clip
+  would act mainly on fast-weight updates. A threshold that never binds (e.g. `1e30`) leaves
+  training bit-identical and logs `grad_norm_mean`, `grad_norm_max` and
+  `grad_norm_clip_fraction` each print interval; use it to measure unclipped norms.
+- `--ephemeral_update_clamp v` (ephemeral only, DFA and backprop): element-wise clamp of the
+  α-scaled update of each ephemeral entry to `[-v, v]`. SimpleRNN has no ephemeral entries.
+  This is what the paper's old "gradient clipping" sweeps tested.
+- `--weight_clamp w` (both models): element-wise clamp of the weights after each update.
+
+Ephemeral BPTT ignores `--ephemeral_update_clamp` by design: it clamps only fast-weight updates,
+and under BPTT those are wiped before any forward pass reads them (see Known issues).
 
 **DFA in the SimpleRNN baseline** (since 2026-09; before, `--model_type rnn --updater dfa`
 ran but changed no parameters). It is the ephemeral model's DFA with the ephemeral parts
@@ -108,7 +130,8 @@ removed, so the two models can be compared under DFA. SimpleRNN's layers are `DF
   shared layer's complete weight matrix and `--weight_clamp` then clamps its entries, after
   every DFA or SGD update; biases and feedback matrices are excluded. `--grad_norm_clip` clips
   the global norm of the DFA gradients before the step, as it does for the SGD gradients under
-  backprop and BPTT.
+  backprop and BPTT. Non-zero, it no longer matches the ephemeral model's DFA step exactly,
+  because the ephemeral model clips each sequence's gradient separately.
 - The feedback matrices are drawn after every layer is initialised, so rnn + dfa starts
   from the same weights as rnn + backprop at the same seed. They are buffers, and only an
   rnn + dfa model has them (added in `CHECKPOINT_CODE_VERSION` 5).
@@ -172,11 +195,12 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   entries therefore never reach a training forward pass, and only slow weights and biases
   learn. As a result, `--plasticity` and `--forget_rate` do not affect ephemeral BPTT
   training. (The forget set is exactly `ephemeral_mask`, `ephemeral_model.py:83-99`.) This
-  path also ignores `--ephemeral_update_clamp`, `--weight_clamp` and `--unit_norm_weights`,
-  because it never calls `apply_update` or `_apply_regularization` (`train.py:281-285`), and
-  it does not increment `training_instance`. Checked on a small model (under the old flag
-  names): changing α, `--forget_rate`, the update clamp or the weight clamp leaves a
-  four-sequence BPTT loss trajectory bit-identical.
+  path also ignores `--ephemeral_update_clamp`, because it never calls `apply_update`, and it
+  does not increment `training_instance`. Checked on a small model (under the old flag
+  names): changing α, `--forget_rate` or the update clamp leaves a four-sequence BPTT loss
+  trajectory bit-identical. Until `CHECKPOINT_CODE_VERSION` 12 it also ignored
+  `--weight_clamp` and `--unit_norm_weights`. Those bound the slow weights, which do learn,
+  so it now applies them after the SGD step, as SimpleRNN does under BPTT.
 - **`--unit_norm_weights` rescales the `per_sample_weights` only, one sequence at a time.**
   `_apply_regularization` divides each sequence's `[out, in]` slice of a layer's
   `per_sample_weights` by that slice's own L2 norm after each update

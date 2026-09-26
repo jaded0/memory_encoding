@@ -142,7 +142,10 @@ def str2bool(v):
 # 9: the forked output reads the shared trunk directly instead of through tanh.
 # 10: SimpleRNN matches EphemeralRNN's shared-width GELU trunk and residual placement.
 # 11: unit_norm_weights and weight_clamp also regularize SimpleRNN's shared weights.
-CHECKPOINT_CODE_VERSION = 11
+# 12: --grad_norm_clip also clips the ephemeral model (per sequence, before alpha), and ephemeral
+#     BPTT applies unit_norm_weights and weight_clamp after its update, as does backprop to a
+#     layer with no gradient (i2h).
+CHECKPOINT_CODE_VERSION = 12
 
 
 def check_checkpoint_code_version(checkpoint, checkpoint_path="<checkpoint>"):
