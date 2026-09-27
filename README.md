@@ -103,6 +103,16 @@ sense. They used to be confused under one flag, `--grad_clip`; see [Renamed flag
   α-scaled update of each ephemeral entry to `[-v, v]`. SimpleRNN has no ephemeral entries.
   This is what the paper's old "gradient clipping" sweeps tested.
 - `--weight_clamp w` (both models): element-wise clamp of the weights after each update.
+  At α ≥ 3e3 one DFA step already drives every fast entry to ±`w` (±0.99 after forgetting), so
+  for the fast weights this clamp is their operating point, not a safety bound
+  (`benchmarks/memory_tasks_head.md`).
+
+Two further stabilizers, both off by default:
+- `--slow_weight_decay λ` (both models): after each update, every slow weight keeps `1 − λ`.
+  The ephemeral model applies it in the forget step (fast entries keep `1 − forget_rate`),
+  SimpleRNN to all its weights. Biases are excluded.
+- `--output_tanh` (both models): the output head reads `tanh` of the shared trunk. This was the
+  default until 2026-09-24 (`docs/tapped_vs_forked_rnn_report.md`).
 
 Ephemeral BPTT ignores `--ephemeral_update_clamp` by design: it clamps only fast-weight updates,
 and under BPTT those are wiped before any forward pass reads them (see Known issues).
