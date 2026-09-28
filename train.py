@@ -55,18 +55,19 @@ trigger_sync = TriggerWandbSyncHook() if TriggerWandbSyncHook else None  # <--- 
 # --- W&B end-of-run markers ---
 def wb_mark_end(reason: str, tags=None, exit_code: int | None = None):
     """Record an end reason in both tags and summary. Safe if tracking is off."""
-    if not (wandb.run and getattr(wandb.run, "summary", None) is not None):
+    run = getattr(wandb, "run", None)
+    if not (run and getattr(run, "summary", None) is not None):
         return
     # structured summary
-    wandb.run.summary["end_reason"] = reason
-    wandb.run.summary[f"end_is_{reason}"] = True
+    run.summary["end_reason"] = reason
+    run.summary[f"end_is_{reason}"] = True
     if exit_code is not None:
-        wandb.run.summary["end_exit_code_suggested"] = int(exit_code)  # read later at finish()
+        run.summary["end_exit_code_suggested"] = int(exit_code)  # read later at finish()
 
     # tags (filter-friendly)
     if tags:
-        current = set(getattr(wandb.run, "tags", []))
-        wandb.run.tags = list(current.union(set(tags)))
+        current = set(getattr(run, "tags", []))
+        run.tags = list(current.union(set(tags)))
 
 def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
     """Trains on one batch of sequences with DFA, backprop or BPTT."""

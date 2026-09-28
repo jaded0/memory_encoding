@@ -486,6 +486,18 @@ Changing the update rule means editing a helper, which changes both paths. A new
 the step has to be added to `dfa_layer_step` too. The bit-identity test fails if the two
 diverge.
 
+### Held-out evaluation (`heldout.py`)
+
+`evaluate_held_out(model, HeldOutBatch(...), learning_rate)` scores a trained DFA EphemeralRNN
+on a held-out stream prequentially. At each step it resets the flagged rows' fast entries, then
+predicts and scores. Only after that is the target revealed and written into the fast entries
+by the same DFA update (`ephemeral_update`, then the weight clamp restricted to fast entries).
+Every step then forgets. Slow entries, biases, feedback matrices and the slow-only output head
+stay frozen bit for bit, so held-out accuracy measures only what the fast memory adapts to.
+`score_mask`, `update_mask` and `reset_mask` select per row and step what is scored, written and
+reset. Models with `--unit_norm_weights` are rejected, because whole-matrix normalization would
+change the frozen slow entries.
+
 ### Advanced Features
 
 - **Positional Encoding**: Add positional information with `--positional_encoding_dim N`
