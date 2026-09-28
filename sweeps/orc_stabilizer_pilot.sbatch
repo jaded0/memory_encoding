@@ -4,6 +4,11 @@
 # collapsed (205k-355k). Each arm changes one setting from that control. 400k iterations,
 # seeds 3141 and 2718, --fused_update. train.py stops a run whose loss stays above 5 for 10
 # intervals, which marks a collapse.
+#
+# RUN_SET=saturation (sbatch --array=0-3 --export=ALL,RUN_SET=saturation) asks whether fast
+# weights pinned at the clamp cost memory: output tanh with the weight clamp off against the
+# pilot's output tanh at clamp 1 (about 10% of fast entries saturated; slow entries never reach
+# 1), three seeds each, the pilot's two clamp-1 runs reused.
 
 #SBATCH --time=08:00:00
 #SBATCH --signal=B:USR1@600
@@ -31,8 +36,16 @@ readonly SERIES=stabilizer_pilot_v1
 readonly -a SEEDS=(3141 2718)
 readonly -a ARMS=(control slow_decay_1e-5 slow_decay_1e-6 weight_clamp_0.3 weight_clamp_0.1 output_tanh update_clamp_100)
 task_id=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
-arm=${ARMS[$((task_id / ${#SEEDS[@]}))]:?No arm for array task $task_id}
-seed=${SEEDS[$((task_id % ${#SEEDS[@]}))]}
+runs=()
+if [[ ${RUN_SET:-pilot} == saturation ]]; then
+    runs=("output_tanh 4241" "output_tanh_noclamp 3141" "output_tanh_noclamp 2718" "output_tanh_noclamp 4241")
+else
+    for arm in "${ARMS[@]}"; do
+        for seed in "${SEEDS[@]}"; do runs+=("$arm $seed"); done
+    done
+fi
+[[ -n ${runs[$task_id]:-} ]] || { echo "No run for array task $task_id"; exit 1; }
+read -r arm seed <<< "${runs[$task_id]}"
 weight_clamp=1 extra=()
 case $arm in
     control) ;;
@@ -41,6 +54,7 @@ case $arm in
     weight_clamp_0.3) weight_clamp=0.3 ;;
     weight_clamp_0.1) weight_clamp=0.1 ;;
     output_tanh) extra=(--output_tanh true) ;;
+    output_tanh_noclamp) weight_clamp=0 extra=(--output_tanh true) ;;
     update_clamp_100) extra=(--ephemeral_update_clamp 100) ;;
 esac
 checkpoint_dir=$RUN_ROOT/checkpoints/$arm/seed-$seed
