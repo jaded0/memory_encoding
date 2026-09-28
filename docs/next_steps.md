@@ -1,4 +1,85 @@
-# Next steps (handoff, 2026-09-23)
+# Next steps (handoff; state as of 2026-09-27)
+
+## State as of 2026-09-27 (read this first)
+
+### Running
+- **Old-recipe reproduction:** ORC array **13904287**, `sweeps/orc_old_recipe.sbatch`, code 953dc0e
+  (branch `fast-clamp`), outputs `~/memory_encoding_benchmarks/old_recipe`. It runs Jaden's 2025 recipe
+  on current code: lr 1e-4, α 1e5, fraction 0.1, no clamp, no output tanh. 3-char reversal, seeds
+  2718/3141/4241, 5M iterations, about 20 h each, continuing across the 1-day `cs` limit by requeue.
+  Design and decision rule: `benchmarks/old_recipe_reproduction.md`. Read `final_char_acc` (the 2025
+  metric; ≥ 0.9 means converged), `recall_acc` and lag-5 recall from the interval blocks in
+  `logs/oldrecipe_13904287_<task>.out`. Extend a run still climbing with `N_ITERS=10000000`.
+
+### What we know (details in the linked documents)
+1. **Fast weights carry the memory when recurrence is clipped**, on every memory task tested. Without
+   them the same model is at or below chance (`benchmarks/memory_tasks_head.md`). At the 2026
+   recipe they reach 60–80% recall on 3-char reversal, against 100% for SimpleRNN + BPTT with
+   recurrence.
+2. **The 2026 recipe (lr 1e-3/α 1e4, fraction 0.2, clamp 1, 0.25–0.5M iterations) differs from the
+   one that worked in 2025** (lr 1e-4/α 1e5, fraction 0.1, no clamp, 5–10M iterations, zero-init
+   slow weights).
+   - In the 2025 sweep, lr 1e-3 succeeded in 2 of 152 long 3-char runs; lr 1e-4 to 3e-4 in about
+     30%.
+   - 2025 convergence came at 2.8M–9.4M iterations. At 400k both years sit on the same 0.66–0.76
+     plateau. See `docs/archive_2025_sweep_observations.md` and
+     `benchmarks/old_recipe_reproduction.md`.
+3. **Late divergence at the 2026 recipe** comes from slow-weight gain growth. Trunk activations
+   explode within a sequence, and so do the logits. Of seven single changes, only `--output_tanh`
+   was stable and kept full recall (`benchmarks/stabilizer_pilot.md`).
+   - Correction: fast weights do not saturate en masse. At clamp 1, 0–4% sit at the clamp.
+4. **Saturation test** (same document, follow-up section): with output tanh, clamp 1, a fast-only
+   clamp and no clamp are indistinguishable at 400k. The clamp does erase older writes (step-0
+   write retention 0.08–0.10 against 0.39–0.45), but that does not show in recall on the plateau.
+5. **Speed:** `--fused_update` gives 1.9× on A100 and 1.5× on H100 end to end, with the same
+   dynamics as the unfused step (12 paired runs). The per-step host syncs are gone (byte-identical
+   traces). See `benchmarks/README.md`.
+6. **With recurrence off, about a third of all fast entries are never written:** 1,024 of trunk
+   layer 0's 1,033 inputs are the zeroed hidden state.
+
+### Branches, PRs, worktrees
+- Merged: #1 characterization; #2 per-sequence `--grad_norm_clip` and regularization parity; #3
+  panel and GPU benchmark; #4 sync removal and `--fused_update`; #5 `--slow_weight_decay`,
+  `--output_tanh`, and the stabilizer pilot.
+- Branch `fast-clamp` (worktree `../memory_encoding_fastclamp`): `--fast_weight_clamp`, the
+  saturation run sets, the old-recipe launcher, and these documents.
+- PR #6 `heldout-eval` (not merged): another session's prequential held-out evaluator
+  (`heldout.py`), which scores with only fast weights adapting and slow weights frozen. Planned
+  rework before merging:
+  - reuse the shared update helpers instead of its own copy of the rule;
+  - honour `--fast_weight_clamp`;
+  - call it from `train.py` on the validation split every print interval, so every run reports
+    held-out, fast-weights-only recall.
+- The main checkout `/home/jaden/memory_encoding` is on branch `heldout-eval` (moved there so the
+  other session's files were not disturbed).
+
+### Next steps, in order
+1. Read the old-recipe result (above). If it converges, adopt it as the benchmark recipe and redo
+   the head-to-head against SimpleRNN at it. If not, bisect the 2025 differences, zero init
+   first.
+2. Rework and merge the held-out evaluator (PR #6) and wire it into `train.py`.
+3. Only then revisit clamp and saturation, in the convergence phase: the 2025 recipe with fast-only
+   clamp 1 against no clamp, past 3M iterations.
+4. Older items below (DFA f′, α² and 1/B in backprop, the clipping-claim audit) remain open.
+
+### Operational notes
+- **ORC:** `ssh orc` works non-interactively. The login banner swallows the first stdout line of
+  a remote command, so print a guard line first. Use `bash -lc` for Slurm tools and
+  `conda activate hebby`.
+- **QOS:** `-p cs,cs2 --qos cs` is the cheap, high-priority default (A100/H100, 1-day wall).
+  `--qos test` on `m9g` (P100, 1 h) is for quick checks. B200 (`cs3`) needs a newer torch than the
+  hebby env's 2.5.1+cu121.
+- **Launchers** run from an exported copy of a commit (`git archive` plus a `REVISION` file) under
+  `~/memory_encoding_benchmarks/<experiment>`. Never from a git worktree: another session cleans
+  those up. They record a loss early stop (loss > 5 for 10 intervals) as a collapse, not a failed
+  task.
+- **Local env:** use `~/miniforge3/envs/hebby/bin/python`; the default `python` is a different
+  torch 2.9 and fails the golden test. The local GPU driver is broken until a reboot (NVML
+  mismatch). Deckard (`ssh jaden@deckard`, 2× RTX A6000) is free for quick GPU checks.
+- **Shell pitfall:** `name=$(false-returning command)` exits under `set -e`. Use `if` instead
+  (it bit `orc_speed_benchmark.sbatch` once).
+
+## Handoff of 2026-09-23 (partly superseded; sections 1, 2 and 5 are done)
 
 Decisions Jaden made on 2026-09-23 that are **not implemented yet**. Each is a separate
 commit. Follow the golden-trace policy in `tests/README.md`: a change that alters a trace
