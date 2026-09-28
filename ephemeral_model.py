@@ -82,10 +82,19 @@ def forget_keep(forget_rate, ephemeral_mask, slow_weight_decay=0.0):
     return keep
 
 
+def clamp_fast_entries(weights, ephemeral_mask, fast_weight_clamp):
+    """--fast_weight_clamp: clamp only the ephemeral entries of per_sample_weights [B, out, in]
+    to [-c, c], after --unit_norm_weights and --weight_clamp (0 = off). Slow entries are untouched."""
+    if fast_weight_clamp:
+        weights = torch.where(ephemeral_mask.unsqueeze(0),
+                              weights.clamp(-fast_weight_clamp, fast_weight_clamp), weights)
+    return weights
+
+
 def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral_mask,
                    forget_rate: float, learning_rate: float, update_clamp: float,
                    unit_norm_weights: bool, weight_clamp: float, is_last_layer: bool,
-                   slow_weight_decay: float = 0.0):
+                   slow_weight_decay: float = 0.0, fast_weight_clamp: float = 0.0):
     """One EphemeralLinear's whole DFA step, in place on weights and bias: the DFA gradient, the
     update, normalization and weight clamp (apply_update), then forgetting (apply_forget_step).
     It is built from the same helpers as those methods, in the same order, so run eagerly it
@@ -93,7 +102,9 @@ def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral
     (EphemeralRNN.enable_fused_update), which never materializes the [B, out, in] gradient."""
     update = ephemeral_update(dfa_per_sample_gradient(projected_error, inputs), plasticity,
                               ephemeral_mask, update_clamp, is_last_layer)
-    updated = regularized_weight(weights + learning_rate * update, unit_norm_weights, weight_clamp, (1, 2))
+    updated = clamp_fast_entries(
+        regularized_weight(weights + learning_rate * update, unit_norm_weights, weight_clamp, (1, 2)),
+        ephemeral_mask, fast_weight_clamp)
     weights.copy_(updated * forget_keep(forget_rate, ephemeral_mask, slow_weight_decay))
     if bias is not None:
         bias.add_(dfa_bias_update(projected_error, learning_rate))
@@ -141,7 +152,7 @@ class GradNormClipStats:
 
 
 class EphemeralLinear(nn.Linear):
-    def __init__(self, in_features, out_features, charset, bias=True, unit_norm_weights=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2, slow_weight_decay=0):
+    def __init__(self, in_features, out_features, charset, bias=True, unit_norm_weights=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2, slow_weight_decay=0, fast_weight_clamp=0):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see apply_forget_step). The paper's "forgetting rate
         coefficient 0.7" is 1 - forget_rate, i.e. forget_rate = 0.3. Same meaning as --forget_rate.
@@ -208,6 +219,7 @@ class EphemeralLinear(nn.Linear):
         self.forget_rate = forget_rate
         # --slow_weight_decay: the fraction of each slow entry the same forget step removes.
         self.slow_weight_decay = slow_weight_decay
+        self.fast_weight_clamp = fast_weight_clamp  # --fast_weight_clamp (clamp_fast_entries)
 
         # Initialize plasticity parameters with the generated values
         if self.is_last_layer == False:
@@ -382,8 +394,9 @@ class EphemeralLinear(nn.Linear):
         """Helper method to apply normalization and weight clipping."""
         # Each sequence's [out, in] slice is rescaled independently. Plasticity, biases,
         # feedback matrices, traces, and logged norms are intentionally excluded.
-        self.per_sample_weights.data = regularized_weight(
-            self.per_sample_weights.data, self.unit_norm_weights, self.weight_clamp, (1, 2))
+        self.per_sample_weights.data = clamp_fast_entries(
+            regularized_weight(self.per_sample_weights.data, self.unit_norm_weights, self.weight_clamp, (1, 2)),
+            self.ephemeral_mask, self.fast_weight_clamp)
 
 
     def apply_forget_step(self):
@@ -484,7 +497,7 @@ class EphemeralRNN(torch.nn.Module):
         unit_norm_weights=True, weight_clamp=0, updater='dfa',
         plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2,
         enable_recurrence=True, retain_sequence_bias_grads=False,
-        slow_weight_decay=0, output_tanh=False
+        slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -511,7 +524,8 @@ class EphemeralRNN(torch.nn.Module):
                 unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
                 updater=updater, plasticity=plasticity,
                 batch_size=batch_size, forget_rate=forget_rate,
-                ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay
+                ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
+            fast_weight_clamp=fast_weight_clamp
             )
         ])
         for _ in range(1, num_layers):
@@ -520,7 +534,8 @@ class EphemeralRNN(torch.nn.Module):
                 unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
                 updater=updater, plasticity=plasticity,
                 batch_size=batch_size, forget_rate=forget_rate,
-                ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay
+                ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
+            fast_weight_clamp=fast_weight_clamp
             ))
 
         # Dropout layers
@@ -534,14 +549,16 @@ class EphemeralRNN(torch.nn.Module):
             unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
             updater=updater, plasticity=plasticity,
             batch_size=batch_size, forget_rate=forget_rate,
-            ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay
+            ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
+            fast_weight_clamp=fast_weight_clamp
         )
         self.i2o = EphemeralLinear(
             inner_size, output_size, charset,
             unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
             updater=updater, requires_grad=False, is_last_layer=True,
             plasticity=plasticity, batch_size=batch_size, forget_rate=forget_rate,
-            ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay
+            ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
+            fast_weight_clamp=fast_weight_clamp
         )
         self.softmax = torch.nn.LogSoftmax(dim=1)
         self.updater = updater
@@ -588,7 +605,8 @@ class EphemeralRNN(torch.nn.Module):
                 layer.per_sample_weights.data, None if layer.bias is None else layer.bias.data,
                 error, layer.in_traces.data, layer.plasticity, layer.ephemeral_mask,
                 layer.forget_rate, learning_rate, update_clamp, layer.unit_norm_weights,
-                layer.weight_clamp, layer.is_last_layer, layer.slow_weight_decay)
+                layer.weight_clamp, layer.is_last_layer, layer.slow_weight_decay,
+                layer.fast_weight_clamp)
 
     def trained_layers(self):
         """Every EphemeralLinear, in update order: the hidden layers, i2h, then i2o."""

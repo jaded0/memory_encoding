@@ -103,6 +103,9 @@ sense. They used to be confused under one flag, `--grad_clip`; see [Renamed flag
   α-scaled update of each ephemeral entry to `[-v, v]`. SimpleRNN has no ephemeral entries.
   This is what the paper's old "gradient clipping" sweeps tested.
 - `--weight_clamp w` (both models): element-wise clamp of the weights after each update.
+- `--fast_weight_clamp v` (ephemeral only): the same clamp on the ephemeral (fast) entries only,
+  after `--weight_clamp`. It separates the cost of pinning fast weights from that of clamping slow
+  ones (`benchmarks/stabilizer_pilot.md`). SimpleRNN has no fast entries and ignores it.
   With `w = 1` the clamp rarely binds. At lr·α ≤ 3 no fast entry reaches it, and at lr·α = 10
   0–2% of fast entries sit at ±0.99 (the clamp after forgetting) by the end of a sequence. It
   binds more with `--output_tanh` (about 10%) and with `w = 0.3` or `0.1` (8–26%);

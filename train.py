@@ -429,6 +429,10 @@ def build_parser():
                         help='Fraction of every slow weight removed after each update (0 = off): the '
                              'ephemeral model decays its slow entries in the forget step; SimpleRNN '
                              'decays all its weights. Biases are excluded.')
+    parser.add_argument('--fast_weight_clamp', type=float, default=0,
+                        help='EphemeralRNN: clamp only the ephemeral (fast) entries to [-v, v] after each '
+                             'update, after --weight_clamp (0 = off). Ignored by the rnn baseline, which '
+                             'has no fast entries.')
     parser.add_argument('--output_tanh', type=str2bool, nargs='?', const=True, default=False,
                         help='Both models: the output head i2o reads tanh of the shared trunk instead of '
                              'the trunk (removed from the default on 2026-09-24; see '
@@ -651,7 +655,8 @@ def main():
             forget_rate=config["forget_rate"], ephemeral_fraction=config["ephemeral_fraction"],
             enable_recurrence=args.enable_recurrence,
             retain_sequence_bias_grads=args.grad_norm_clip > 0 and args.updater != 'dfa',
-            slow_weight_decay=args.slow_weight_decay, output_tanh=args.output_tanh
+            slow_weight_decay=args.slow_weight_decay, output_tanh=args.output_tanh,
+            fast_weight_clamp=args.fast_weight_clamp
         )
     else:
         raise ValueError(f"Unknown model_type: {args.model_type}")
@@ -730,6 +735,7 @@ def main():
             "fused_update": args.fused_update,
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
+            "fast_weight_clamp": args.fast_weight_clamp,
             "fused_update_active": config["fused_update_active"],
             "n_hidden": args.hidden_size,
             "n_layers": args.num_layers,

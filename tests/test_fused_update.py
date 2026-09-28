@@ -19,13 +19,13 @@ BATCHES = (torch.tensor([[0, 1, 2, 3, 1], [3, 2, 0, 1, 2], [1, 1, 3, 0, 2]]),
            torch.tensor([[2, 0, 3, 1, 2], [1, 3, 2, 0, 1], [0, 0, 1, 2, 3]]))
 
 
-def build(updater="dfa", unit_norm_weights=False, weight_clamp=0, slow_weight_decay=0):
+def build(updater="dfa", unit_norm_weights=False, weight_clamp=0, slow_weight_decay=0, fast_weight_clamp=0):
     seed_everything(11, deterministic=True)
     with contextlib.redirect_stdout(io.StringIO()):
         return EphemeralRNN(len(CHARSET), 4, len(CHARSET), 2, CHARSET, unit_norm_weights=unit_norm_weights,
                             weight_clamp=weight_clamp, updater=updater, plasticity=3.0, batch_size=3,
                             forget_rate=0.25, ephemeral_fraction=0.5, enable_recurrence=True,
-                            slow_weight_decay=slow_weight_decay)
+                            slow_weight_decay=slow_weight_decay, fast_weight_clamp=fast_weight_clamp)
 
 
 def run(model, update_clamp=0, grad_norm_clip=0, log_norms_now=False):
@@ -71,6 +71,12 @@ class FusedUpdateTest(unittest.TestCase):
 
     def test_eager_fused_step_with_slow_weight_decay_is_bit_identical(self):
         unfused, fused = build(slow_weight_decay=0.05), build(slow_weight_decay=0.05)
+        fused.enable_fused_update(compile=False)
+        self.assertEqual(run(fused), run(unfused))
+        self.assert_same(state(fused), state(unfused), rtol=0, atol=0)
+
+    def test_eager_fused_step_with_fast_weight_clamp_is_bit_identical(self):
+        unfused, fused = build(fast_weight_clamp=0.05), build(fast_weight_clamp=0.05)
         fused.enable_fused_update(compile=False)
         self.assertEqual(run(fused), run(unfused))
         self.assert_same(state(fused), state(unfused), rtol=0, atol=0)

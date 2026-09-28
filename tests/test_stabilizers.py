@@ -78,6 +78,24 @@ class SlowWeightDecayTest(unittest.TestCase):
                     torch.testing.assert_close(a, b, rtol=0, atol=0)
 
 
+class FastWeightClampTest(unittest.TestCase):
+    def test_only_fast_entries_are_clamped(self):
+        for updater in ("dfa", "backprop"):
+            with self.subTest(updater=updater):
+                model = build("ephemeral", updater, fast_weight_clamp=0.02)
+                for layer in model.trained_layers():
+                    layer.per_sample_weights.data.mul_(5)  # slow entries well past the clamp
+                model.start_sequence_wipe()
+                run(model, updater, learning_rate=1.0)
+                fast_hit = False
+                for layer in model.trained_layers()[:-1]:
+                    weights, mask = layer.per_sample_weights, layer.ephemeral_mask.expand_as(layer.per_sample_weights)
+                    self.assertLessEqual(weights[mask].abs().max().item(), 0.02 * (1 - 0.25) + 1e-7)
+                    fast_hit |= bool((weights[mask].abs() >= 0.02 * 0.75 - 1e-7).any())
+                    self.assertGreater(weights[~mask].abs().max().item(), 0.02)
+                self.assertTrue(fast_hit)  # the clamp binds
+
+
 class OutputTanhTest(unittest.TestCase):
     def test_output_head_reads_tanh_of_the_trunk(self):
         for model_type in ("ephemeral", "rnn"):
