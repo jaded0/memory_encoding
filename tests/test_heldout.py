@@ -284,6 +284,12 @@ class HeldOutEvaluationTest(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 evaluate_held_out(model, batch, 0, initial_state="continue",
                                   initial_hidden=hidden)
+        for name, value in (("nan", float("nan")), ("inf", float("inf"))):
+            hidden = model.initHidden(BATCH)
+            hidden[0, 0] = value
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "finite"):
+                evaluate_held_out(model, batch, 0, initial_state="continue",
+                                  initial_hidden=hidden)
 
     def test_float64_model_data_hidden_and_results(self):
         model = build().double()

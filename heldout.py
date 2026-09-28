@@ -42,6 +42,21 @@ class HeldOutBatch:
     update_mask: torch.Tensor
     reset_mask: torch.Tensor
 
+    def to(self, device=None, dtype=None):
+        """Return a moved copy; only floating inputs/targets adopt ``dtype``.
+
+        Boolean masks remain boolean. ``dtype``, when supplied, must be a floating Torch dtype.
+        """
+        if dtype is not None and not torch.empty((), dtype=dtype).is_floating_point():
+            raise ValueError("HeldOutBatch dtype must be a floating point dtype")
+        floating = {"device": device}
+        if dtype is not None:
+            floating["dtype"] = dtype
+        return HeldOutBatch(
+            self.inputs.to(**floating), self.targets.to(**floating),
+            self.score_mask.to(device=device), self.update_mask.to(device=device),
+            self.reset_mask.to(device=device))
+
     def __post_init__(self):
         if self.inputs.ndim != 3:
             raise ValueError(f"inputs must have shape [batch, steps, input], got {tuple(self.inputs.shape)}")
@@ -163,6 +178,8 @@ def evaluate_held_out(model: EphemeralRNN, batch: HeldOutBatch, learning_rate: f
             raise ValueError("initial_hidden and held-out batch must be on the same device")
         if initial_hidden.dtype != model_dtype:
             raise ValueError(f"initial_hidden must have the model dtype ({model_dtype})")
+        if not torch.isfinite(initial_hidden).all():
+            raise ValueError("initial_hidden must contain only finite values")
 
     was_training = model.training
     model.eval()
