@@ -1,7 +1,8 @@
 # Reproducing the 2025 no-clamp recipe on current code (started 2026-09-27)
 
-Status: **running**. ORC array 13904287, code 953dc0e (branch `fast-clamp`), outputs in
-`~/memory_encoding_benchmarks/old_recipe` on ORC. Results go in the last section.
+Status: **running; one seed has converged** (interim results below, 2026-09-28 13:10 MDT). ORC array
+13904287, code 953dc0e, outputs in `~/memory_encoding_benchmarks/old_recipe` on ORC. Seeds 2718 and
+4241 continue to 10M as jobs 13909497 and 13909498, which wait (`afterok`) on their 5M runs.
 
 ## Why
 
@@ -101,4 +102,28 @@ Compare on `final_char_acc` (the 2025 metric) as well as `recall_acc` and lag-5 
 
 ## Results
 
-(pending)
+### Interim, 2026-09-28 13:10 MDT
+
+| Seed | Iteration | Final char | Recall | Lag 1 / 3 / 5 | Exact recall | Loss |
+|---|---:|---:|---:|---|---:|---:|
+| 3141 | 4.00M | **0.951** | **0.936** | .986 / .902 / .853 | .887 | 0.640 |
+| 2718 | 3.19M | 0.755 | 0.740 | .937 / .682 / .264 | .582 | 0.949 |
+| 4241 | 3.71M | 0.743 | 0.699 | .976 / .517 / .227 | .513 | 0.960 |
+
+- **The current code reproduces the 2025 result.** Seed 3141 passed 0.9 final-character accuracy at
+  **2.69M** iterations, inside the 2025 range of 2.8M–9.4M. At 4.0M its recall-position accuracy is
+  93.6%, with lag 5 at 85.3%, and it is still improving. Every 2026 run at lr 1e-3 stayed at or below
+  about 30% lag-5 recall.
+- **Stable without a clamp or tanh.** No seed collapsed; the maximum interval loss is about 2.0, in one
+  early interval per seed. At lr 1e-3 the 2026 recipe collapsed at 200k–350k unless the output was
+  tanh-bounded. This supports the slow-learning-rate explanation (`stabilizer_pilot.md`).
+- **The late jump is lags learned in order.**
+  - Lag 1 locks in first, jumping from about 0.65 to 0.94 around 1.25M–1.75M in all three seeds.
+  - In seed 3141, lag 3 follows (0.84 by 1.5M), then lag 5 climbs from 0.22 at 1.5M to 0.85 at 3.75M.
+  - Final-character accuracy needs lag 5 on a third of sequences, so it rises last and looks like a
+    sudden late jump.
+  - Seeds 2718 and 4241 are stuck between the lag-1 and lag-5 stages (lag 5 about 0.23–0.26).
+- **Recall dips at 0.75M–1.0M, just before lag 1 locks in**: clearly in 2718 and 4241 (0.61 → 0.45–0.48,
+  loss up to 1.07–1.09), mildly in 3141.
+- **The old final-character metric tracked real recall here.** 0.95 final char comes with 93.6% recall
+  and 85% lag-5 recall.

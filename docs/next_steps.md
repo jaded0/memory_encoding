@@ -10,6 +10,10 @@
   Design and decision rule: `benchmarks/old_recipe_reproduction.md`. Read `final_char_acc` (the 2025
   metric; ≥ 0.9 means converged), `recall_acc` and lag-5 recall from the interval blocks in
   `logs/oldrecipe_13904287_<task>.out`. Extend a run still climbing with `N_ITERS=10000000`.
+  **2026-09-28: seed 3141 converged** (0.951 final char, 93.6% recall, lag 5 85% at 4.0M; first
+  ≥ 0.9 at 2.69M). Seeds 2718 and 4241 are on the plateau (lag 5 about 0.25) and continue to 10M as
+  jobs 13909497 and 13909498, which wait on their 5M runs; their logs append to the same files.
+  Interim tables are in `benchmarks/old_recipe_reproduction.md`.
 
 ### What we know (details in the linked documents)
 1. **Fast weights carry the memory when recurrence is clipped**, on every memory task tested. Without
