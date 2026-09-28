@@ -425,6 +425,14 @@ def build_parser():
                   help='Gradient-norm clipping before each update, under every updater (0 = off). '
                        'rnn: clip_grad_norm_ on all parameters. ephemeral: each sequence\'s raw '
                        'gradient (its weight copies and bias shares), before plasticity scaling.')
+    parser.add_argument('--slow_weight_decay', type=float, default=0,
+                        help='Fraction of every slow weight removed after each update (0 = off): the '
+                             'ephemeral model decays its slow entries in the forget step; SimpleRNN '
+                             'decays all its weights. Biases are excluded.')
+    parser.add_argument('--output_tanh', type=str2bool, nargs='?', const=True, default=False,
+                        help='Both models: the output head i2o reads tanh of the shared trunk instead of '
+                             'the trunk (removed from the default on 2026-09-24; see '
+                             'docs/tapped_vs_forked_rnn_report.md).')
     parser.add_argument('--fused_update', type=str2bool, nargs='?', const=True, default=False,
                         help='Ephemeral + DFA only: compile each layer\'s DFA update, clamps and forgetting '
                              'into one kernel (torch.compile). The same math with different rounding, about '
@@ -631,7 +639,8 @@ def main():
         rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"],
                        dropout_rate=0, enable_recurrence=args.enable_recurrence, updater=args.updater,
                        residual_connection=args.residual_connection,
-                       unit_norm_weights=args.unit_norm_weights, weight_clamp=args.weight_clamp)
+                       unit_norm_weights=args.unit_norm_weights, weight_clamp=args.weight_clamp,
+                       slow_weight_decay=args.slow_weight_decay, output_tanh=args.output_tanh)
     elif args.model_type == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{args.updater}' updater.")
         rnn = EphemeralRNN(
@@ -641,7 +650,8 @@ def main():
             plasticity=config["plasticity"], batch_size=config["batch_size"],
             forget_rate=config["forget_rate"], ephemeral_fraction=config["ephemeral_fraction"],
             enable_recurrence=args.enable_recurrence,
-            retain_sequence_bias_grads=args.grad_norm_clip > 0 and args.updater != 'dfa'
+            retain_sequence_bias_grads=args.grad_norm_clip > 0 and args.updater != 'dfa',
+            slow_weight_decay=args.slow_weight_decay, output_tanh=args.output_tanh
         )
     else:
         raise ValueError(f"Unknown model_type: {args.model_type}")
@@ -718,6 +728,8 @@ def main():
             "ephemeral_update_clamp": args.ephemeral_update_clamp,
             "grad_norm_clip": args.grad_norm_clip,
             "fused_update": args.fused_update,
+            "slow_weight_decay": args.slow_weight_decay,
+            "output_tanh": args.output_tanh,
             "fused_update_active": config["fused_update_active"],
             "n_hidden": args.hidden_size,
             "n_layers": args.num_layers,
