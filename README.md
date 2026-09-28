@@ -103,9 +103,10 @@ sense. They used to be confused under one flag, `--grad_clip`; see [Renamed flag
   α-scaled update of each ephemeral entry to `[-v, v]`. SimpleRNN has no ephemeral entries.
   This is what the paper's old "gradient clipping" sweeps tested.
 - `--weight_clamp w` (both models): element-wise clamp of the weights after each update.
-  At α ≥ 3e3 one DFA step already drives every fast entry to ±`w` (±0.99 after forgetting), so
-  for the fast weights this clamp is their operating point, not a safety bound
-  (`benchmarks/memory_tasks_head.md`).
+  With `w = 1` the clamp rarely binds. At lr·α ≤ 3 no fast entry reaches it, and at lr·α = 10
+  0–2% of fast entries sit at ±0.99 (the clamp after forgetting) by the end of a sequence. It
+  binds more with `--output_tanh` (about 10%) and with `w = 0.3` or `0.1` (8–26%);
+  `benchmarks/stabilizer_pilot.md` has the measurements.
 
 Two further stabilizers, both off by default:
 - `--slow_weight_decay λ` (both models): after each update, every slow weight keeps `1 − λ`.
