@@ -235,6 +235,20 @@ class EphemeralLinear(nn.Linear):
         self.t.fill_(0.0)
         self._retained_outputs = []
 
+    def reset_ephemeral_rows(self, rows):
+        """Clear fast weights for selected sequence copies, without touching slow weights.
+
+        Unlike :meth:`start_sequence_wipe`, this is a stream-time reset: it never averages the
+        batch's slow copies. ``rows`` is a boolean tensor of shape ``[batch_size]``.
+        """
+        if rows.dtype != torch.bool or rows.shape != (self.batch_size,):
+            raise ValueError(f"rows must be boolean [{self.batch_size}], got {tuple(rows.shape)} {rows.dtype}")
+        if rows.device != self.per_sample_weights.device:
+            raise ValueError("rows and layer weights must be on the same device")
+        with torch.no_grad():
+            self.per_sample_weights.data.masked_fill_(
+                rows[:, None, None] & self.ephemeral_mask[None, :, :], 0)
+
     def forward(self, input):
         batch_size = input.size(0)
 
@@ -663,8 +677,9 @@ class EphemeralRNN(torch.nn.Module):
         return output, next_hidden
 
     def initHidden(self, batch_size):
-        device = next(self.parameters()).device
-        return torch.zeros(batch_size, self.hidden_size, device=device, requires_grad=False)
+        parameter = next(self.parameters())
+        return torch.zeros(batch_size, self.hidden_size, device=parameter.device,
+                           dtype=parameter.dtype, requires_grad=False)
 
     def apply_forget_step(self):
         """Calls apply_forget_step on all EphemeralLinear layers."""
@@ -718,6 +733,11 @@ class EphemeralRNN(torch.nn.Module):
             layer.start_sequence_wipe()
         self.i2h.start_sequence_wipe()
         self.i2o.start_sequence_wipe()
+
+    def reset_ephemeral_rows(self, rows):
+        """Clear only selected sequences' fast entries; preserve every slow copy and bias."""
+        for layer in self.trained_layers():
+            layer.reset_ephemeral_rows(rows)
 
     def set_plasticity(self, value):
         """Sets the ephemeral plasticity (alpha) in all EphemeralLinear layers (used on resume)."""
@@ -887,5 +907,6 @@ class SimpleRNN(nn.Module):
         return all_norms
 
     def initHidden(self, batch_size):
-        device = next(self.parameters()).device
-        return torch.zeros(batch_size, self.hidden_size, device=device)
+        parameter = next(self.parameters())
+        return torch.zeros(batch_size, self.hidden_size, device=parameter.device,
+                           dtype=parameter.dtype)
