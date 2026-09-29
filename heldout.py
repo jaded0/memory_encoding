@@ -1,230 +1,171 @@
-"""Prequential held-out evaluation for the DFA EphemeralRNN.
+"""Held-out evaluation of a DFA EphemeralRNN with its slow weights frozen.
 
-The evaluator freezes all slow entries, shared biases, feedback matrices, and the slow-only
-output head. Only masked ephemeral entries can be written or forgotten. It deliberately does
-not call the training update path: that path also updates slow state and applies whole-weight
-regularization. Because ``unit_norm_weights`` would rescale frozen slow entries, models configured
-to use it are rejected rather than evaluated with changed update semantics. ``weight_clamp`` is
-applied only to fast entries after a permitted write.
+Each episode starts as a training sequence does (start_sequence_wipe: the batch's slow copies
+become their mean and the fast entries zero). Each step then predicts, is scored, and only
+then sees its target, which writes the fast entries with the training DFA step
+(EphemeralRNN.fast_only_dfa_step: the same helpers, clamps and forgetting as train.py). Slow
+entries, biases and the output head i2o stay bit for bit. Three protocols:
 
-Each step is ordered: selected-row reset, prediction, scoring, target reveal/write, forgetting.
-There is currently no separate validity mask, so every batch/step position is a valid passage
-of time and forgets even when ``update_mask`` is false.
+  observed  every target writes, as in training (teacher-forced writes during the answer)
+  strict    no writes from the step that predicts the first recall target onward; the fast
+            entries still forget each step, so "no writes" is not "no change"
+  no_fast   no fast weights at all: they stay at their wiped zeros (the slow scaffold alone)
 
-By default evaluation starts a fresh held-out sequence: existing row-specific slow copies are
-consolidated with the training-time sequence-start operation and all fast state is wiped. Explicit
-``initial_state='continue'`` instead preserves every weight copy and requires recurrent hidden
-state from the preceding chunk.
+Metrics are metrics.IntervalMetrics over the episodes (recall_acc, recall_acc_lag_<k>, ...)
+plus first_answer_acc, the accuracy on each episode's first recall target, which no answer
+write can have helped in any protocol.
+
+Used by train.py --heldout_eval_every N, or on a saved checkpoint:
+    python heldout.py --checkpoint PATH [--dataset NAME] [--protocols observed strict no_fast]
 """
-from dataclasses import dataclass
+import argparse
+import json
 
 import torch
-import torch.nn.functional as F
+from datasets import load_from_disk
 
-from ephemeral_model import EphemeralRNN, dfa_per_sample_gradient, dfa_projected_error, ephemeral_update
+from ephemeral_model import EphemeralRNN, dfa_output_error
+from metrics import IntervalMetrics, recall_targets
+from preprocess import OneHotCollate, is_synthetic, preprocess_rows
+from reproducibility import capture_rng_state, restore_rng_state
+from utils import initialize_charset, load_checkpoint, model_input, read_checkpoint, upgrade_legacy_config
 
-
-TARGET_SUM_ATOL = 1e-6
-
-
-@dataclass(frozen=True)
-class HeldOutBatch:
-    """A dense held-out stream with independent inputs and probability targets.
-
-    Every target row must be finite, non-negative, and sum to one within absolute tolerance
-    ``TARGET_SUM_ATOL`` (1e-6, with zero relative tolerance). This guarantees that
-    ``softmax(logits) - target`` is the cross-entropy gradient used for DFA writes.
-    """
-
-    inputs: torch.Tensor
-    targets: torch.Tensor
-    score_mask: torch.Tensor
-    update_mask: torch.Tensor
-    reset_mask: torch.Tensor
-
-    def to(self, device=None, dtype=None):
-        """Return a moved copy; only floating inputs/targets adopt ``dtype``.
-
-        Boolean masks remain boolean. ``dtype``, when supplied, must be a floating Torch dtype.
-        """
-        if dtype is not None and not torch.empty((), dtype=dtype).is_floating_point():
-            raise ValueError("HeldOutBatch dtype must be a floating point dtype")
-        floating = {"device": device}
-        if dtype is not None:
-            floating["dtype"] = dtype
-        return HeldOutBatch(
-            self.inputs.to(**floating), self.targets.to(**floating),
-            self.score_mask.to(device=device), self.update_mask.to(device=device),
-            self.reset_mask.to(device=device))
-
-    def __post_init__(self):
-        if self.inputs.ndim != 3:
-            raise ValueError(f"inputs must have shape [batch, steps, input], got {tuple(self.inputs.shape)}")
-        if self.targets.ndim != 3:
-            raise ValueError(f"targets must be one-hot/probabilities [batch, steps, output], got {tuple(self.targets.shape)}")
-        prefix = self.inputs.shape[:2]
-        if self.targets.shape[:2] != prefix:
-            raise ValueError("inputs and targets must have the same batch and step dimensions")
-        for name in ("score_mask", "update_mask", "reset_mask"):
-            mask = getattr(self, name)
-            if mask.dtype != torch.bool or mask.shape != prefix:
-                raise ValueError(f"{name} must be boolean with shape {tuple(prefix)}")
-        tensors = (self.targets, self.score_mask, self.update_mask, self.reset_mask)
-        if any(t.device != self.inputs.device for t in tensors):
-            raise ValueError("all held-out batch tensors must be on the same device")
-        if not self.inputs.is_floating_point() or not self.targets.is_floating_point():
-            raise ValueError("inputs and targets must be floating point tensors")
-        if not torch.isfinite(self.inputs).all():
-            raise ValueError("inputs must contain only finite values")
-        if not torch.isfinite(self.targets).all():
-            raise ValueError("targets must contain only finite values")
-        if (self.targets < 0).any():
-            raise ValueError("targets must be non-negative probabilities")
-        row_sums = self.targets.sum(dim=2)
-        if not torch.isclose(row_sums, torch.ones_like(row_sums), rtol=0,
-                             atol=TARGET_SUM_ATOL).all():
-            raise ValueError(f"every target row must sum to 1 within atol={TARGET_SUM_ATOL}")
-
-
-@dataclass(frozen=True)
-class HeldOutResult:
-    """Detached step outputs plus aggregates over exactly ``score_mask``."""
-
-    logits: torch.Tensor       # [B, T, output]
-    predictions: torch.Tensor  # [B, T], class indices
-    losses: torch.Tensor       # [B, T], irrespective of score_mask
-    scored_loss: float
-    scored_accuracy: float
-    scored_count: int
-    final_hidden: torch.Tensor  # [B, hidden], for explicit continuation into another chunk
-
-
-def _fast_dfa_write(model, output_error, rows, learning_rate, update_clamp):
-    """Apply one target-driven DFA write to fast entries of selected rows only."""
-    if not rows.any():
-        return
-    for layer in model.trained_layers():
-        # i2o has no fast entries. Skipping it is also what freezes its weights and bias.
-        if not layer.ephemeral_mask.any():
-            continue
-        projected = dfa_projected_error(output_error, layer.feedback_weights, False)
-        gradient = dfa_per_sample_gradient(projected, layer.in_traces.data)
-        update = ephemeral_update(gradient, layer.plasticity, layer.ephemeral_mask,
-                                  update_clamp, False)
-        selected = rows[:, None, None] & layer.ephemeral_mask[None, :, :]
-        layer.per_sample_weights.data[selected] += learning_rate * update[selected]
-        # Element-wise clipping can safely be restricted to fast state. Models using whole-matrix
-        # unit normalization are rejected by evaluate_held_out before reaching this update.
-        if layer.weight_clamp:
-            layer.per_sample_weights.data[selected] = layer.per_sample_weights.data[selected].clamp(
-                -layer.weight_clamp, layer.weight_clamp)
-
-
-def _forget_fast(model):
-    """Advance time for all rows while keeping slow state bitwise frozen."""
-    for layer in model.trained_layers():
-        if layer.ephemeral_mask.any():
-            fast = layer.ephemeral_mask.unsqueeze(0).expand_as(layer.per_sample_weights)
-            layer.per_sample_weights.data[fast] *= 1 - layer.forget_rate
+PROTOCOLS = ("observed", "strict", "no_fast")
 
 
 @torch.no_grad()
-def evaluate_held_out(model: EphemeralRNN, batch: HeldOutBatch, learning_rate: float,
-                      update_clamp: float = 0.0, initial_state: str = "fresh",
-                      initial_hidden: torch.Tensor | None = None) -> HeldOutResult:
-    """Run an adaptive held-out stream with frozen slow state and DFA fast writes.
+def evaluate_held_out(model, onehot, update_mask, config):
+    """Runs one batch of episodes, onehot [B, T, vocab], prequentially with frozen slow weights.
+    update_mask [B, T-1] (bool) selects the steps whose target writes the fast entries; None
+    means no fast weights. config supplies input_mode, pe_matrix, learning_rate,
+    ephemeral_update_clamp and grad_norm_clip, as in training. Returns the predictions and
+    per-sequence losses, [T-1, B] each (IntervalMetrics's layout). Changes the model's state."""
+    if not isinstance(model, EphemeralRNN):
+        raise ValueError("held-out evaluation needs an EphemeralRNN (SimpleRNN has no fast weights)")
+    model.check_fast_only_step()
+    batch, steps = onehot.shape[0], onehot.shape[1] - 1
+    if batch != model.batch_size:
+        raise ValueError(f"batch size {batch} does not match the model's {model.batch_size}")
+    if update_mask is not None and (update_mask.dtype != torch.bool or update_mask.shape != (batch, steps)):
+        raise ValueError(f"update_mask must be boolean [{batch}, {steps}]")
+    criterion = torch.nn.CrossEntropyLoss(reduction='none')
+    model.start_sequence_wipe()
+    hidden = model.initHidden(batch)
+    preds, losses = [], []
+    for i in range(steps):
+        output, hidden = model(model_input(onehot, i, config['input_mode'], config['pe_matrix']), hidden)
+        loss, output_error = dfa_output_error(output, onehot[:, i + 1], criterion)
+        preds.append(output.argmax(dim=1))
+        losses.append(loss.detach())
+        if update_mask is not None:
+            # A masked row gets zero error: its fast entries only forget, as a padding step does.
+            model.fast_only_dfa_step(output_error * update_mask[:, i, None], config['learning_rate'],
+                                     config['ephemeral_update_clamp'], config.get('grad_norm_clip', 0))
+    return torch.stack(preds), torch.stack(losses)
 
-    The model must have been built with ``updater='dfa'`` and the same fixed batch size as
-    ``batch``. Targets are consumed directly, never reconstructed by shifting inputs.
 
-    ``initial_state='fresh'`` (the default) applies ``start_sequence_wipe()`` once before step 0
-    and starts recurrent state at zero; supplying ``initial_hidden`` is an error.
-    ``initial_state='continue'`` preserves all existing fast/slow row state and requires an
-    explicit ``initial_hidden``. In either mode, ``reset_mask`` remains a per-step, per-row reset.
-    """
-    if not isinstance(model, EphemeralRNN) or model.updater != "dfa":
-        raise ValueError("held-out fast-memory evaluation requires an EphemeralRNN with updater='dfa'")
-    if any(layer.unit_norm_weights for layer in model.trained_layers()):
-        raise ValueError("held-out fast-memory evaluation does not support unit_norm_weights=True: "
-                         "whole-matrix normalization would change frozen slow entries")
-    if learning_rate < 0 or update_clamp < 0:
-        raise ValueError("learning_rate and update_clamp must be non-negative")
-    if initial_state not in ("fresh", "continue"):
-        raise ValueError("initial_state must be 'fresh' or 'continue'")
-    batch_size, steps, input_size = batch.inputs.shape
-    if steps == 0:
-        raise ValueError("held-out batches must contain at least one step")
-    if batch_size != model.batch_size:
-        raise ValueError(f"batch size {batch_size} does not match model batch size {model.batch_size}")
-    expected_input = model.linear_layers[0].in_features - model.hidden_size
-    if input_size != expected_input:
-        raise ValueError(f"input width {input_size} does not match model input size {expected_input}")
-    if batch.targets.shape[2] != model.i2o.out_features:
-        raise ValueError("target width does not match model output size")
-    if batch.inputs.device != next(model.parameters()).device:
-        raise ValueError("held-out batch and model must be on the same device")
-    model_dtype = next(model.parameters()).dtype
-    if batch.inputs.dtype != model_dtype or batch.targets.dtype != model_dtype:
-        raise ValueError(f"inputs and targets must have the model dtype ({model_dtype})")
-    if initial_state == "fresh":
-        if initial_hidden is not None:
-            raise ValueError("initial_hidden must not be supplied when initial_state='fresh'")
-    else:
-        if initial_hidden is None:
-            raise ValueError("initial_hidden is required when initial_state='continue'")
-        if initial_hidden.shape != (batch_size, model.hidden_size):
-            raise ValueError(f"initial_hidden must have shape {(batch_size, model.hidden_size)}")
-        if initial_hidden.device != batch.inputs.device:
-            raise ValueError("initial_hidden and held-out batch must be on the same device")
-        if initial_hidden.dtype != model_dtype:
-            raise ValueError(f"initial_hidden must have the model dtype ({model_dtype})")
-        if not torch.isfinite(initial_hidden).all():
-            raise ValueError("initial_hidden must contain only finite values")
+def first_recall_steps(texts, dataset, steps):
+    """The step predicting each episode's first recall target, [B] (steps if it has none)."""
+    firsts = [min(recall_targets(text, dataset)[0], default=steps + 1) - 1 for text in texts]
+    return torch.tensor([min(first, steps) for first in firsts])
 
+
+def update_mask(protocol, texts, dataset, onehot):
+    batch, steps = onehot.shape[0], onehot.shape[1] - 1
+    if protocol == "no_fast":
+        return None
+    mask = torch.ones(batch, steps, dtype=torch.bool)
+    if protocol == "strict":
+        mask &= torch.arange(steps) < first_recall_steps(texts, dataset, steps)[:, None]
+    elif protocol != "observed":
+        raise ValueError(f"unknown protocol {protocol!r}; choose from {PROTOCOLS}")
+    return mask.to(onehot.device)
+
+
+def evaluate_protocols(model, batches, config, dataset, protocols=PROTOCOLS, prefix="heldout"):
+    """Every protocol over batches [(texts, onehot)], as {f'{prefix}_{protocol}/{metric}': value}.
+    The model's whole state is restored afterwards, so a training run continues unchanged."""
+    saved = {key: value.clone() for key, value in model.state_dict().items()}
     was_training = model.training
     model.eval()
+    results = {}
     try:
-        if initial_state == "fresh":
-            model.start_sequence_wipe()
-            hidden = model.initHidden(batch_size)
-        else:
-            hidden = initial_hidden.detach().clone()
-        logits, predictions, losses = [], [], []
-        for step in range(steps):
-            resets = batch.reset_mask[:, step]
-            model.reset_ephemeral_rows(resets)
-            hidden[resets] = 0
-
-            # Prediction is detached and recorded before this step's target is used anywhere.
-            output, hidden = model(batch.inputs[:, step], hidden)
-            target = batch.targets[:, step]
-            step_logits = output.detach().clone()
-            step_loss = -(target * F.log_softmax(output, dim=1)).sum(dim=1)
-            logits.append(step_logits)
-            predictions.append(step_logits.argmax(dim=1))
-            losses.append(step_loss.detach().clone())
-
-            rows = batch.update_mask[:, step]
-            _fast_dfa_write(model, F.softmax(output, dim=1) - target, rows,
-                            learning_rate, update_clamp)
-            _forget_fast(model)
-
-        logits = torch.stack(logits, dim=1)
-        predictions = torch.stack(predictions, dim=1)
-        losses = torch.stack(losses, dim=1)
-        scored = batch.score_mask
-        count = int(scored.sum().item())
-        if count:
-            scored_loss = losses[scored].mean().item()
-            truth = batch.targets.argmax(dim=2)
-            scored_accuracy = (predictions[scored] == truth[scored]).float().mean().item()
-        else:
-            scored_loss = scored_accuracy = float("nan")
-        return HeldOutResult(logits, predictions, losses, scored_loss, scored_accuracy, count,
-                             hidden.detach().clone())
+        for protocol in protocols:
+            interval = IntervalMetrics(dataset)
+            first_hits = first_count = 0
+            for texts, onehot in batches:
+                preds, losses = evaluate_held_out(model, onehot, update_mask(protocol, texts, dataset, onehot), config)
+                interval.update(texts, onehot, preds, losses)
+                steps = preds.shape[0]
+                first = first_recall_steps(texts, dataset, steps).to(preds.device)
+                has = first < steps
+                rows = torch.arange(len(texts), device=preds.device)[has]
+                hit = preds[first[has], rows] == onehot[rows, first[has] + 1].argmax(-1)
+                first_hits, first_count = first_hits + int(hit.sum()), first_count + int(has.sum())
+            summary = interval.summary()
+            if first_count:
+                summary["first_answer_acc"] = first_hits / first_count
+            results.update({f"{prefix}_{protocol}/{key}": value for key, value in summary.items()})
     finally:
+        model.load_state_dict(saved)
         model.train(was_training)
+    return results
 
 
-# A descriptive alias for callers that name the operation after the adapted memory.
-evaluate_fast_memory = evaluate_held_out
+def load_heldout_batches(dataset, batch_size, n_batches, device, split="validation"):
+    """The first n_batches full batches (0 = all) of a synthetic dataset's held-out split, in
+    stored order, as [(texts, onehot)]. Uses no random numbers, so a training run's RNG stream
+    is unchanged."""
+    if not is_synthetic(dataset):
+        raise ValueError(f"held-out evaluation reads synth_datasets/<name>/{split}; {dataset} is not synthetic")
+    rng = capture_rng_state()  # in case the datasets library draws any
+    rows = preprocess_rows(load_from_disk(f"synth_datasets/{dataset}")[split], dataset)
+    restore_rng_state(rng)
+    count = len(rows) // batch_size if n_batches <= 0 else min(n_batches, len(rows) // batch_size)
+    if count == 0:
+        raise ValueError(f"{dataset} {split} has fewer than {batch_size} rows")
+    collate = OneHotCollate(initialize_charset(dataset)[3])
+    batches = []
+    for b in range(count):
+        texts, _, onehot = collate([rows[i] for i in range(b * batch_size, (b + 1) * batch_size)])
+        batches.append((texts, onehot.to(device)))
+    return batches
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Held-out, frozen-slow-weight evaluation of a checkpoint.")
+    parser.add_argument("--checkpoint", required=True)
+    parser.add_argument("--dataset", default=None, help="default: the checkpoint's")
+    parser.add_argument("--split", default="validation")
+    parser.add_argument("--protocols", nargs="+", default=list(PROTOCOLS), choices=PROTOCOLS)
+    parser.add_argument("--batches", type=int, default=0, help="batches to evaluate (0 = the whole split)")
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--json", default=None, help="also write the results here")
+    args = parser.parse_args(argv)
+
+    from train import build_model, build_parser, positional_encoding  # train.py imports this module
+    checkpoint = read_checkpoint(args.checkpoint)
+    # A flag newer than the checkpoint takes its default, as it did when the run was trained.
+    defaults = {key: value for key, value in vars(build_parser().parse_args([])).items()
+                if not key.startswith("_")}
+    config = {**defaults, **upgrade_legacy_config(checkpoint.get("config", {}))}
+    charset, _, _, n_characters = initialize_charset(config["dataset"])
+    model = build_model(config, charset, n_characters)
+    model, _, next_iter, _, _ = load_checkpoint(args.checkpoint, model, config, device=args.device,
+                                                checkpoint=checkpoint)
+    config["pe_matrix"] = positional_encoding(config["positional_encoding_dim"], args.device)
+    dataset = args.dataset or config["dataset"]
+    batches = load_heldout_batches(dataset, config["batch_size"], args.batches, args.device, args.split)
+    results = evaluate_protocols(model, batches, config, dataset, args.protocols)
+    header = {"checkpoint": args.checkpoint, "iteration": next_iter - 1, "dataset": dataset,
+              "split": args.split, "episodes": len(batches) * config["batch_size"]}
+    print(json.dumps(header))
+    for key, value in results.items():
+        print(f"  {key}: {value:.4f}")
+    if args.json:
+        with open(args.json, "w") as handle:
+            json.dump({**header, **results}, handle, indent=2)
+
+
+if __name__ == "__main__":
+    main()

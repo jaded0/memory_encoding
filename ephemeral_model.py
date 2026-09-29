@@ -91,21 +91,42 @@ def clamp_fast_entries(weights, ephemeral_mask, fast_weight_clamp):
     return weights
 
 
+def dfa_output_error(output, target, criterion):
+    """The DFA output error dL/d(output), [B, vocab], and the per-sequence loss [B], for the
+    logits of one step. criterion is train.py's CrossEntropyLoss(reduction='none'). An all-zero
+    (padding) target row gives zero error, so that step writes nothing. The error is a new
+    tensor, not a view of output."""
+    with torch.enable_grad():
+        output.requires_grad_(True)
+        loss = criterion(output, target)
+        error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
+    return loss, error
+
+
 def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral_mask,
                    forget_rate: float, learning_rate: float, update_clamp: float,
                    unit_norm_weights: bool, weight_clamp: float, is_last_layer: bool,
-                   slow_weight_decay: float = 0.0, fast_weight_clamp: float = 0.0):
+                   slow_weight_decay: float = 0.0, fast_weight_clamp: float = 0.0,
+                   freeze_slow: bool = False):
     """One EphemeralLinear's whole DFA step, in place on weights and bias: the DFA gradient, the
     update, normalization and weight clamp (apply_update), then forgetting (apply_forget_step).
     It is built from the same helpers as those methods, in the same order, so run eagerly it
     gives bit-identical results; --fused_update compiles it into one kernel per layer
-    (EphemeralRNN.enable_fused_update), which never materializes the [B, out, in] gradient."""
+    (EphemeralRNN.enable_fused_update), which never materializes the [B, out, in] gradient.
+
+    freeze_slow (held-out evaluation, heldout.py): the ephemeral entries take exactly this step
+    and every other entry keeps its value. Pass bias=None to freeze the bias too. The element-wise
+    clamps act entry by entry, so the fast entries come out as in training; --unit_norm_weights
+    would mix slow entries into them and is refused by EphemeralRNN.fast_only_dfa_step."""
     update = ephemeral_update(dfa_per_sample_gradient(projected_error, inputs), plasticity,
                               ephemeral_mask, update_clamp, is_last_layer)
     updated = clamp_fast_entries(
         regularized_weight(weights + learning_rate * update, unit_norm_weights, weight_clamp, (1, 2)),
         ephemeral_mask, fast_weight_clamp)
-    weights.copy_(updated * forget_keep(forget_rate, ephemeral_mask, slow_weight_decay))
+    updated = updated * forget_keep(forget_rate, ephemeral_mask, slow_weight_decay)
+    if freeze_slow:
+        updated = torch.where(ephemeral_mask.unsqueeze(0), updated, weights)
+    weights.copy_(updated)
     if bias is not None:
         bias.add_(dfa_bias_update(projected_error, learning_rate))
 
@@ -246,20 +267,6 @@ class EphemeralLinear(nn.Linear):
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
         self._retained_outputs = []
-
-    def reset_ephemeral_rows(self, rows):
-        """Clear fast weights for selected sequence copies, without touching slow weights.
-
-        Unlike :meth:`start_sequence_wipe`, this is a stream-time reset: it never averages the
-        batch's slow copies. ``rows`` is a boolean tensor of shape ``[batch_size]``.
-        """
-        if rows.dtype != torch.bool or rows.shape != (self.batch_size,):
-            raise ValueError(f"rows must be boolean [{self.batch_size}], got {tuple(rows.shape)} {rows.dtype}")
-        if rows.device != self.per_sample_weights.device:
-            raise ValueError("rows and layer weights must be on the same device")
-        with torch.no_grad():
-            self.per_sample_weights.data.masked_fill_(
-                rows[:, None, None] & self.ephemeral_mask[None, :, :], 0)
 
     def forward(self, input):
         batch_size = input.size(0)
@@ -600,18 +607,8 @@ class EphemeralRNN(torch.nn.Module):
         closed form for a rank-1 gradient, |p_b x_b^T| = |p_b| |x_b|, and the clip scales the
         projected error, so the clipped step matches the unfused one only to rounding."""
         layers = self.trained_layers()
-        projected = [dfa_projected_error(output_error, layer.feedback_weights, layer.is_last_layer)
-                     for layer in layers]
-        if grad_norm_clip > 0:
-            squared = None
-            for layer, error in zip(layers, projected):
-                # weight gradient |p_b|^2 |x_b|^2, plus the bias share |p_b|^2
-                term = error.square().sum(1) * (layer.in_traces.data.square().sum(1)
-                                                + (1 if layer.bias is not None else 0))
-                squared = term if squared is None else squared + term
-            norms = squared.sqrt()
-            scale = per_sequence_clip_scale(norms, grad_norm_clip)
-            projected = [error * scale.unsqueeze(1) for error in projected]
+        projected, norms = self.dfa_step_errors(output_error, grad_norm_clip)
+        if norms is not None:
             self.grad_clip_stats.record(norms, grad_norm_clip)
         for layer, error in zip(layers, projected):
             layer._last_projected_error = error
@@ -621,6 +618,53 @@ class EphemeralRNN(torch.nn.Module):
                 layer.forget_rate, learning_rate, update_clamp, layer.unit_norm_weights,
                 layer.weight_clamp, layer.is_last_layer, layer.slow_weight_decay,
                 layer.fast_weight_clamp)
+
+    def dfa_step_errors(self, output_error, grad_norm_clip=0):
+        """Each trained layer's projected error for one DFA step, and the pre-clip per-sequence
+        norms (None without --grad_norm_clip). The clip uses the closed form for a rank-1
+        gradient, |p_b x_b^T| = |p_b| |x_b|, and scales the projected errors."""
+        layers = self.trained_layers()
+        projected = [dfa_projected_error(output_error, layer.feedback_weights, layer.is_last_layer)
+                     for layer in layers]
+        if grad_norm_clip <= 0:
+            return projected, None
+        squared = None
+        for layer, error in zip(layers, projected):
+            # weight gradient |p_b|^2 |x_b|^2, plus the bias share |p_b|^2
+            term = error.square().sum(1) * (layer.in_traces.data.square().sum(1)
+                                            + (1 if layer.bias is not None else 0))
+            squared = term if squared is None else squared + term
+        norms = squared.sqrt()
+        scale = per_sequence_clip_scale(norms, grad_norm_clip)
+        return [error * scale.unsqueeze(1) for error in projected], norms
+
+    def check_fast_only_step(self):
+        """fast_only_dfa_step needs the DFA updater and no --unit_norm_weights."""
+        if self.updater != 'dfa':
+            raise ValueError("held-out evaluation needs an EphemeralRNN trained with --updater dfa: "
+                             "its fast writes are the DFA step")
+        if any(layer.unit_norm_weights for layer in self.trained_layers()):
+            raise ValueError(
+                "held-out evaluation does not support --unit_norm_weights: it rescales each "
+                "[out, in] slice as a whole, so a fast write would also rescale the frozen slow "
+                "entries, and keeping them frozen would give fast entries training never produced.")
+
+    @torch.no_grad()
+    def fast_only_dfa_step(self, output_error, learning_rate, update_clamp, grad_norm_clip=0):
+        """The DFA step of fused_dfa_step (the same projected errors, clip, update, clamps and
+        forgetting, through dfa_layer_step) restricted to the ephemeral entries: slow entries,
+        biases and i2o stay bit for bit, and --slow_weight_decay does not act. Rows whose
+        output_error is zero only forget. Used by heldout.py; it records no clip statistics."""
+        self.check_fast_only_step()
+        step = self.fused_layer_step or dfa_layer_step
+        projected, _ = self.dfa_step_errors(output_error, grad_norm_clip)
+        for layer, error in zip(self.trained_layers(), projected):
+            if layer.is_last_layer:
+                continue  # i2o has no ephemeral entries: the frozen step would leave it unchanged
+            step(layer.per_sample_weights.data, None, error, layer.in_traces.data,
+                 layer.plasticity, layer.ephemeral_mask, layer.forget_rate, learning_rate,
+                 update_clamp, layer.unit_norm_weights, layer.weight_clamp, layer.is_last_layer,
+                 layer.slow_weight_decay, layer.fast_weight_clamp, True)
 
     def trained_layers(self):
         """Every EphemeralLinear, in update order: the hidden layers, i2h, then i2o."""
@@ -695,9 +739,8 @@ class EphemeralRNN(torch.nn.Module):
         return output, next_hidden
 
     def initHidden(self, batch_size):
-        parameter = next(self.parameters())
-        return torch.zeros(batch_size, self.hidden_size, device=parameter.device,
-                           dtype=parameter.dtype, requires_grad=False)
+        device = next(self.parameters()).device
+        return torch.zeros(batch_size, self.hidden_size, device=device, requires_grad=False)
 
     def apply_forget_step(self):
         """Calls apply_forget_step on all EphemeralLinear layers."""
@@ -751,11 +794,6 @@ class EphemeralRNN(torch.nn.Module):
             layer.start_sequence_wipe()
         self.i2h.start_sequence_wipe()
         self.i2o.start_sequence_wipe()
-
-    def reset_ephemeral_rows(self, rows):
-        """Clear only selected sequences' fast entries; preserve every slow copy and bias."""
-        for layer in self.trained_layers():
-            layer.reset_ephemeral_rows(rows)
 
     def set_plasticity(self, value):
         """Sets the ephemeral plasticity (alpha) in all EphemeralLinear layers (used on resume)."""
@@ -925,6 +963,5 @@ class SimpleRNN(nn.Module):
         return all_norms
 
     def initHidden(self, batch_size):
-        parameter = next(self.parameters())
-        return torch.zeros(batch_size, self.hidden_size, device=parameter.device,
-                           dtype=parameter.dtype)
+        device = next(self.parameters()).device
+        return torch.zeros(batch_size, self.hidden_size, device=device)

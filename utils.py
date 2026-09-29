@@ -95,6 +95,24 @@ def collate_fn(batch):
     onehot_tensors = pad_sequence([torch.tensor(item['onehot_tensor']) for item in batch], batch_first=True)
     return texts, tensors, onehot_tensors
 
+def model_input(onehot_line_tensor, i, input_mode, pe_matrix):
+    """The model input at step i of a [B, T, vocab] batch: character i (input_mode 'last_one'),
+    or characters i and i-1 with zeros before the start ('last_two'), then the positional
+    encoding row min(i, max) if pe_matrix is set (--positional_encoding_dim)."""
+    current = onehot_line_tensor[:, i, :]
+    if input_mode == 'last_two':
+        previous = torch.zeros_like(current) if i == 0 else onehot_line_tensor[:, i - 1, :]
+        combined = torch.cat([current, previous], dim=1)
+    elif input_mode == 'last_one':
+        combined = current
+    else:
+        raise ValueError(f"Invalid input_mode: {input_mode}")
+    if pe_matrix is None:
+        return combined
+    pe_vec = pe_matrix[min(i, pe_matrix.size(0) - 1)].unsqueeze(0).expand(current.size(0), -1)
+    return torch.cat([combined, pe_vec], dim=1)
+
+
 def randomTrainingExample(dataloader):
     """ Get a random training example """
     for text, tensor, onehot_line_tensor in dataloader:
