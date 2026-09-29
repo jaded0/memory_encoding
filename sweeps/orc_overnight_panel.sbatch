@@ -65,6 +65,10 @@ readonly -a RUNS=(
     "keyrecall_tanh $KR 2718 5000000"
     # keyrecall_a3e4 reached 100% recall by 200k: the no-fast control. Submit --array=27.
     "keyrecall_no_fast $KR 2718 1000000"
+    # Key-recall figure: more seeds at alpha 3e4 (solved by ~200k) and the BPTT baseline, 1M each.
+    # Submit --array=28-32.
+    "keyrecall_a3e4 $KR 4241 1000000" "keyrecall_a3e4 $KR 1618 1000000" "keyrecall_a3e4 $KR 5772 1000000"
+    "keyrecall_bptt $KR 2718 1000000" "keyrecall_bptt $KR 3141 1000000"
 )
 
 task_id=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
@@ -85,7 +89,7 @@ case $arm in
     4pal_a5e4) plasticity=5e4 ;;
     4pal_tanh|keyrecall_tanh) extra=(--output_tanh true) ;;
     keyrecall_a3e4) plasticity=3e4 ;;
-    4pal_bptt|bptt) model=(--model_type rnn --updater bptt --enable_recurrence true --fused_update false)
+    4pal_bptt|bptt|keyrecall_bptt) model=(--model_type rnn --updater bptt --enable_recurrence true --fused_update false)
                     heldout=false ;;
     no_fast) fraction=0 heldout=false ;;
     keyrecall_no_fast) plasticity=3e4 fraction=0 heldout=false ;;
