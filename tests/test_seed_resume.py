@@ -178,6 +178,12 @@ class SlurmSeedCommentTest(unittest.TestCase):
             record_seed_in_slurm(7)
         self.assertEqual(run.call_args.args[0], ["scontrol", "update", "JobId=123", "Comment=seed=7"])
 
+    def test_array_task_addresses_only_itself(self):
+        env = {"SLURM_JOB_ID": "500", "SLURM_ARRAY_JOB_ID": "500", "SLURM_ARRAY_TASK_ID": "2"}
+        with patch.dict(os.environ, env), patch("subprocess.run") as run:
+            record_seed_in_slurm(7)
+        self.assertEqual(run.call_args.args[0], ["scontrol", "update", "JobId=500_2", "Comment=seed=7"])
+
     def test_failures_are_ignored(self):
         for error in (FileNotFoundError("scontrol"), subprocess.TimeoutExpired("scontrol", 5), PermissionError()):
             with patch.dict(os.environ, {"SLURM_JOB_ID": "123"}), patch("subprocess.run", side_effect=error):

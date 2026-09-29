@@ -58,7 +58,10 @@ def resolve_seed(seed, deterministic, checkpoint=None):
 def record_seed_in_slurm(seed):
     """Best effort: show the seed in `squeue -o %k` / `sacct` via the job comment.
     Every failure (no SLURM, no scontrol, permissions, timeout) is ignored."""
-    job_id = os.environ.get("SLURM_JOB_ID")
+    # An array task's SLURM_JOB_ID can equal the array's ID, which addresses every task.
+    array_id = os.environ.get("SLURM_ARRAY_JOB_ID")
+    task_id = os.environ.get("SLURM_ARRAY_TASK_ID")
+    job_id = f"{array_id}_{task_id}" if array_id and task_id else os.environ.get("SLURM_JOB_ID")
     if not job_id or seed is None:
         return
     try:
