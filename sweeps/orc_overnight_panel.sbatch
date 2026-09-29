@@ -55,6 +55,11 @@ readonly -a RUNS=(
     "fastclamp $P3 2718 10000000" "fastclamp $P3 3141 10000000"
     "normclip_old $P3 2718 400000" "normclip_2026 $P3 2718 400000"
     "keyrecall $KR 2718 5000000" "keyrecall $KR 3141 5000000"
+    # Added after 4pal diverged within the first 5k iterations (loss 50-120, collapsed by ~60k):
+    # 4-char's lr * alpha ceiling is below 10. Submit with --array=19-23.
+    "4pal_a3e4 $P4 2718 10000000" "4pal_a3e4 $P4 3141 10000000"
+    "4pal_a5e4 $P4 2718 10000000" "4pal_a5e4 $P4 3141 10000000"
+    "4pal_tanh $P4 2718 10000000"
 )
 
 task_id=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
@@ -71,6 +76,9 @@ lr=1e-4 plasticity=1e5 fraction=0.1 weight_clamp=0 extra=() heldout=true
 case $arm in
     4pal|keyrecall) ;;
     a7e4) plasticity=7e4 ;;
+    4pal_a3e4) plasticity=3e4 ;;
+    4pal_a5e4) plasticity=5e4 ;;
+    4pal_tanh) extra=(--output_tanh true) ;;
     4pal_bptt|bptt) model=(--model_type rnn --updater bptt --enable_recurrence true --fused_update false)
                     heldout=false ;;
     no_fast) fraction=0 heldout=false ;;
