@@ -63,6 +63,8 @@ readonly -a RUNS=(
     # keyrecall diverged the same way (loss 1e4-1e6 from the first interval). Submit --array=24-26.
     "keyrecall_a3e4 $KR 2718 5000000" "keyrecall_a3e4 $KR 3141 5000000"
     "keyrecall_tanh $KR 2718 5000000"
+    # keyrecall_a3e4 reached 100% recall by 200k: the no-fast control. Submit --array=27.
+    "keyrecall_no_fast $KR 2718 1000000"
 )
 
 task_id=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
@@ -86,6 +88,7 @@ case $arm in
     4pal_bptt|bptt) model=(--model_type rnn --updater bptt --enable_recurrence true --fused_update false)
                     heldout=false ;;
     no_fast) fraction=0 heldout=false ;;
+    keyrecall_no_fast) plasticity=3e4 fraction=0 heldout=false ;;
     tanh) extra=(--output_tanh true) ;;
     fastclamp) extra=(--fast_weight_clamp 1) ;;
     normclip_old) extra=(--grad_norm_clip 1e30) ;;
