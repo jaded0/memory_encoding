@@ -338,6 +338,7 @@ python train.py --updater bptt --model_type ephemeral
 - `--batch_size`: Number of sequences processed together
 - `--seed`: Seed Python, NumPy, Torch, dataset shuffling, and DataLoader sampling (unset = drawn from the OS; see below)
 - `--deterministic`: Require deterministic Torch operations
+- `--heldout_eval_every N`, `--heldout_batches K`: held-out, frozen-slow-weight recall every N iterations (0 = off; see "Held-out evaluation")
 
 Resuming is opt-in: without `--resume` or `--resume_checkpoint`, training starts from
 scratch even if `latest_checkpoint.pth` exists. `--resume` with no checkpoint present starts
@@ -486,17 +487,48 @@ Changing the update rule means editing a helper, which changes both paths. A new
 the step has to be added to `dfa_layer_step` too. The bit-identity test fails if the two
 diverge.
 
-### Held-out evaluation (`heldout.py`)
+### Held-out evaluation (`--heldout_eval_every`, `heldout.py`)
 
-`evaluate_held_out(model, HeldOutBatch(...), learning_rate)` scores a trained DFA EphemeralRNN
-on a held-out stream prequentially. At each step it resets the flagged rows' fast entries, then
-predicts and scores. Only after that is the target revealed and written into the fast entries
-by the same DFA update (`ephemeral_update`, then the weight clamp restricted to fast entries).
-Every step then forgets. Slow entries, biases, feedback matrices and the slow-only output head
-stay frozen bit for bit, so held-out accuracy measures only what the fast memory adapts to.
-`score_mask`, `update_mask` and `reset_mask` select per row and step what is scored, written and
-reset. Models with `--unit_norm_weights` are rejected, because whole-matrix normalization would
-change the frozen slow entries.
+Off by default. It scores a DFA EphemeralRNN on episodes it did not train on, with its slow
+weights frozen, so the score measures what the fast weights remember. Each episode starts as a
+training sequence does (`start_sequence_wipe`). At each step the model predicts and is scored,
+and only then is the target revealed. The target writes the fast entries with the training
+step itself: `EphemeralRNN.fast_only_dfa_step` runs `dfa_layer_step` with
+`freeze_slow=True`. It uses the same projected errors, `--grad_norm_clip`,
+`--ephemeral_update_clamp`, `--weight_clamp`, `--fast_weight_clamp` and forgetting as
+training. `--output_tanh` and the input settings come through the same forward pass and
+`utils.model_input`. Slow entries, biases and the output head `i2o` stay bit for bit, and
+`--slow_weight_decay` does not act. `tests/test_heldout.py` pins the fast entries against
+`train_batch`'s own step with slow updates undone: bit for bit, and to rounding with
+`--grad_norm_clip`, since training clips the materialized gradient and the evaluator uses the
+closed form. There are three protocols:
+
+| Protocol | Fast writes |
+| --- | --- |
+| `observed` | Every target writes, as in training: teacher-forced writes during the answer |
+| `strict` | None from the step that predicts the first recall target onward. The fast entries still forget every step |
+| `no_fast` | No fast weights: they stay at their wiped zeros, leaving only the slow scaffold |
+
+Each protocol reports `metrics.IntervalMetrics` (`recall_acc`, `recall_acc_lag_<k>`,
+`final_char_acc`, ...) under `heldout_<protocol>/`. It also reports `first_answer_acc`,
+accuracy on each episode's first recall target, which no answer write can have helped.
+
+- `--heldout_eval_every N` (0 = off) evaluates the first `--heldout_batches` (default 4)
+  batches of the synthetic dataset's `validation` split every N iterations. The metrics are
+  logged with the next print interval, so use a multiple of `--print_freq`. The model's state
+  is restored afterwards and the evaluation draws no random numbers, so the training run is
+  unchanged.
+- A saved checkpoint: `python heldout.py --checkpoint PATH [--dataset NAME] [--protocols
+  observed strict no_fast] [--batches 0] [--json out.json]`. The default is the whole
+  validation split.
+- Only `--model_type ephemeral --updater dfa` is supported. `--unit_norm_weights` is refused.
+  It rescales each `[out, in]` slice as a whole, so a fast write would also rescale the frozen
+  slow entries. Keeping them frozen would instead give fast entries that training never
+  produces.
+- The batch size is the model's (fast weights are `[B, out, in]`).
+- The synthetic tasks are small (3-char palindromes have 399 distinct strings), so validation
+  strings also occur in training. Held out means fresh fast state and frozen slow weights, not
+  unseen strings.
 
 ### Advanced Features
 
