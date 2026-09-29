@@ -47,13 +47,17 @@
   `--output_tanh`, and the stabilizer pilot.
 - Branch `fast-clamp` (worktree `../memory_encoding_fastclamp`): `--fast_weight_clamp`, the
   saturation run sets, the old-recipe launcher, and these documents.
-- PR #6 `heldout-eval` (not merged): another session's prequential held-out evaluator
-  (`heldout.py`), which scores with only fast weights adapting and slow weights frozen. Planned
-  rework before merging:
-  - reuse the shared update helpers instead of its own copy of the rule;
-  - honour `--fast_weight_clamp`;
-  - call it from `train.py` on the validation split every print interval, so every run reports
-    held-out, fast-weights-only recall.
+- Held-out evaluator, reworked on branch `heldout-eval-v2` (supersedes PR #6; not merged yet).
+  It carries PR #6's evaluator (31106db, 22554a2), reworked (README "Held-out evaluation"):
+  - The fast writes are the training step itself: `EphemeralRNN.fast_only_dfa_step` runs
+    `dfa_layer_step` with `freeze_slow=True`, with the same projected errors, clip and clamps.
+    There is no second copy of the rule. A test pins it against `train_batch` bit for bit.
+  - Run flag `--heldout_eval_every N` (off by default) and the standalone
+    `python heldout.py --checkpoint PATH`. Both report the protocols `observed`, `strict` and
+    `no_fast`, with per-lag recall and `first_answer_acc`.
+  - `--unit_norm_weights` is refused, with the reason.
+  - Removed as unneeded: the `continue` mode, per-row resets and `HeldOutBatch`.
+  - The key-value generator (Pile B, 699b93e) stays parked on branch `heldout-eval`.
 - The main checkout `/home/jaden/memory_encoding` is on branch `heldout-eval` (moved there so the
   other session's files were not disturbed).
 
@@ -61,7 +65,8 @@
 1. Read the old-recipe result (above). If it converges, adopt it as the benchmark recipe and redo
    the head-to-head against SimpleRNN at it. If not, bisect the 2025 differences, zero init
    first.
-2. Rework and merge the held-out evaluator (PR #6) and wire it into `train.py`.
+2. Review and merge `heldout-eval-v2` (held-out evaluator). Rerun `python heldout.py` on the
+   final checkpoints before publication.
 3. Only then revisit clamp and saturation, in the convergence phase: the 2025 recipe with fast-only
    clamp 1 against no clamp, past 3M iterations.
 4. Older items below (DFA f′, α² and 1/B in backprop, the clipping-claim audit) remain open.

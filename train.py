@@ -1,12 +1,13 @@
 # train.py
 import torch
-from ephemeral_model import EphemeralRNN, SimpleRNN
+from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
 from reproducibility import DataStream, capture_rng_state, record_seed_in_slurm, resolve_seed, seed_everything
 from metrics import IntervalMetrics, recall_chance
-from utils import randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint, check_checkpoint_code_version, CHECKPOINT_CODE_VERSION
+from heldout import evaluate_protocols, load_heldout_batches
+from utils import model_input, randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint, check_checkpoint_code_version, CHECKPOINT_CODE_VERSION
 import time
 import math
 import argparse
@@ -55,18 +56,19 @@ trigger_sync = TriggerWandbSyncHook() if TriggerWandbSyncHook else None  # <--- 
 # --- W&B end-of-run markers ---
 def wb_mark_end(reason: str, tags=None, exit_code: int | None = None):
     """Record an end reason in both tags and summary. Safe if tracking is off."""
-    if not (wandb.run and getattr(wandb.run, "summary", None) is not None):
+    run = getattr(wandb, "run", None)
+    if not (run and getattr(run, "summary", None) is not None):
         return
     # structured summary
-    wandb.run.summary["end_reason"] = reason
-    wandb.run.summary[f"end_is_{reason}"] = True
+    run.summary["end_reason"] = reason
+    run.summary[f"end_is_{reason}"] = True
     if exit_code is not None:
-        wandb.run.summary["end_exit_code_suggested"] = int(exit_code)  # read later at finish()
+        run.summary["end_exit_code_suggested"] = int(exit_code)  # read later at finish()
 
     # tags (filter-friendly)
     if tags:
-        current = set(getattr(wandb.run, "tags", []))
-        wandb.run.tags = list(current.union(set(tags)))
+        current = set(getattr(run, "tags", []))
+        run.tags = list(current.union(set(tags)))
 
 def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
     """Trains on one batch of sequences with DFA, backprop or BPTT."""
@@ -93,33 +95,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
         if updater != 'bptt':
             hidden = hidden.detach()
 
-        # Get current character's one-hot vector
-        current_char_tensor = onehot_line_tensor[:, i, :]
-        if updater == 'dfa':
-            current_char_tensor.requires_grad = False
-
-        # Conditional Input Construction
-        if config['input_mode'] == 'last_two':
-            if i == 0:
-                previous_char_tensor = torch.zeros_like(current_char_tensor)
-            else:
-                previous_char_tensor = onehot_line_tensor[:, i-1, :]
-            if updater == 'dfa':
-                previous_char_tensor.requires_grad = False
-            combined_char_tensor = torch.cat([current_char_tensor, previous_char_tensor], dim=1)
-        elif config['input_mode'] == 'last_one':
-            combined_char_tensor = current_char_tensor
-        else:
-            raise ValueError(f"Invalid input_mode: {config['input_mode']}")
-
-        # Handle positional encoding
-        pe_matrix = config["pe_matrix"]
-        if pe_matrix is not None:
-            pe_vec = pe_matrix[min(i, pe_matrix.size(0)-1)]
-            pe_vec = pe_vec.unsqueeze(0).expand(batch_size, -1)
-            hot_input_char_tensor = torch.cat([combined_char_tensor, pe_vec], dim=1)
-        else:
-            hot_input_char_tensor = combined_char_tensor
+        hot_input_char_tensor = model_input(onehot_line_tensor, i, config['input_mode'], config["pe_matrix"])
 
         # Forward pass
         output, hidden = rnn(hot_input_char_tensor, hidden)
@@ -128,14 +104,11 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
         # Compute loss and update weights based on updater type
         if updater == 'dfa':
             # DFA-specific processing
-            output.requires_grad_(True)
-            loss = criterion(output, final_char)
-            losses.append(loss.detach())
-            
             # Per-sequence output error dL/d(output), [B, vocab]: a new tensor (not a view of
             # output or of grad_outputs) that needs no grad. It was two names, global_error and
             # reward_update, bound to this one object; there was never a second tensor.
-            output_error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
+            loss, output_error = dfa_output_error(output, final_char, criterion)
+            losses.append(loss.detach())
 
             # Apply DFA updates
             if isinstance(rnn, EphemeralRNN) and rnn.fused_layer_step is not None and not state.get('log_norms_now', False):
@@ -351,6 +324,50 @@ def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, l
     
     return train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
 
+def positional_encoding(pos_dim, device, max_len=2000):
+    """The [max_len, pos_dim] sinusoidal encoding added to each step's input
+    (--positional_encoding_dim; None when 0)."""
+    if pos_dim <= 0:
+        return None
+    pe_matrix = torch.zeros(max_len, pos_dim)
+    position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+    div_term = torch.exp(torch.arange(0, pos_dim, 2).float() * (-math.log(10000.0) / pos_dim))
+    pe_matrix[:, 0::2] = torch.sin(position * div_term)
+    pe_matrix[:, 1::2] = torch.cos(position * div_term)
+    return pe_matrix.to(device)
+
+
+def build_model(config, charset, n_characters):
+    """The model a run's config describes (train.py's own config, or a checkpoint's)."""
+    if config['input_mode'] not in ('last_one', 'last_two'):
+        raise ValueError(f"Invalid input_mode: {config['input_mode']}")
+    char_input_dim = n_characters * (2 if config['input_mode'] == 'last_two' else 1)
+    input_size = char_input_dim + config['positional_encoding_dim']
+    output_size = n_characters
+    print(f"Model Input Size: {input_size}, Hidden Size: {config['n_hidden']}, Output Size: {output_size}")
+    updater = config['updater']
+    if config['model_type'] == 'rnn':
+        print(f"Initializing SimpleRNN model with '{updater}' updater.")
+        return SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"],
+                         dropout_rate=0, enable_recurrence=config['enable_recurrence'], updater=updater,
+                         residual_connection=config['residual_connection'],
+                         unit_norm_weights=config['unit_norm_weights'], weight_clamp=config['weight_clamp'],
+                         slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'])
+    if config['model_type'] == 'ephemeral':
+        print(f"Initializing EphemeralRNN model with '{updater}' updater.")
+        return EphemeralRNN(
+            input_size, config["n_hidden"], output_size, config["n_layers"], charset,
+            unit_norm_weights=config['unit_norm_weights'], residual_connection=config['residual_connection'],
+            weight_clamp=config['weight_clamp'], updater=updater,
+            plasticity=config["plasticity"], batch_size=config["batch_size"],
+            forget_rate=config["forget_rate"], ephemeral_fraction=config["ephemeral_fraction"],
+            enable_recurrence=config['enable_recurrence'],
+            retain_sequence_bias_grads=config['grad_norm_clip'] > 0 and updater != 'dfa',
+            slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
+            fast_weight_clamp=config['fast_weight_clamp'])
+    raise ValueError(f"Unknown model_type: {config['model_type']}")
+
+
 class _StoreWithAlias(argparse.Action):
     """Stores the value like 'store'. An action whose option strings are listed in `deprecated` is
     an old name for `canonical`: it still works and prints a one-line deprecation note. Giving both
@@ -442,6 +459,14 @@ def build_parser():
                              'into one kernel (torch.compile). The same math with different rounding, about '
                              '1e-7 relative per step. Needs compute capability 7.0+; a P100 falls back '
                              'to the unfused step. Norm-logging steps always run unfused.')
+    parser.add_argument('--heldout_eval_every', type=int, default=0,
+                        help='Ephemeral + DFA, synthetic datasets: every N iterations, evaluate '
+                             '--heldout_batches batches of the validation split with the slow weights '
+                             'frozen, under the observed, strict and no_fast protocols (heldout.py), '
+                             'logged as heldout_<protocol>/<metric> with the next interval (0 = off). '
+                             'The training run itself is unchanged.')
+    parser.add_argument('--heldout_batches', type=int, default=4,
+                        help='Validation batches per --heldout_eval_every evaluation (0 = the whole split).')
     # Old name for whichever of the two applies to --model_type; see resolve_deprecated_args.
     parser.add_argument('--grad_clip', type=float, default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     parser.add_argument('--hidden_size', type=int, default=1024, help='Size of hidden layers in RNN')
@@ -501,6 +526,10 @@ def resolve_deprecated_args(args, parser):
 def check_argument_combinations(args, parser):
     if args.fused_update and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--fused_update supports only --model_type ephemeral --updater dfa.")
+    if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'
+                                        or args.unit_norm_weights):
+        parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa, "
+                     "without --unit_norm_weights (see EphemeralRNN.check_fast_only_step).")
     return args
 
 
@@ -601,65 +630,10 @@ def main():
         args.dataset, args.batch_size, drop_last=True, seed=seed
     )
 
-    # Decide a max sequence length to support
-    MAX_SEQ_LEN = 2000  # or any upper bound you expect
-    pos_dim = args.positional_encoding_dim
-    if pos_dim > 0:
-        # Precompute a [MAX_SEQ_LEN, pos_dim] matrix
-        pe_matrix = torch.zeros(MAX_SEQ_LEN, pos_dim)
-        position = torch.arange(0, MAX_SEQ_LEN, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, pos_dim, 2).float() * (-math.log(10000.0) / pos_dim))
-        pe_matrix[:, 0::2] = torch.sin(position * div_term)
-        pe_matrix[:, 1::2] = torch.cos(position * div_term)
-        # Normalize PE matrix? Optional, could help.
-        # pe_matrix = F.normalize(pe_matrix, p=2, dim=1)
-
-        # Move it to GPU if needed
-        pe_matrix = pe_matrix.to(device)
-        config["pe_matrix"] = pe_matrix
-    else:
-        config["pe_matrix"] = None
-
-    # Model Initialization
-    if args.input_mode == 'last_two':
-        char_input_dim = n_characters * 2
-    elif args.input_mode == 'last_one':
-        char_input_dim = n_characters
-    else:
-        # This case should be prevented by argparse choices, but adding for safety
-        raise ValueError(f"Invalid input_mode: {args.input_mode}")
-
-    input_size = char_input_dim + pos_dim # Base input size from characters + positional encoding
-
-    output_size = n_characters
-    print(f"Model Input Size: {input_size}, Hidden Size: {config['n_hidden']}, Output Size: {output_size}") # Log calculated size
-
+    config["pe_matrix"] = positional_encoding(args.positional_encoding_dim, device)
     optimizer = None
     start_iter = 1
-    base_input_size = input_size # The size calculated above (chars + PE)
-
-    if args.model_type == 'rnn':
-        print(f"Initializing SimpleRNN model with '{args.updater}' updater.")
-        rnn = SimpleRNN(base_input_size, config["n_hidden"], output_size, config["n_layers"],
-                       dropout_rate=0, enable_recurrence=args.enable_recurrence, updater=args.updater,
-                       residual_connection=args.residual_connection,
-                       unit_norm_weights=args.unit_norm_weights, weight_clamp=args.weight_clamp,
-                       slow_weight_decay=args.slow_weight_decay, output_tanh=args.output_tanh)
-    elif args.model_type == 'ephemeral':
-        print(f"Initializing EphemeralRNN model with '{args.updater}' updater.")
-        rnn = EphemeralRNN(
-            base_input_size, config["n_hidden"], output_size, config["n_layers"], charset,
-            unit_norm_weights=args.unit_norm_weights, residual_connection=args.residual_connection,
-            weight_clamp=args.weight_clamp, updater=args.updater,
-            plasticity=config["plasticity"], batch_size=config["batch_size"],
-            forget_rate=config["forget_rate"], ephemeral_fraction=config["ephemeral_fraction"],
-            enable_recurrence=args.enable_recurrence,
-            retain_sequence_bias_grads=args.grad_norm_clip > 0 and args.updater != 'dfa',
-            slow_weight_decay=args.slow_weight_decay, output_tanh=args.output_tanh,
-            fast_weight_clamp=args.fast_weight_clamp
-        )
-    else:
-        raise ValueError(f"Unknown model_type: {args.model_type}")
+    rnn = build_model(config, charset, n_characters)
 
     # Optimizer is only needed for backprop and bptt (regardless of model type)
     if args.updater in ['backprop', 'bptt']:
@@ -719,6 +693,13 @@ def main():
             rnn.enable_fused_update()
             config["fused_update_active"] = True
             print("--fused_update: the DFA step is compiled per layer (first steps include compilation).")
+
+    heldout_batches, heldout_metrics = None, {}
+    if args.heldout_eval_every > 0:
+        heldout_batches = load_heldout_batches(args.dataset, args.batch_size, args.heldout_batches,
+                                               next(rnn.parameters()).device)
+        print(f"Held-out evaluation every {args.heldout_eval_every} iterations on "
+              f"{len(heldout_batches)} validation batches.")
 
     if args.track:
         # wandb initialization
@@ -864,6 +845,10 @@ def main():
 
             interval.update(sequence, onehot_line_tensor, step_preds, step_losses)
 
+            if heldout_batches is not None and iter % args.heldout_eval_every == 0:
+                # Logged with the next interval; evaluate_protocols restores the model's state.
+                heldout_metrics = evaluate_protocols(rnn, heldout_batches, config, args.dataset)
+
             # ==============================================================
             # --- Frequent Detailed Console Logging Period (print_freq) ---
             # ==============================================================
@@ -960,6 +945,8 @@ def main():
             if args.print_freq > 0 and iter % args.print_freq == 0:
                 metrics = interval.summary()
                 metrics.update(rnn.grad_clip_stats.summary())
+                metrics.update(heldout_metrics)
+                heldout_metrics = {}
                 metrics["iters_per_sec"] = interval.iterations / (time.time() - interval_start)
                 avg_loss_plot = metrics.get("loss", float("nan"))
 
