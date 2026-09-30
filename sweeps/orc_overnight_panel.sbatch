@@ -82,6 +82,11 @@ readonly -a RUNS=(
     "keyrecall_clip300 $KR 2718 1000000" "keyrecall_clip300 $KR 3141 1000000"
     "keyrecall_clip2000 $KR 2718 1000000" "keyrecall_clip2000 $KR 3141 1000000"
     "keyrecall_clipprobe $KR 2718 1000000"
+    # Tanh as a lever for faster slow learning: output tanh at lr 3e-4 / alpha 3e4 and at the
+    # 2026 lr 1e-3 / alpha 1e4 (lr * alpha stays 9-10), 3-char, 5M. Without tanh, lr 1e-3
+    # collapsed at 200k-350k (benchmarks/stabilizer_pilot.md). Submit --array=46-49.
+    "tanh_lr3e-4 $P3 2718 5000000" "tanh_lr3e-4 $P3 3141 5000000"
+    "tanh_lr1e-3 $P3 2718 5000000" "tanh_lr1e-3 $P3 3141 5000000"
 )
 
 task_id=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
@@ -106,6 +111,8 @@ case $arm in
     keyrecall_clip30|keyrecall_clip300|keyrecall_clip2000)
         plasticity=3e4 extra=(--grad_norm_clip "${arm#keyrecall_clip}") ;;
     keyrecall_clipprobe) plasticity=3e4 extra=(--grad_norm_clip 1e30) ;;
+    tanh_lr3e-4) lr=3e-4 plasticity=3e4 extra=(--output_tanh true) ;;
+    tanh_lr1e-3) lr=1e-3 plasticity=1e4 extra=(--output_tanh true) ;;
     4pal_bptt|bptt|keyrecall_bptt) model=(--model_type rnn --updater bptt --enable_recurrence true --fused_update false)
                     heldout=false ;;
     no_fast) fraction=0 heldout=false ;;
