@@ -77,9 +77,19 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
 
-    # For EphemeralRNN, reset the ephemeral weights at the start of the sequence
+    # For EphemeralRNN, reset the ephemeral weights at the start of the sequence. The slow
+    # entries take the batch mean every sequence; with --wipe_every N > 1 the fast entries are
+    # zeroed only on every N-th sequence (state['sequence_count'] counts the sequences started,
+    # and is saved with the checkpoint), so between wipes each batch row's fast state carries
+    # into the next sequence in that row. The hidden state starts at zero every sequence.
     if isinstance(rnn, EphemeralRNN):
-        rnn.start_sequence_wipe()
+        wipe_every = config.get('wipe_every', 1)
+        if wipe_every <= 1:
+            rnn.start_sequence_wipe()
+        else:
+            count = state.get('sequence_count', 0)
+            rnn.start_sequence_wipe(wipe_fast=count % wipe_every == 0)
+            state['sequence_count'] = count + 1
 
     # Summed on the device in float64, the same sums Python floats gave, so no step waits on a
     # host sync; read once at the end of the batch.
@@ -450,6 +460,13 @@ def build_parser():
                         help='EphemeralRNN: clamp only the ephemeral (fast) entries to [-v, v] after each '
                              'update, after --weight_clamp (0 = off). Ignored by the rnn baseline, which '
                              'has no fast entries.')
+    parser.add_argument('--wipe_every', type=int, default=1,
+                        help='EphemeralRNN: zero the fast entries at the start of every N-th sequence only '
+                             '(1 = every sequence, the default). The slow entries are still averaged over '
+                             'the batch every sequence; between wipes each batch row\'s fast entries carry '
+                             'into its next sequence, erased only by --forget_rate (and --fast_weight_clamp). '
+                             'The hidden state still starts at zero every sequence, and held-out evaluation '
+                             'always starts from wiped fast entries.')
     parser.add_argument('--output_tanh', type=str2bool, nargs='?', const=True, default=False,
                         help='Both models: the output head i2o reads tanh of the shared trunk instead of '
                              'the trunk (removed from the default on 2026-09-24; see '
@@ -526,6 +543,10 @@ def resolve_deprecated_args(args, parser):
 def check_argument_combinations(args, parser):
     if args.fused_update and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--fused_update supports only --model_type ephemeral --updater dfa.")
+    if args.wipe_every < 1:
+        parser.error("--wipe_every must be at least 1.")
+    if args.wipe_every > 1 and args.model_type != 'ephemeral':
+        parser.error("--wipe_every > 1 needs --model_type ephemeral (SimpleRNN has no fast weights).")
     if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'
                                         or args.unit_norm_weights):
         parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa, "
@@ -717,6 +738,7 @@ def main():
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
             "fast_weight_clamp": args.fast_weight_clamp,
+            "wipe_every": args.wipe_every,
             "fused_update_active": config["fused_update_active"],
             "n_hidden": args.hidden_size,
             "n_layers": args.num_layers,

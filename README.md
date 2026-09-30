@@ -56,6 +56,33 @@ replaces each sequence's copy with the batch mean and zeroes the ephemeral entri
 Forgetting multiplies the ephemeral entries by `1 - forget_rate`. Layers without ephemeral
 entries log no ephemeral norms.
 
+### Keeping fast weights across sequences (`--wipe_every N`)
+
+`--wipe_every N` (default 1, every sequence) zeroes the fast entries only at the start of every
+N-th sequence (batch): the first batch of a run, then every N-th after it. The wipe does two
+separable things, and only the second is skipped:
+
+- **Slow consolidation, every sequence.** Each copy's slow entries are set to the batch mean,
+  as before. This is how the slow weights learn from the batch, so it never stops. The mean of
+  the slow entries is the same whether or not the fast entries are then zeroed.
+- **Fast reset, every N-th sequence.** Between wipes, each batch row keeps its own fast entries
+  from the sequence it just finished, not averaged across rows. The next sequence in the same
+  row starts from them, after they have been forgotten at `--forget_rate` every step (and
+  clamped by `--fast_weight_clamp`, if set). The data loader shuffles, so consecutive
+  sequences in a row are unrelated, and what carries over is interference.
+- **Hidden state.** It still starts at zero every sequence, so only the fast weights carry
+  over. With `--enable_recurrence False`, the default, the fed-back state is zero anyway.
+
+The count of sequences started is `sequence_count` in the checkpoint's `main_program_state`
+(present only when N > 1), and the carried fast entries are part of `per_sample_weights`, so a
+resume continues the cycle. A checkpoint without the count (N = 1, or older) wipes at its
+first resumed batch. Held-out evaluation (`--heldout_eval_every`, `heldout.py`) still starts
+every episode from wiped fast entries and restores the carried ones afterwards. Under BPTT the
+carried entries are the post-update ones, which `--ephemeral_update_clamp` does not bound. The
+SimpleRNN baseline has no fast weights, so `--model_type rnn` refuses N > 1. With N = 1 the
+code path is the old one, and the golden traces are byte-identical, so `CHECKPOINT_CODE_VERSION` stays 12: a version-12 checkpoint resumes with or without the flag. `tests/test_wipe_every.py`
+pins the behaviour.
+
 Both models use a forked transition/emission layout. At each step,
 `combined = hidden_layers(cat(x_t, h_{t-1}))` (plus the residual, if on),
 `h_t = tanh(i2h(combined))`, and `y_t = i2o(combined)`. The state and output heads can
@@ -491,7 +518,7 @@ diverge.
 
 Off by default. It scores a DFA EphemeralRNN on episodes it did not train on, with its slow
 weights frozen, so the score measures what the fast weights remember. Each episode starts as a
-training sequence does (`start_sequence_wipe`). At each step the model predicts and is scored,
+training sequence does (`start_sequence_wipe`, always the full wipe, even with `--wipe_every` > 1). At each step the model predicts and is scored,
 and only then is the target revealed. The target writes the fast entries with the training
 step itself: `EphemeralRNN.fast_only_dfa_step` runs `dfa_layer_step` with
 `freeze_slow=True`. It uses the same projected errors, `--grad_norm_clip`,
