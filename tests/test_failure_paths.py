@@ -24,14 +24,14 @@ def tiny_batches():
 
 def build_model():
     with contextlib.redirect_stdout(io.StringIO()):
-        return EphemeralRNN(8, 4, 4, 1, "23. ", unit_norm_weights=False, weight_clamp=0, batch_size=2)
+        return EphemeralRNN(8, 4, 4, 1, "23. ", weight_clamp=0, batch_size=2)
 
 
 def run_main(*extra_args, checkpoint_dir):
     argv = [
         "train.py", "--dataset", DATASET, "--track", "False", "--n_iters", "3", "--print_freq", "1",
         "--checkpoint_save_freq", "0", "--checkpoint_dir", checkpoint_dir, "--batch_size", "2",
-        "--hidden_size", "4", "--num_layers", "1", "--unit_norm_weights", "False", "--input_mode", "last_one",
+        "--hidden_size", "4", "--num_layers", "1", "--input_mode", "last_one",
         *extra_args,
     ]
     with patch("sys.argv", argv), \

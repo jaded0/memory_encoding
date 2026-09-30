@@ -22,7 +22,7 @@ BATCH = 2
 
 def build(**options):
     settings = dict(updater="dfa", batch_size=BATCH, plasticity=50.0, forget_rate=0.2,
-                    ephemeral_fraction=0.5, enable_recurrence=True, unit_norm_weights=False,
+                    ephemeral_fraction=0.5, enable_recurrence=True,
                     weight_clamp=0.6, fast_weight_clamp=0.05, slow_weight_decay=0.1, output_tanh=True)
     settings.update(options)
     seed_everything(7, deterministic=True)
@@ -166,14 +166,12 @@ class ProtocolTest(unittest.TestCase):
 
     def test_rejected_models(self):
         onehot = episodes(TEXTS)
-        with self.assertRaisesRegex(ValueError, "unit_norm_weights"):
-            heldout.evaluate_held_out(build(unit_norm_weights=True), onehot, None, config())
         with self.assertRaisesRegex(ValueError, "dfa"):
             heldout.evaluate_held_out(build(updater="backprop"), onehot, None, config())
         with self.assertRaisesRegex(ValueError, "batch size"):
             heldout.evaluate_held_out(build(batch_size=3), onehot, None, config())
-        for flags in (["--heldout_eval_every", "5", "--unit_norm_weights", "true"],
-                      ["--heldout_eval_every", "5", "--model_type", "rnn"]):
+        for flags in (["--heldout_eval_every", "5", "--model_type", "rnn"],
+                      ["--heldout_eval_every", "5", "--updater", "backprop"]):
             with self.subTest(flags=flags), self.assertRaises(SystemExit), \
                     contextlib.redirect_stderr(io.StringIO()):
                 train_module.parse_args(flags)

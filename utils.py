@@ -165,6 +165,8 @@ def str2bool(v):
 #     layer with no gradient (i2h).
 #     (--layer_norm was added at 12 without a bump: off, the forward pass and the golden trace are
 #     unchanged, and load_checkpoint refuses a resume that changes it.)
+#     (--unit_norm_weights was removed at 12 without a bump: a checkpoint with it false, as every
+#     run since 2025 had, continues unchanged; one with it true is refused by load_checkpoint.)
 CHECKPOINT_CODE_VERSION = 12
 
 
@@ -226,10 +228,18 @@ LEGACY_CONFIG_KEYS = {
 }
 # Removed flags that never did anything; dropped from old configs so they do not show in the diff.
 REMOVED_CONFIG_KEYS = ('plast_learning_rate', 'imprint_rate')
+# Removed boolean settings: dropped from a config when false (the only value today's code runs), and
+# kept when true, so that load_checkpoint refuses the checkpoint (see REMOVED_SETTING_REASONS).
+REMOVED_FALSE_CONFIG_KEYS = ('unit_norm_weights',)
+REMOVED_SETTING_REASONS = {
+    'unit_norm_weights': "--unit_norm_weights (--normalize) was removed in 2026-09 (it rescaled each "
+                         "weight slice to unit L2 norm after every update); a model trained with it "
+                         "cannot be continued or evaluated by this code.",
+}
 
 def upgrade_legacy_config(loaded_config):
     """Returns a checkpoint config with old CLI keys renamed, so the resume checks and the
-    config diff compare like with like. grad_clip becomes ephemeral_update_clamp for the
+    config diff compare like with like. A removed setting that was false is dropped. grad_clip becomes ephemeral_update_clamp for the
     ephemeral model and grad_norm_clip for the rnn baseline (the only use each model made of
     it), and the other one gets its default, 0, which is what the old flags give today."""
     upgraded = {}
@@ -249,6 +259,9 @@ def upgrade_legacy_config(loaded_config):
             grad_clip = upgraded.pop('grad_clip')
             for name, target in targets.items():
                 upgraded[target] = grad_clip if name == model_type else 0
+    for key in REMOVED_FALSE_CONFIG_KEYS:
+        if key in upgraded and not upgraded[key]:
+            del upgraded[key]
     return upgraded
 
 # State-dict names of EphemeralLinear tensors before the naming cleanup (2026-09).
@@ -336,6 +349,9 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     check_checkpoint_code_version(checkpoint, checkpoint_path)
     # The config used for this checkpoint, with pre-2026-09 CLI names mapped to today's
     loaded_config = upgrade_legacy_config(checkpoint.get('config', {}))
+    for key, reason in REMOVED_SETTING_REASONS.items():
+        if loaded_config.get(key):
+            raise RuntimeError(f"Checkpoint {checkpoint_path} was trained with {key}=True. {reason}")
     print_config_diff(config, loaded_config)
 
     compatibility_defaults = {

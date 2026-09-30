@@ -21,7 +21,7 @@ def build_rnn(model_type, updater, enable_recurrence=True, num_layers=1):
         if model_type == "rnn":
             return SimpleRNN(2 * len(CHARSET), HIDDEN, len(CHARSET), num_layers, enable_recurrence=enable_recurrence,
                              updater=updater)
-        return EphemeralRNN(2 * len(CHARSET), HIDDEN, len(CHARSET), 1, CHARSET, unit_norm_weights=False,
+        return EphemeralRNN(2 * len(CHARSET), HIDDEN, len(CHARSET), 1, CHARSET,
                             weight_clamp=0, updater=updater, plasticity=3.0, batch_size=2, forget_rate=0.25,
                             ephemeral_fraction=0.5, enable_recurrence=enable_recurrence)
 
@@ -35,10 +35,9 @@ def run_one_sequence(model, updater, optimizer=None, grad_norm_clip=0):
         train(SEQUENCE, onehot, model, config, {"training_instance": 0}, optimizer=optimizer)
 
 
-def build_layer(batch_size=3, unit_norm_weights=True):
+def build_layer(batch_size=3):
     with contextlib.redirect_stdout(io.StringIO()):
-        return EphemeralLinear(5, 4, list("abcd"), unit_norm_weights=unit_norm_weights, batch_size=batch_size,
-                               ephemeral_fraction=0.5)
+        return EphemeralLinear(5, 4, list("abcd"), batch_size=batch_size, ephemeral_fraction=0.5)
 
 
 class WeightInitializationTest(unittest.TestCase):
@@ -65,34 +64,20 @@ class WeightInitializationTest(unittest.TestCase):
             torch.testing.assert_close(weights, layer.weight, rtol=0, atol=0)
 
 
-class UnitNormWeightsTest(unittest.TestCase):
-    def test_each_sequence_is_normalised_on_its_own(self):
-        torch.manual_seed(0)
+class RegularizationTest(unittest.TestCase):
+    def test_without_clamps_regularization_leaves_weights_alone(self):
+        # --unit_norm_weights, which rescaled each slice here, was removed in 2026-09.
         layer = build_layer()
-        weights = torch.randn(3, 4, 5) * torch.tensor([0.1, 1.0, 300.0]).view(3, 1, 1)
-        layer.per_sample_weights.data = weights.clone()
-        layer._apply_regularization()
-        normalised = layer.per_sample_weights.data
-        for index in range(3):
-            torch.testing.assert_close(torch.linalg.vector_norm(normalised[index]), torch.tensor(1.0),
-                                       rtol=1e-5, atol=1e-5)
-            # Only a rescaling of that sequence's own slice.
-            torch.testing.assert_close(normalised[index], weights[index] / (weights[index].norm() + 1e-6))
-
-        # One sequence's result does not depend on the others.
-        other = build_layer()
-        changed = weights.clone()
-        changed[1:] *= 1e3
-        other.per_sample_weights.data = changed
-        other._apply_regularization()
-        torch.testing.assert_close(other.per_sample_weights.data[0], normalised[0], rtol=0, atol=0)
-
-    def test_off_leaves_weights_alone(self):
-        layer = build_layer(unit_norm_weights=False)
-        weights = torch.randn(3, 4, 5)
+        weights = torch.randn(3, 4, 5) * 300
         layer.per_sample_weights.data = weights.clone()
         layer._apply_regularization()
         torch.testing.assert_close(layer.per_sample_weights.data, weights, rtol=0, atol=0)
+
+    def test_constructors_no_longer_take_unit_norm_weights(self):
+        with self.assertRaises(TypeError), contextlib.redirect_stdout(io.StringIO()):
+            EphemeralLinear(5, 4, CHARSET, unit_norm_weights=False)
+        with self.assertRaises(TypeError):
+            SimpleRNN(2 * len(CHARSET), HIDDEN, len(CHARSET), 1, unit_norm_weights=False)
 
 
 class ForkedLayoutTest(unittest.TestCase):
@@ -291,17 +276,16 @@ class SimpleRnnDfaTest(unittest.TestCase):
                 torch.testing.assert_close(record["weight_after"] - record["weight"], -LEARNING_RATE * record["weight_grad"],
                                            rtol=1e-4, atol=1e-7, msg=key)
 
-    def test_normalization_and_weight_clamp_apply_under_every_updater(self):
+    def test_weight_clamp_applies_under_every_updater(self):
         for updater in ("dfa", "backprop", "bptt"):
             with self.subTest(updater=updater):
                 seed_everything(99, deterministic=True)
                 model = SimpleRNN(2 * len(CHARSET), HIDDEN, len(CHARSET), 1,
-                                  updater=updater, unit_norm_weights=True, weight_clamp=0.1)
+                                  updater=updater, weight_clamp=0.1)
                 optimizer = (None if updater == "dfa" else
                              torch.optim.SGD(model.parameters(), lr=LEARNING_RATE))
                 run_one_sequence(model, updater, optimizer=optimizer)
                 for layer in model.dfa_layers():
-                    self.assertLessEqual(layer.weight.norm().item(), 1.000001)
                     self.assertLessEqual(layer.weight.abs().max().item(), 0.100001)
 
     def test_rnn_dfa_gradient_is_the_batch_mean_of_per_sequence_outer_products(self):
@@ -323,7 +307,7 @@ class SimpleRnnDfaTest(unittest.TestCase):
                 seed_everything(99, deterministic=True)
                 with contextlib.redirect_stdout(io.StringIO()):
                     model = EphemeralRNN(2 * len(CHARSET), HIDDEN, len(CHARSET), 1, CHARSET,
-                                         unit_norm_weights=False, weight_clamp=0.05, updater=updater,
+                                         weight_clamp=0.05, updater=updater,
                                          plasticity=3.0, batch_size=2, forget_rate=0.25,
                                          ephemeral_fraction=0.5)
                 initial = max(layer.per_sample_weights.abs().max().item() for layer in model.trained_layers())

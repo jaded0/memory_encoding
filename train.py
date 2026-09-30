@@ -138,7 +138,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 rnn.i2h.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2o.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
 
-                # Forget after the whole update (incl. clamp/normalize), as in the paper
+                # Forget after the whole update (incl. the clamps), as in the paper
                 rnn.apply_forget_step()
                 
                 # Clear gradients after the updates
@@ -208,7 +208,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 rnn.i2h.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2o.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
 
-                # Forget after the whole update (incl. clamp/normalize), as in the paper
+                # Forget after the whole update (incl. the clamps), as in the paper
                 rnn.apply_forget_step()
                 
                 # Clear gradients after the updates
@@ -271,7 +271,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                             if param.grad is not None:
                                 param.data -= config["learning_rate"] * param.grad
                                 param.grad.zero_()
-                    # The slow weights persist, so --unit_norm_weights and --weight_clamp apply
+                    # The slow weights persist, so --weight_clamp applies
                     # as under the other updaters. --ephemeral_update_clamp does not: the fast
                     # entries it clamps are wiped before any forward pass reads them.
                     rnn.apply_regularization()
@@ -351,14 +351,14 @@ def build_model(config, charset, n_characters):
         return SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"],
                          dropout_rate=0, enable_recurrence=config['enable_recurrence'], updater=updater,
                          residual_connection=config['residual_connection'],
-                         unit_norm_weights=config['unit_norm_weights'], weight_clamp=config['weight_clamp'],
+                         weight_clamp=config['weight_clamp'],
                          slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
                          layer_norm=config['layer_norm'])
     if config['model_type'] == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{updater}' updater.")
         return EphemeralRNN(
             input_size, config["n_hidden"], output_size, config["n_layers"], charset,
-            unit_norm_weights=config['unit_norm_weights'], residual_connection=config['residual_connection'],
+            residual_connection=config['residual_connection'],
             weight_clamp=config['weight_clamp'], updater=updater,
             plasticity=config["plasticity"], batch_size=config["batch_size"],
             forget_rate=config["forget_rate"], ephemeral_fraction=config["ephemeral_fraction"],
@@ -390,6 +390,21 @@ class _StoreWithAlias(argparse.Action):
         setattr(namespace, self.dest, values)
 
 
+class _RemovedFlag(argparse.Action):
+    """A removed boolean flag: false (what every run used) is accepted with a note, so old run
+    scripts still run; true is an error, since the behaviour no longer exists. Stores nothing."""
+
+    def __init__(self, option_strings, dest, reason='', **kwargs):
+        self.reason = reason
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if values:
+            parser.error(f"{option_string} was removed: {self.reason} Drop the flag (false was the "
+                         "default and is still accepted).")
+        print(f"DEPRECATED: {option_string} was removed; false is its only setting, so it is ignored. Remove it.")
+
+
 class _IgnoredFlag(argparse.Action):
     """Accepts a removed flag and its value so old run scripts still run, and prints a note."""
 
@@ -403,9 +418,15 @@ DEPRECATED_FLAG_ALIASES = {
     '--plasticity': ['--plast_clip'],
     '--ephemeral_fraction': ['--plast_proportion'],
     '--weight_clamp': ['--clip_weights'],
-    '--unit_norm_weights': ['--normalize'],
 }
 IGNORED_FLAGS = ('--plast_learning_rate', '--imprint_rate')
+# Removed boolean flags (_RemovedFlag), with why; --normalize is the old name of --unit_norm_weights.
+REMOVED_FLAGS = {
+    ('--unit_norm_weights', '--normalize'):
+        "it divided each weight slice by its whole L2 norm after every update, which leaves entries "
+        "around 1e-3 and removes the memory (2 of 4,701 archive runs used it). For a normalization "
+        "use --layer_norm.",
+}
 
 
 def _add_argument(parser, name, **kwargs):
@@ -481,10 +502,11 @@ def build_parser():
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
     parser.add_argument('--model_type', type=str, default='ephemeral', choices=['rnn', 'ephemeral'], help='Model architecture to use.')
     parser.add_argument('--updater', type=str, default='dfa', choices=['dfa', 'backprop', 'bptt'], help='Weight update algorithm to use.')
-    _add_argument(parser, '--unit_norm_weights', type=str2bool, nargs='?', const=True, default=False,
-                  help='Rescale each sequence\'s slice of each layer\'s per_sample_weights to unit L2 norm after each update.')
+    for flags, reason in REMOVED_FLAGS.items():
+        parser.add_argument(*flags, action=_RemovedFlag, reason=reason, type=str2bool, nargs='?', const=True,
+                            default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     _add_argument(parser, '--weight_clamp', type=float, default=0,
-                  help='Clamp per_sample_weights to [-v, v] after each update and unit-norm rescaling (0 = off).')
+                  help='Clamp the weights to [-v, v] after each update (0 = off).')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
     parser.add_argument('--dataset', type=str, default='3_palindrome_dataset_vary_length', help='The dataset used for training.')
     parser.add_argument('--notes', type=str, default='nothing to say', help='talk about this run')
@@ -532,10 +554,9 @@ def resolve_deprecated_args(args, parser):
 def check_argument_combinations(args, parser):
     if args.fused_update and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--fused_update supports only --model_type ephemeral --updater dfa.")
-    if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'
-                                        or args.unit_norm_weights):
-        parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa, "
-                     "without --unit_norm_weights (see EphemeralRNN.check_fast_only_step).")
+    if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
+        parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa "
+                     "(see EphemeralRNN.check_fast_only_step).")
     return args
 
 
@@ -730,7 +751,6 @@ def main():
             "dataset": args.dataset,
             "epochs": 1, # This seems fixed, maybe adjust?
             "forget_rate": args.forget_rate,
-            "unit_norm_weights": args.unit_norm_weights,
             "weight_clamp": args.weight_clamp,
             "log_freq": log_freq,
             "batch_size": args.batch_size,
