@@ -69,6 +69,19 @@ readonly -a RUNS=(
     # Submit --array=28-32.
     "keyrecall_a3e4 $KR 4241 1000000" "keyrecall_a3e4 $KR 1618 1000000" "keyrecall_a3e4 $KR 5772 1000000"
     "keyrecall_bptt $KR 2718 1000000" "keyrecall_bptt $KR 3141 1000000"
+    # Clipping panel: per-sequence --grad_norm_clip at three thresholds set from the normclip
+    # probes (recipe mean ~31, per-interval max 4k-8k): 30 binds on most steps, 300 on the upper
+    # tail, 2000 only on spikes. 3-char at the recipe (unclipped reference: the old-recipe
+    # reproduction's seeds 2718/3141) and key recall at alpha 3e4 (unclipped reference:
+    # keyrecall_a3e4 seeds 2718/3141, plus a never-binding 1e30 probe for its norm distribution).
+    # Submit --array=33-45.
+    "clip30 $P3 2718 10000000" "clip30 $P3 3141 10000000"
+    "clip300 $P3 2718 10000000" "clip300 $P3 3141 10000000"
+    "clip2000 $P3 2718 10000000" "clip2000 $P3 3141 10000000"
+    "keyrecall_clip30 $KR 2718 1000000" "keyrecall_clip30 $KR 3141 1000000"
+    "keyrecall_clip300 $KR 2718 1000000" "keyrecall_clip300 $KR 3141 1000000"
+    "keyrecall_clip2000 $KR 2718 1000000" "keyrecall_clip2000 $KR 3141 1000000"
+    "keyrecall_clipprobe $KR 2718 1000000"
 )
 
 task_id=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
@@ -89,6 +102,10 @@ case $arm in
     4pal_a5e4) plasticity=5e4 ;;
     4pal_tanh|keyrecall_tanh) extra=(--output_tanh true) ;;
     keyrecall_a3e4) plasticity=3e4 ;;
+    clip30|clip300|clip2000) extra=(--grad_norm_clip "${arm#clip}") ;;
+    keyrecall_clip30|keyrecall_clip300|keyrecall_clip2000)
+        plasticity=3e4 extra=(--grad_norm_clip "${arm#keyrecall_clip}") ;;
+    keyrecall_clipprobe) plasticity=3e4 extra=(--grad_norm_clip 1e30) ;;
     4pal_bptt|bptt|keyrecall_bptt) model=(--model_type rnn --updater bptt --enable_recurrence true --fused_update false)
                     heldout=false ;;
     no_fast) fraction=0 heldout=false ;;
