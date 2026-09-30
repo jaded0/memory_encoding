@@ -7,6 +7,7 @@ step where the remembered character was the input and the step that must predict
 """
 import torch
 
+import kv_tasks
 from utils import get_charset
 
 
@@ -17,6 +18,9 @@ def recall_targets(text, dataset_name):
     it requires knowing the half-length, so it is tracked separately from the recalled characters. A model that
     always predicts padding gets it right, so read it together with the recall accuracy.
     """
+    if kv_tasks.is_kv(dataset_name):
+        info = kv_tasks.episode(text)
+        return {info["answer"]: info["answer"] - info["source"] - 1}, None
     if "palindrome_dataset_vary_length" in dataset_name:
         middle = text.index(".")
         targets = {middle + j: 2 * j - 1 for j in range(1, middle + 1)}
@@ -39,6 +43,8 @@ def recall_targets(text, dataset_name):
 def recall_chance(dataset_name):
     """Accuracy of guessing uniformly among the characters a recall target can take."""
     charset = get_charset(dataset_name)
+    if kv_tasks.is_kv(dataset_name):
+        return 1 / len(kv_tasks.VALUES)
     if "palindrome_dataset_vary_length" in dataset_name:
         return 1 / len([c for c in charset if c not in ". "])
     if "long_range_memory" in dataset_name:
@@ -51,6 +57,13 @@ def recall_chance(dataset_name):
 MAX_LAG = 60  # recall lags are bucketed by key = lag + 2 (0 = padding, 1 = non-recall target)
 KEYS = MAX_LAG + 2
 MASK_CACHE_LIMIT = 100_000
+KV_CLASSES = ("correct", "stale", "wrong_key", "other")  # kv_tasks.classify_answer's categories
+
+
+def kv_answer_classes(text, charset):
+    """(answer index, [len(charset)] long: the KV_CLASSES index each predicted character would get)."""
+    classes = torch.tensor([KV_CLASSES.index(kv_tasks.classify_answer(text, c)) for c in charset])
+    return kv_tasks.episode(text)["answer"], classes
 
 
 class IntervalMetrics:
@@ -64,7 +77,9 @@ class IntervalMetrics:
     def __init__(self, dataset_name):
         self.dataset_name = dataset_name
         self.has_recall = recall_chance(dataset_name) is not None
+        self.kv_charset = get_charset(dataset_name) if kv_tasks.is_kv(dataset_name) else None
         self._mask_cache = {}
+        self._kv_cache = {}
         self.reset()
 
     def reset(self):
@@ -132,13 +147,33 @@ class IntervalMetrics:
             end_hit.sum(), has_end.sum(),
         ]).float()
         stats = torch.cat([counts, hits, loss_sums, extras])
+        if self.kv_charset is not None:
+            stats = torch.cat([stats, self._kv_counts(texts, preds, steps)])
         self.stats = stats if self.stats is None else self.stats + stats
+
+    def _kv_counts(self, texts, preds, steps):
+        """Counts of the answer predictions per KV_CLASSES, [4], without a device sync."""
+        rows = []
+        for text in texts:
+            cached = self._kv_cache.get(text)
+            if cached is None:
+                cached = kv_answer_classes(text, self.kv_charset)
+                if len(self._kv_cache) < MASK_CACHE_LIMIT:
+                    self._kv_cache[text] = cached
+            rows.append(cached)
+        device = preds.device
+        answer_steps = torch.tensor([answer - 1 for answer, _ in rows]).to(device, non_blocking=True)
+        classes = torch.stack([row for _, row in rows]).to(device, non_blocking=True)
+        predicted = preds[torch.arange(len(texts), device=device), answer_steps]
+        return torch.zeros(len(KV_CLASSES), device=device).scatter_add_(
+            0, classes.gather(1, predicted[:, None]).squeeze(1), torch.ones(len(texts), device=device))
 
     def summary(self):
         if self.stats is None:
             return {}
         stats = self.stats.cpu()
         counts, hits, loss_sums, extras = stats[:KEYS], stats[KEYS:2 * KEYS], stats[2 * KEYS:3 * KEYS], stats[3 * KEYS:]
+        extras, kv_counts = extras[:6], extras[6:]
         final_hit, final_count, exact, seq_count, end_hit, end_count = extras.tolist()
         ratio = lambda num, den: float(num) / float(den) if den else None
         tokens, recall_count = counts[1:].sum(), counts[2:].sum()
@@ -152,6 +187,8 @@ class IntervalMetrics:
             "recall_seq_exact": ratio(exact, seq_count),
             "recall_end_acc": ratio(end_hit, end_count),
         }
+        if len(kv_counts):  # key-value answers: kv_correct equals recall_acc; the rest classify errors
+            out.update({f"kv_{name}": ratio(n, kv_counts.sum()) for name, n in zip(KV_CLASSES, kv_counts)})
         for key in range(2, KEYS):
             if counts[key]:
                 out[f"recall_acc_lag_{key - 2}"] = float(hits[key] / counts[key])

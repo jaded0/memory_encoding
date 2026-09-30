@@ -217,3 +217,9 @@ for n in range(1, 5):
         print(f"{n}_small_palindrome_dataset_vary_length {split} columns: {dataset_dict[split].column_names}")
         print(f"Sample {split}: {dataset_dict[split][0]}")
     dataset_dict.save_to_disk(f"synth_datasets/{sample_type}")
+
+
+# Key-value memory tasks (kv_unique_<K>, kv_reassign_<K>; see kv_tasks.py). Seeded, unlike the
+# datasets above; `python kv_tasks.py [names]` generates them alone.
+import kv_tasks
+kv_tasks.main([])

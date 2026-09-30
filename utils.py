@@ -4,6 +4,7 @@ import math
 import argparse
 import os
 
+import kv_tasks
 from reproducibility import restore_rng_state
 
 dataset_keys = {
@@ -25,9 +26,12 @@ dataset_keys = {
     "2_small_palindrome_dataset_vary_length": "text", 
     "3_small_palindrome_dataset_vary_length": "text", 
     "4_small_palindrome_dataset_vary_length": "text", }
+dataset_keys.update({name: "text" for name in kv_tasks.registered_names()})
 
 def get_charset(dataset_name):
 
+    if kv_tasks.is_kv(dataset_name):
+        return kv_tasks.CHARSET
     if "small" in dataset_name:
         set = "23. "
         return set
