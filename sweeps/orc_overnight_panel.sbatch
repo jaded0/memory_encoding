@@ -3,7 +3,7 @@
 # DFA, recurrence off, lr 1e-4, plasticity 1e5, 10% fast, no clamp, no output tanh). One run per
 # array task, in priority order:
 #   4pal         4-char reversal at the recipe. 2025 never ran it past 495k (untested, not failed).
-#   4pal_bptt    SimpleRNN + BPTT with recurrence on, the same task, at the recipe's lr.
+#   4pal_bptt    SimpleRNN + BPTT with recurrence on, the same task (Adam 1e-4, clip 1, residual).
 #   a7e4         3-char reversal at plasticity 7e4, the 2025 cell that converged 7 of 7.
 #   bptt         SimpleRNN + BPTT on 3-char at lr 1e-4: the fair head-to-head at the good recipe.
 #   no_fast      the recipe with --ephemeral_fraction 0: no fast memory.
@@ -82,6 +82,11 @@ readonly -a RUNS=(
     "keyrecall_clip300 $KR 2718 1000000" "keyrecall_clip300 $KR 3141 1000000"
     "keyrecall_clip2000 $KR 2718 1000000" "keyrecall_clip2000 $KR 3141 1000000"
     "keyrecall_clipprobe $KR 2718 1000000"
+    # Tanh as a lever for faster slow learning: output tanh at lr 3e-4 / alpha 3e4 and at the
+    # 2026 lr 1e-3 / alpha 1e4 (lr * alpha stays 9-10), 3-char, 5M. Without tanh, lr 1e-3
+    # collapsed at 200k-350k (benchmarks/stabilizer_pilot.md). Submit --array=46-49.
+    "tanh_lr3e-4 $P3 2718 5000000" "tanh_lr3e-4 $P3 3141 5000000"
+    "tanh_lr1e-3 $P3 2718 5000000" "tanh_lr1e-3 $P3 3141 5000000"
 )
 
 task_id=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
@@ -106,7 +111,10 @@ case $arm in
     keyrecall_clip30|keyrecall_clip300|keyrecall_clip2000)
         plasticity=3e4 extra=(--grad_norm_clip "${arm#keyrecall_clip}") ;;
     keyrecall_clipprobe) plasticity=3e4 extra=(--grad_norm_clip 1e30) ;;
+    tanh_lr3e-4) lr=3e-4 plasticity=3e4 extra=(--output_tanh true) ;;
+    tanh_lr1e-3) lr=1e-3 plasticity=1e4 extra=(--output_tanh true) ;;
     4pal_bptt|bptt|keyrecall_bptt) model=(--model_type rnn --updater bptt --enable_recurrence true --fused_update false)
+                    extra=(--optimizer adam --grad_norm_clip 1 --residual_connection true)
                     heldout=false ;;
     no_fast) fraction=0 heldout=false ;;
     keyrecall_no_fast) plasticity=3e4 fraction=0 heldout=false ;;
@@ -130,7 +138,9 @@ export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python
 export HF_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
-export TORCHINDUCTOR_CACHE_DIR=${TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID:-local}
+# A fresh directory per start: a requeued job keeps its job ID, and on some nodes (cs-1-5,
+# 2026-09-30) the previous start's directory was not writable, so torch.compile failed.
+export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID:-local}_XXXXXX")
 
 echo "Array job: ${SLURM_ARRAY_JOB_ID:-local}_${task_id} (restart count ${SLURM_RESTART_COUNT:-0})"
 echo "Run: $arm, $dataset, seed $seed, $n_iters iterations, lr $lr, plasticity $plasticity," \

@@ -4,6 +4,7 @@ import math
 import argparse
 import os
 
+import kv_tasks
 from reproducibility import restore_rng_state
 
 dataset_keys = {
@@ -25,9 +26,12 @@ dataset_keys = {
     "2_small_palindrome_dataset_vary_length": "text", 
     "3_small_palindrome_dataset_vary_length": "text", 
     "4_small_palindrome_dataset_vary_length": "text", }
+dataset_keys.update({name: "text" for name in kv_tasks.registered_names()})
 
 def get_charset(dataset_name):
 
+    if kv_tasks.is_kv(dataset_name):
+        return kv_tasks.CHARSET
     if "small" in dataset_name:
         set = "23. "
         return set
@@ -163,6 +167,10 @@ def str2bool(v):
 # 12: --grad_norm_clip also clips the ephemeral model (per sequence, before alpha), and ephemeral
 #     BPTT applies unit_norm_weights and weight_clamp after its update, as does backprop to a
 #     layer with no gradient (i2h).
+#     (--layer_norm was added at 12 without a bump: off, the forward pass and the golden trace are
+#     unchanged, and load_checkpoint refuses a resume that changes it.)
+#     (--unit_norm_weights was removed at 12 without a bump: a checkpoint with it false, as every
+#     run since 2025 had, continues unchanged; one with it true is refused by load_checkpoint.)
 CHECKPOINT_CODE_VERSION = 12
 
 
@@ -182,9 +190,17 @@ def check_checkpoint_code_version(checkpoint, checkpoint_path="<checkpoint>"):
 
 def save_checkpoint(state_dict, checkpoint_dir, filename="checkpoint.pth"):
     """Saves checkpoint to disk, stamped with code_version = CHECKPOINT_CODE_VERSION
-    unless the caller already set it."""
+    unless the caller already set it. Writes a temporary file and renames it over the old one,
+    so a save interrupted by a signal leaves the previous checkpoint intact (a SIGTERM mid-save
+    truncated a run's only checkpoint on 2026-09-30)."""
     filepath = os.path.join(checkpoint_dir, filename)
-    torch.save({**state_dict, 'code_version': state_dict.get('code_version', CHECKPOINT_CODE_VERSION)}, filepath)
+    tmp_path = f"{filepath}.tmp.{os.getpid()}"
+    try:
+        torch.save({**state_dict, 'code_version': state_dict.get('code_version', CHECKPOINT_CODE_VERSION)}, tmp_path)
+        os.replace(tmp_path, filepath)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
     print(f"Checkpoint saved to {filepath}")
 
 def read_checkpoint(checkpoint_path):
@@ -224,10 +240,18 @@ LEGACY_CONFIG_KEYS = {
 }
 # Removed flags that never did anything; dropped from old configs so they do not show in the diff.
 REMOVED_CONFIG_KEYS = ('plast_learning_rate', 'imprint_rate')
+# Removed boolean settings: dropped from a config when false (the only value today's code runs), and
+# kept when true, so that load_checkpoint refuses the checkpoint (see REMOVED_SETTING_REASONS).
+REMOVED_FALSE_CONFIG_KEYS = ('unit_norm_weights',)
+REMOVED_SETTING_REASONS = {
+    'unit_norm_weights': "--unit_norm_weights (--normalize) was removed in 2026-09 (it rescaled each "
+                         "weight slice to unit L2 norm after every update); a model trained with it "
+                         "cannot be continued or evaluated by this code.",
+}
 
 def upgrade_legacy_config(loaded_config):
     """Returns a checkpoint config with old CLI keys renamed, so the resume checks and the
-    config diff compare like with like. grad_clip becomes ephemeral_update_clamp for the
+    config diff compare like with like. A removed setting that was false is dropped. grad_clip becomes ephemeral_update_clamp for the
     ephemeral model and grad_norm_clip for the rnn baseline (the only use each model made of
     it), and the other one gets its default, 0, which is what the old flags give today."""
     upgraded = {}
@@ -247,6 +271,9 @@ def upgrade_legacy_config(loaded_config):
             grad_clip = upgraded.pop('grad_clip')
             for name, target in targets.items():
                 upgraded[target] = grad_clip if name == model_type else 0
+    for key in REMOVED_FALSE_CONFIG_KEYS:
+        if key in upgraded and not upgraded[key]:
+            del upgraded[key]
     return upgraded
 
 # State-dict names of EphemeralLinear tensors before the naming cleanup (2026-09).
@@ -334,6 +361,9 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     check_checkpoint_code_version(checkpoint, checkpoint_path)
     # The config used for this checkpoint, with pre-2026-09 CLI names mapped to today's
     loaded_config = upgrade_legacy_config(checkpoint.get('config', {}))
+    for key, reason in REMOVED_SETTING_REASONS.items():
+        if loaded_config.get(key):
+            raise RuntimeError(f"Checkpoint {checkpoint_path} was trained with {key}=True. {reason}")
     print_config_diff(config, loaded_config)
 
     compatibility_defaults = {
@@ -343,6 +373,10 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
         'charset_size': None,
         'seed': None,
         'deterministic': False,
+        # Checkpoints from before --optimizer existed were all trained with SGD.
+        'optimizer': 'sgd',
+        # --dfa_fprime changes what every DFA step writes; absent in older checkpoints (off).
+        'dfa_fprime': False,
     }
     mismatches = [
         (key, config.get(key, default), loaded_config.get(key, default))
@@ -361,6 +395,10 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     # slurm_run.sh keys checkpoints by job name and always resumes, so a reused job name for a
     # new experiment would silently continue an old checkpoint. A different dataset or
     # learning rate means a different experiment. Checked only if the checkpoint recorded them.
+    # --layer_norm changes the forward pass, so a resume may not switch it. A checkpoint from
+    # before the flag existed had none.
+    if config.get('layer_norm', False) != loaded_config.get('layer_norm', False):
+        mismatches.append(('layer_norm', config.get('layer_norm', False), loaded_config.get('layer_norm', False)))
     for key in ('dataset', 'learning_rate'):
         if key in loaded_config and config.get(key) != loaded_config[key]:
             mismatches.append((key, config.get(key), loaded_config[key]))

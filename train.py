@@ -77,9 +77,19 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
     batch_size = onehot_line_tensor.shape[0]
     hidden = rnn.initHidden(batch_size=batch_size)
 
-    # For EphemeralRNN, reset the ephemeral weights at the start of the sequence
+    # For EphemeralRNN, reset the ephemeral weights at the start of the sequence. The slow
+    # entries take the batch mean every sequence; with --wipe_every N > 1 the fast entries are
+    # zeroed only on every N-th sequence (state['sequence_count'] counts the sequences started,
+    # and is saved with the checkpoint), so between wipes each batch row's fast state carries
+    # into the next sequence in that row. The hidden state starts at zero every sequence.
     if isinstance(rnn, EphemeralRNN):
-        rnn.start_sequence_wipe()
+        wipe_every = config.get('wipe_every', 1)
+        if wipe_every <= 1:
+            rnn.start_sequence_wipe()
+        else:
+            count = state.get('sequence_count', 0)
+            rnn.start_sequence_wipe(wipe_fast=count % wipe_every == 0)
+            state['sequence_count'] = count + 1
 
     # Summed on the device in float64, the same sums Python floats gave, so no step waits on a
     # host sync; read once at the end of the batch.
@@ -143,7 +153,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 rnn.i2h.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2o.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
 
-                # Forget after the whole update (incl. clamp/normalize), as in the paper
+                # Forget after the whole update (incl. the clamps), as in the paper
                 rnn.apply_forget_step()
                 
                 # Clear gradients after the updates
@@ -213,7 +223,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 rnn.i2h.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
                 rnn.i2o.apply_update(config["learning_rate"], config["ephemeral_update_clamp"], state)
 
-                # Forget after the whole update (incl. clamp/normalize), as in the paper
+                # Forget after the whole update (incl. the clamps), as in the paper
                 rnn.apply_forget_step()
                 
                 # Clear gradients after the updates
@@ -276,7 +286,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                             if param.grad is not None:
                                 param.data -= config["learning_rate"] * param.grad
                                 param.grad.zero_()
-                    # The slow weights persist, so --unit_norm_weights and --weight_clamp apply
+                    # The slow weights persist, so --weight_clamp applies
                     # as under the other updaters. --ephemeral_update_clamp does not: the fast
                     # entries it clamps are wiped before any forward pass reads them.
                     rnn.apply_regularization()
@@ -346,6 +356,14 @@ def positional_encoding(pos_dim, device, max_len=2000):
     return pe_matrix.to(device)
 
 
+def build_optimizer(model, config):
+    """The optimizer for backprop and BPTT. Only the SimpleRNN baseline steps through it; the
+    ephemeral model's slow and fast weights take manual steps, and its SGD object is unused."""
+    if config.get('optimizer', 'sgd') == 'adam':
+        return torch.optim.Adam(model.parameters(), lr=config['learning_rate'])
+    return torch.optim.SGD(model.parameters(), lr=config['learning_rate'])
+
+
 def build_model(config, charset, n_characters):
     """The model a run's config describes (train.py's own config, or a checkpoint's)."""
     if config['input_mode'] not in ('last_one', 'last_two'):
@@ -360,20 +378,22 @@ def build_model(config, charset, n_characters):
         return SimpleRNN(input_size, config["n_hidden"], output_size, config["n_layers"],
                          dropout_rate=0, enable_recurrence=config['enable_recurrence'], updater=updater,
                          residual_connection=config['residual_connection'],
-                         unit_norm_weights=config['unit_norm_weights'], weight_clamp=config['weight_clamp'],
-                         slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'])
+                         weight_clamp=config['weight_clamp'],
+                         slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
+                         layer_norm=config['layer_norm'], dfa_fprime=config.get('dfa_fprime', False))
     if config['model_type'] == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{updater}' updater.")
         return EphemeralRNN(
             input_size, config["n_hidden"], output_size, config["n_layers"], charset,
-            unit_norm_weights=config['unit_norm_weights'], residual_connection=config['residual_connection'],
+            residual_connection=config['residual_connection'],
             weight_clamp=config['weight_clamp'], updater=updater,
             plasticity=config["plasticity"], batch_size=config["batch_size"],
             forget_rate=config["forget_rate"], ephemeral_fraction=config["ephemeral_fraction"],
             enable_recurrence=config['enable_recurrence'],
             retain_sequence_bias_grads=config['grad_norm_clip'] > 0 and updater != 'dfa',
             slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
-            fast_weight_clamp=config['fast_weight_clamp'],
+            fast_weight_clamp=config['fast_weight_clamp'], layer_norm=config['layer_norm'],
+            dfa_fprime=config.get('dfa_fprime', False),
             slow_update_every=config.get('slow_update_every', 1))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
@@ -399,6 +419,21 @@ class _StoreWithAlias(argparse.Action):
         setattr(namespace, self.dest, values)
 
 
+class _RemovedFlag(argparse.Action):
+    """A removed boolean flag: false (what every run used) is accepted with a note, so old run
+    scripts still run; true is an error, since the behaviour no longer exists. Stores nothing."""
+
+    def __init__(self, option_strings, dest, reason='', **kwargs):
+        self.reason = reason
+        super().__init__(option_strings, dest, **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if values:
+            parser.error(f"{option_string} was removed: {self.reason} Drop the flag (false was the "
+                         "default and is still accepted).")
+        print(f"DEPRECATED: {option_string} was removed; false is its only setting, so it is ignored. Remove it.")
+
+
 class _IgnoredFlag(argparse.Action):
     """Accepts a removed flag and its value so old run scripts still run, and prints a note."""
 
@@ -412,9 +447,15 @@ DEPRECATED_FLAG_ALIASES = {
     '--plasticity': ['--plast_clip'],
     '--ephemeral_fraction': ['--plast_proportion'],
     '--weight_clamp': ['--clip_weights'],
-    '--unit_norm_weights': ['--normalize'],
 }
 IGNORED_FLAGS = ('--plast_learning_rate', '--imprint_rate')
+# Removed boolean flags (_RemovedFlag), with why; --normalize is the old name of --unit_norm_weights.
+REMOVED_FLAGS = {
+    ('--unit_norm_weights', '--normalize'):
+        "it divided each weight slice by its whole L2 norm after every update, which leaves entries "
+        "around 1e-3 and removes the memory (2 of 4,701 archive runs used it). For a normalization "
+        "use --layer_norm.",
+}
 
 
 def _add_argument(parser, name, **kwargs):
@@ -437,6 +478,10 @@ def build_parser():
     parser = argparse.ArgumentParser(description='Train a model with specified hyperparameters.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate for the optimizer')
+    parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'],
+                        help='rnn baseline under backprop or bptt: torch.optim.SGD or torch.optim.Adam '
+                             '(default betas and eps) at --learning_rate. The ephemeral model and DFA '
+                             'take manual per-sequence steps and support only sgd (see README).')
     _add_argument(parser, '--plasticity', type=float, default=1e5,
                   help='Plasticity alpha: the learning-rate multiplier on the ephemeral weights (slow weights have 1).')
     for flag in IGNORED_FLAGS:
@@ -460,10 +505,26 @@ def build_parser():
                         help='EphemeralRNN: clamp only the ephemeral (fast) entries to [-v, v] after each '
                              'update, after --weight_clamp (0 = off). Ignored by the rnn baseline, which '
                              'has no fast entries.')
+    parser.add_argument('--wipe_every', type=int, default=1,
+                        help='EphemeralRNN: zero the fast entries at the start of every N-th sequence only '
+                             '(1 = every sequence, the default). The slow entries are still averaged over '
+                             'the batch every sequence; between wipes each batch row\'s fast entries carry '
+                             'into its next sequence, erased only by --forget_rate (and --fast_weight_clamp). '
+                             'The hidden state still starts at zero every sequence, and held-out evaluation '
+                             'always starts from wiped fast entries.')
     parser.add_argument('--output_tanh', type=str2bool, nargs='?', const=True, default=False,
                         help='Both models: the output head i2o reads tanh of the shared trunk instead of '
                              'the trunk (removed from the default on 2026-09-24; see '
                              'docs/tapped_vs_forked_rnn_report.md).')
+    parser.add_argument('--layer_norm', type=str2bool, nargs='?', const=True, default=False,
+                        help='Both models: LayerNorm (no learnable gain or bias) on each trunk layer\'s '
+                             'activations, after the GELU, so the next layer (and its DFA input trace) '
+                             'reads the normalized features. The input and the recurrent state are not '
+                             'normalized.')
+    parser.add_argument('--dfa_fprime', type=str2bool, nargs='?', const=True, default=False,
+                        help='DFA only, both models: multiply each non-output layer\'s projected error by '
+                             'its activation derivative at the current pre-activation (Nokland 2016): '
+                             'gelu\' for the trunk layers, tanh\' for i2h; i2o keeps the raw error.')
     parser.add_argument('--fused_update', type=str2bool, nargs='?', const=True, default=False,
                         help='Ephemeral + DFA only: compile each layer\'s DFA update, clamps and forgetting '
                              'into one kernel (torch.compile). The same math with different rounding, about '
@@ -480,7 +541,7 @@ def build_parser():
     parser.add_argument('--heldout_eval_every', type=int, default=0,
                         help='Ephemeral + DFA, synthetic datasets: every N iterations, evaluate '
                              '--heldout_batches batches of the validation split with the slow weights '
-                             'frozen, under the observed, strict and no_fast protocols (heldout.py), '
+                             'frozen, under the observed, strict, no_fast and free_running protocols (heldout.py), '
                              'logged as heldout_<protocol>/<metric> with the next interval (0 = off). '
                              'The training run itself is unchanged.')
     parser.add_argument('--heldout_batches', type=int, default=4,
@@ -493,10 +554,11 @@ def build_parser():
     parser.add_argument('--print_freq', type=int, default=50, help='Frequency of printing training progress')
     parser.add_argument('--model_type', type=str, default='ephemeral', choices=['rnn', 'ephemeral'], help='Model architecture to use.')
     parser.add_argument('--updater', type=str, default='dfa', choices=['dfa', 'backprop', 'bptt'], help='Weight update algorithm to use.')
-    _add_argument(parser, '--unit_norm_weights', type=str2bool, nargs='?', const=True, default=False,
-                  help='Rescale each sequence\'s slice of each layer\'s per_sample_weights to unit L2 norm after each update.')
+    for flags, reason in REMOVED_FLAGS.items():
+        parser.add_argument(*flags, action=_RemovedFlag, reason=reason, type=str2bool, nargs='?', const=True,
+                            default=argparse.SUPPRESS, help=argparse.SUPPRESS)
     _add_argument(parser, '--weight_clamp', type=float, default=0,
-                  help='Clamp per_sample_weights to [-v, v] after each update and unit-norm rescaling (0 = off).')
+                  help='Clamp the weights to [-v, v] after each update (0 = off).')
     parser.add_argument('--track', type=str2bool, nargs='?', const=True, default=True, help='Whether to track progress online.')
     parser.add_argument('--dataset', type=str, default='3_palindrome_dataset_vary_length', help='The dataset used for training.')
     parser.add_argument('--notes', type=str, default='nothing to say', help='talk about this run')
@@ -542,16 +604,22 @@ def resolve_deprecated_args(args, parser):
 
 
 def check_argument_combinations(args, parser):
-    if args.slow_update_every != 1 and (args.model_type != 'ephemeral' or args.updater != 'dfa'
-                                        or args.unit_norm_weights):
-        parser.error("--slow_update_every other than 1 supports only --model_type ephemeral --updater dfa, "
-                     "without --unit_norm_weights (it rescales slow and fast entries together every step).")
+    if args.slow_update_every != 1 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
+        parser.error("--slow_update_every other than 1 supports only --model_type ephemeral --updater dfa.")
     if args.fused_update and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--fused_update supports only --model_type ephemeral --updater dfa.")
-    if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'
-                                        or args.unit_norm_weights):
-        parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa, "
-                     "without --unit_norm_weights (see EphemeralRNN.check_fast_only_step).")
+    if args.optimizer != 'sgd' and (args.model_type != 'rnn' or args.updater == 'dfa'):
+        parser.error(f"--optimizer {args.optimizer} supports only --model_type rnn with --updater backprop "
+                     "or bptt: the ephemeral model and DFA update their weights by hand, per sequence.")
+    if args.wipe_every < 1:
+        parser.error("--wipe_every must be at least 1.")
+    if args.wipe_every > 1 and args.model_type != 'ephemeral':
+        parser.error("--wipe_every > 1 needs --model_type ephemeral (SimpleRNN has no fast weights).")
+    if args.dfa_fprime and args.updater != 'dfa':
+        parser.error("--dfa_fprime applies only to --updater dfa.")
+    if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
+        parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa "
+                     "(see EphemeralRNN.check_fast_only_step).")
     return args
 
 
@@ -659,7 +727,7 @@ def main():
 
     # Optimizer is only needed for backprop and bptt (regardless of model type)
     if args.updater in ['backprop', 'bptt']:
-        optimizer = torch.optim.SGD(rnn.parameters(), lr=config['learning_rate'])
+        optimizer = build_optimizer(rnn, config)
 
     state = {
         "training_instance": 0,
@@ -737,16 +805,18 @@ def main():
             "grad_norm_clip": args.grad_norm_clip,
             "fused_update": args.fused_update,
             "slow_update_every": args.slow_update_every,
+            "dfa_fprime": args.dfa_fprime,
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
+            "layer_norm": args.layer_norm,
             "fast_weight_clamp": args.fast_weight_clamp,
+            "wipe_every": args.wipe_every,
             "fused_update_active": config["fused_update_active"],
             "n_hidden": args.hidden_size,
             "n_layers": args.num_layers,
             "dataset": args.dataset,
             "epochs": 1, # This seems fixed, maybe adjust?
             "forget_rate": args.forget_rate,
-            "unit_norm_weights": args.unit_norm_weights,
             "weight_clamp": args.weight_clamp,
             "log_freq": log_freq,
             "batch_size": args.batch_size,

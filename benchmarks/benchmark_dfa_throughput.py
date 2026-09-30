@@ -45,6 +45,8 @@ DEFAULT_PATHS = PATHS[:3]  # the fused paths need torch.compile (Triton on CUDA:
 
 
 def build_models(cfg: ScratchConfig, seed: int, device: torch.device):
+    if cfg.unit_norm_weights:
+        raise ValueError("main no longer has --unit_norm_weights; benchmark with it off")
     torch.manual_seed(seed)
     with contextlib.redirect_stdout(io.StringIO()):
         main = EphemeralRNN(
@@ -54,7 +56,6 @@ def build_models(cfg: ScratchConfig, seed: int, device: torch.device):
             num_layers=cfg.num_layers,
             charset=list(range(cfg.vocab_size)),
             residual_connection=False,
-            unit_norm_weights=cfg.unit_norm_weights,
             weight_clamp=cfg.weight_clamp,
             updater="dfa",
             plasticity=cfg.plasticity,

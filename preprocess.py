@@ -1,7 +1,7 @@
 """Dataset loading and preprocessing.
 
 Synthetic datasets (names containing palindrome_dataset, long_range_memory_dataset or
-resequence) load from synth_datasets/ and are preprocessed on the fly; they are small.
+resequence, and the key-value tasks kv_<unique|reassign>_<K>[_d<D>] of kv_tasks.py) load from synth_datasets/ and are preprocessed on the fly; they are small.
 
 Hugging Face datasets (e.g. roneneldan/tinystories) are preprocessed once, by
 `python preprocess.py <name>` (on the cluster: setup_cluster/prepare_datasets.sbatch),
@@ -32,6 +32,7 @@ from datasets import Features, Sequence, Value, load_dataset, load_from_disk
 from torch.nn.functional import one_hot
 from torch.nn.utils.rnn import pad_sequence
 
+import kv_tasks
 from reproducibility import ResumableRandomSampler, make_torch_generator, seed_data_worker
 from utils import collate_fn, filter_text, get_charset, initialize_charset, text_to_indices
 
@@ -55,6 +56,7 @@ dataset_keys = {
     "3_small_palindrome_dataset_vary_length": "train",
     "4_small_palindrome_dataset_vary_length": "train",
 }
+dataset_keys.update({name: "train" for name in kv_tasks.registered_names()})
 
 # Bump whenever this file changes what a processed dataset contains. The saved name also
 # carries a hash of the charset and of the code of the utils.py preprocessing functions
@@ -80,7 +82,8 @@ class ProcessedDatasetMissing(FileNotFoundError):
 
 
 def is_synthetic(dataset_name):
-    return any(tag in dataset_name for tag in ("palindrome_dataset", "long_range_memory_dataset", "resequence"))
+    return kv_tasks.is_kv(dataset_name) or any(
+        tag in dataset_name for tag in ("palindrome_dataset", "long_range_memory_dataset", "resequence"))
 
 
 def auto_preprocess_enabled():

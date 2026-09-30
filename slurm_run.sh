@@ -109,7 +109,6 @@ PLAST_PROPORTION=0.1         # Proportion of weights that are plastic in ephemer
 ENABLE_RECURRENCE=false       # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
-NORMALIZE=false              # Normalize weights post-update (true/false)
 CLIP_WEIGHTS=0               # Max absolute weight value (0=off)
 
 # ======================== Model Architecture ==================================
@@ -154,7 +153,6 @@ forward_signals python -u train.py \
     --slow_weight_decay $SLOW_WEIGHT_DECAY \
     --output_tanh $OUTPUT_TANH \
     --forget_rate $FORGET_RATE \
-    --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \
     --num_layers $NUM_LAYERS \

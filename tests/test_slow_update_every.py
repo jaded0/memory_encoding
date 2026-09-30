@@ -27,7 +27,7 @@ LEARNING_RATE = 0.3
 
 
 def build(slow_update_every=1, **options):
-    settings = dict(unit_norm_weights=False, updater="dfa", plasticity=3.0, batch_size=BATCH,
+    settings = dict(updater="dfa", plasticity=3.0, batch_size=BATCH,
                     forget_rate=0.25, ephemeral_fraction=0.5, enable_recurrence=True)
     settings.update(options)
     seed_everything(11, deterministic=True)
@@ -91,8 +91,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(parse_args([]).slow_update_every, 1)
         self.assertEqual(parse_args(["--slow_update_every", "sequence"]).slow_update_every, "sequence")
         self.assertEqual(parse_args(["--slow_update_every", "3"]).slow_update_every, 3)
-        for extra in (["--updater", "backprop"], ["--updater", "bptt"], ["--model_type", "rnn"],
-                      ["--unit_norm_weights", "true"]):
+        for extra in (["--updater", "backprop"], ["--updater", "bptt"], ["--model_type", "rnn"]):
             with self.subTest(extra=extra), contextlib.redirect_stderr(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     parse_args(["--slow_update_every", "sequence", *extra])
@@ -100,8 +99,6 @@ class ParseTest(unittest.TestCase):
             parse_args(["--slow_update_every", "0"])
         with self.assertRaises(ValueError):
             build("sequence", updater="backprop")
-        with self.assertRaises(ValueError):
-            build(2, unit_norm_weights=True)
 
 
 class FusedPlasticityTest(unittest.TestCase):
@@ -141,6 +138,26 @@ class OneStepSequencesTest(unittest.TestCase):
                                                    rtol=1e-5, atol=1e-7)
                         torch.testing.assert_close(mine.bias, theirs.bias, rtol=1e-5, atol=1e-7)
 
+    def test_dfa_fprime_and_layer_norm_reach_the_windowed_step(self):
+        # The windowed step shares the projected errors with the per-step path, so --dfa_fprime
+        # (in the error) and --layer_norm (in the forward pass) must give the same one-step result
+        # as the per-step update, and must actually change it (else this test pins nothing).
+        short = SEQUENCES[0][:, :2]
+        results = {}
+        for options in ({}, {"dfa_fprime": True}, {"layer_norm": True},
+                        {"dfa_fprime": True, "layer_norm": True}):
+            for setting in (1, "sequence", 3):
+                with self.subTest(setting=setting, **options):
+                    model = build(setting, **options)
+                    run(model, short)
+                    model.start_sequence_wipe()
+                    results[(tuple(options), setting)] = model.linear_layers[0].per_sample_weights.data.clone()
+                    if setting != 1:
+                        torch.testing.assert_close(results[(tuple(options), setting)],
+                                                   results[(tuple(options), 1)], rtol=1e-5, atol=1e-7)
+        for options in (("dfa_fprime",), ("layer_norm",)):
+            self.assertFalse(torch.allclose(results[(options, 1)], results[((), 1)]), options)
+
 
 class PerSequenceTest(unittest.TestCase):
     def test_slow_parameters_are_constant_within_a_sequence(self):
@@ -164,6 +181,31 @@ class PerSequenceTest(unittest.TestCase):
         model.start_sequence_wipe()  # the wipe leaves them bit for bit
         for key, value in slow_state(model).items():
             self.assertTrue(torch.equal(value, after[key]), key)
+
+    def test_wipe_every_keeps_the_fast_entries_and_the_shared_slow_matrix(self):
+        # --wipe_every N > 1 calls start_sequence_wipe(wipe_fast=False) between wipes.
+        for setting in ("sequence", 1, 3):
+            with self.subTest(setting=setting):
+                model = build(setting)
+                run(model, SEQUENCES[0])
+                model.start_sequence_wipe(wipe_fast=False)
+                fast_before = fast_state(model)
+                slow_before = slow_state(model)
+                run(model, SEQUENCES[1])
+                model.start_sequence_wipe(wipe_fast=False)
+                # each row's fast entries carry into the next sequence (and were updated by it)
+                carried = fast_state(model)
+                self.assertFalse(torch.equal(carried[0], fast_before[0]))
+                self.assertFalse(torch.equal(carried[0][:1].expand_as(carried[0]), carried[0]))  # rows differ
+                model.start_sequence_wipe(wipe_fast=False)  # a second call changes nothing more
+                for key, value in fast_state(model).items():
+                    self.assertTrue(torch.equal(value, carried[key]), key)
+                for layer in model.trained_layers():
+                    slow = layer.per_sample_weights.data[:, ~layer.ephemeral_mask]
+                    self.assertTrue(torch.equal(slow, slow[:1].expand_as(slow)))  # slow entries shared
+                model.start_sequence_wipe()  # a full wipe zeroes the fast entries
+                for value in fast_state(model).values():
+                    self.assertEqual(value.abs().sum().item(), 0.0)
 
     def test_the_step_is_the_batch_mean_of_the_summed_per_sequence_gradients(self):
         for clip in (0, 0.05):

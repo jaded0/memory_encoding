@@ -10,21 +10,54 @@ import torch.nn.utils.parametrize as parametrize
 
 
 # DFA pieces shared by EphemeralLinear (the ephemeral model) and DFALinear (the SimpleRNN
-# baseline), so the two models' DFA stays the same computation. Note: neither multiplies the
-# projected error by the layer's activation derivative; see README "Known issues".
+# baseline), so the two models' DFA stays the same computation. By default neither multiplies
+# the projected error by the layer's activation derivative; --dfa_fprime does, in both (Nøkland
+# 2016); see README "Known issues".
 
 def init_feedback_weights(vocab_size, out_features):
     """A layer's fixed random DFA feedback matrix B, [vocab, out]: xavier_normal_."""
     return torch.nn.init.xavier_normal_(torch.empty(vocab_size, out_features))
 
 
-def dfa_projected_error(error_signal, feedback_weights, is_last_layer):
+_INV_SQRT2 = 1 / math.sqrt(2)
+_INV_SQRT_2PI = 1 / math.sqrt(2 * math.pi)
+
+
+def dfa_activation_derivative(pre_activation, activation):
+    """f'(a), [B, out], for the nonlinearity that follows a layer, at its pre-activation a
+    (--dfa_fprime). 'gelu' is the exact (erf) GELU that F.gelu computes by default:
+    Phi(a) + a * phi(a). 'tanh': 1 - tanh(a)^2."""
+    if activation == 'gelu':
+        cdf = 0.5 * (1 + torch.erf(pre_activation * _INV_SQRT2))
+        pdf = torch.exp(-0.5 * pre_activation.square()) * _INV_SQRT_2PI
+        return cdf + pre_activation * pdf
+    if activation == 'tanh':
+        return 1 - torch.tanh(pre_activation).square()
+    raise ValueError(f"No DFA activation derivative for activation {activation!r}")
+
+
+def dfa_projected_error(error_signal, feedback_weights, is_last_layer, activation_derivative=None):
     """The error a layer's DFA update uses, [B, out]: the output error itself for a last layer
-    (i2o), else error_signal @ feedback_weights. error_signal is train.py's
+    (i2o), else error_signal @ feedback_weights, multiplied element-wise by
+    activation_derivative (f'(a) at the layer's pre-activation, [B, out]) when it is given
+    (--dfa_fprime; Nøkland 2016: delta_l = (B_l e) * f'(a_l)). error_signal is train.py's
     output_error, [B, vocab]; it is never modified, and a last layer gets that same object."""
     if is_last_layer:
         return error_signal
-    return error_signal @ feedback_weights
+    projected = error_signal @ feedback_weights
+    if activation_derivative is not None:
+        projected = projected * activation_derivative
+    return projected
+
+
+def dfa_layer_activation_derivative(layer):
+    """--dfa_fprime: f'(a) for a non-last layer (EphemeralLinear or DFALinear) at the
+    pre-activation its last forward recorded, or None (flag off, or a last layer, whose error is
+    the output error itself). layer.activation names the nonlinearity the model applies to the
+    layer's output ('gelu' for the trunk, 'tanh' for i2h)."""
+    if not layer.dfa_fprime or layer.is_last_layer:
+        return None
+    return dfa_activation_derivative(layer.pre_activation(), layer.activation)
 
 
 def dfa_per_sample_gradient(projected_error, input):
@@ -47,11 +80,20 @@ def recurrent_trunk_size(input_size, hidden_size):
     return input_size + hidden_size
 
 
-def regularized_weight(weight, unit_norm_weights, weight_clamp, norm_dims):
-    """Return weights normalized over norm_dims, then element-wise clamped; biases are excluded."""
-    if unit_norm_weights:
-        norms = torch.linalg.vector_norm(weight, ord=2, dim=norm_dims, keepdim=True)
-        weight = weight / (norms + 1e-6)
+def trunk_layer_norm(activations):
+    """--layer_norm: LayerNorm over the feature dimension of one trunk layer's post-GELU
+    activations, [B, width], with no learnable affine (no gain or bias, so no extra slow
+    parameters for DFA to train; the next layer's weights and bias can absorb any scale and
+    shift). Each row gets zero mean and unit variance (eps 1e-5, torch's default). It sits after
+    the activation, so it is exactly what the next layer (trunk, i2h or i2o) reads: that layer's
+    forward records it as its input trace, and the DFA outer product uses it."""
+    return F.layer_norm(activations, activations.shape[-1:])
+
+
+def regularized_weight(weight, weight_clamp):
+    """--weight_clamp: the weights element-wise clamped to [-c, c] (0 = off), in place; biases
+    are excluded. (--unit_norm_weights, which rescaled whole weight slices here first, was
+    removed in 2026-09; see README "Renamed flags".)"""
     if weight_clamp != 0:
         weight.clamp_(-weight_clamp, weight_clamp)
     return weight
@@ -91,7 +133,7 @@ def forget_keep(forget_rate, ephemeral_mask, slow_weight_decay=0.0):
 
 def clamp_fast_entries(weights, ephemeral_mask, fast_weight_clamp):
     """--fast_weight_clamp: clamp only the ephemeral entries of per_sample_weights [B, out, in]
-    to [-c, c], after --unit_norm_weights and --weight_clamp (0 = off). Slow entries are untouched."""
+    to [-c, c], after --weight_clamp (0 = off). Slow entries are untouched."""
     if fast_weight_clamp:
         weights = torch.where(ephemeral_mask.unsqueeze(0),
                               weights.clamp(-fast_weight_clamp, fast_weight_clamp), weights)
@@ -112,23 +154,22 @@ def dfa_output_error(output, target, criterion):
 
 def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral_mask,
                    forget_rate: float, learning_rate: float, update_clamp: float,
-                   unit_norm_weights: bool, weight_clamp: float, is_last_layer: bool,
+                   weight_clamp: float, is_last_layer: bool,
                    slow_weight_decay: float = 0.0, fast_weight_clamp: float = 0.0,
                    freeze_slow: bool = False):
     """One EphemeralLinear's whole DFA step, in place on weights and bias: the DFA gradient, the
-    update, normalization and weight clamp (apply_update), then forgetting (apply_forget_step).
+    update and weight clamp (apply_update), then forgetting (apply_forget_step).
     It is built from the same helpers as those methods, in the same order, so run eagerly it
     gives bit-identical results; --fused_update compiles it into one kernel per layer
     (EphemeralRNN.enable_fused_update), which never materializes the [B, out, in] gradient.
 
     freeze_slow (held-out evaluation, heldout.py): the ephemeral entries take exactly this step
     and every other entry keeps its value. Pass bias=None to freeze the bias too. The element-wise
-    clamps act entry by entry, so the fast entries come out as in training; --unit_norm_weights
-    would mix slow entries into them and is refused by EphemeralRNN.fast_only_dfa_step."""
+    clamps act entry by entry, so the fast entries come out as in training."""
     update = ephemeral_update(dfa_per_sample_gradient(projected_error, inputs), plasticity,
                               ephemeral_mask, update_clamp, is_last_layer)
     updated = clamp_fast_entries(
-        regularized_weight(weights + learning_rate * update, unit_norm_weights, weight_clamp, (1, 2)),
+        regularized_weight(weights + learning_rate * update, weight_clamp),
         ephemeral_mask, fast_weight_clamp)
     updated = updated * forget_keep(forget_rate, ephemeral_mask, slow_weight_decay)
     if freeze_slow:
@@ -206,15 +247,28 @@ class GradNormClipStats:
         return result
 
 
+def set_dfa_fprime(model, enabled):
+    """--dfa_fprime for EphemeralRNN or SimpleRNN: each non-output layer's projected DFA error is
+    multiplied by the derivative of the nonlinearity the model's forward applies to that layer's
+    output, at this step's pre-activation: gelu' for the trunk layers (F.gelu, exact erf form)
+    and tanh' for i2h (hidden_t = tanh(i2h(.))). i2o keeps the raw output error. --output_tanh
+    and the residual connection change only what i2o and i2h read, not any layer's own
+    nonlinearity, so they do not change the derivatives. Off (the default), nothing is computed
+    or recorded beyond what the models already do, and the step is unchanged."""
+    for layer in model.linear_layers:
+        layer.dfa_fprime, layer.activation = enabled, 'gelu'
+    model.i2h.dfa_fprime, model.i2h.activation = enabled, 'tanh'
+    model.i2o.dfa_fprime, model.i2o.activation = enabled, None
+
+
 class EphemeralLinear(nn.Linear):
-    def __init__(self, in_features, out_features, charset, bias=True, unit_norm_weights=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2, slow_weight_decay=0, fast_weight_clamp=0, slow_update_every=1):
+    def __init__(self, in_features, out_features, charset, bias=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2, slow_weight_decay=0, fast_weight_clamp=0, slow_update_every=1):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see apply_forget_step). The paper's "forgetting rate
         coefficient 0.7" is 1 - forget_rate, i.e. forget_rate = 0.3. Same meaning as --forget_rate.
         plasticity: alpha, the learning-rate multiplier on the ephemeral entries (--plasticity).
         ephemeral_fraction: fraction of entries that are ephemeral (--ephemeral_fraction).
-        unit_norm_weights, weight_clamp: applied after each update (--unit_norm_weights,
-        --weight_clamp; see _apply_regularization).
+        weight_clamp: applied after each update (--weight_clamp; see _apply_regularization).
         slow_update_every: --slow_update_every, 1 (every step), N or 'sequence'. Anything but 1
         allocates the window's accumulators (see accumulate_slow_gradient)."""
         super(EphemeralLinear, self).__init__(in_features, out_features, bias)
@@ -226,10 +280,13 @@ class EphemeralLinear(nn.Linear):
             # For DFA, we set it to False since we handle bias manually
             self.bias.requires_grad = (updater in ['backprop', 'bptt'])
 
-        self.unit_norm_weights = unit_norm_weights
         self.weight_clamp = weight_clamp
         self.updater = updater
         self.is_last_layer = is_last_layer
+        # --dfa_fprime (set by EphemeralRNN): scale the projected DFA error by f'(pre-activation),
+        # where activation names the nonlinearity the model applies to this layer's output.
+        self.dfa_fprime = False
+        self.activation = None
         self.in_traces = nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
         self.out_traces = nn.Parameter(torch.zeros(batch_size, out_features), requires_grad=requires_grad)
 
@@ -321,24 +378,37 @@ class EphemeralLinear(nn.Linear):
         self._fused_plasticity = None
         super()._load_from_state_dict(*args, **kwargs)
 
-    def start_sequence_wipe(self):
-        """Start of a sequence: set every sequence's per_sample_weights to the batch mean, then
-        zero the ephemeral entries (also in the unused base weight) and reset the time counter.
+    def start_sequence_wipe(self, wipe_fast=True):
+        """Start of a sequence: set every sequence's slow entries to the batch mean (consolidation),
+        then, if wipe_fast, zero the ephemeral entries (also in the unused base weight); reset the
+        time counter either way.
+
+        wipe_fast=False (--wipe_every N > 1, on the sequences between wipes) still averages the
+        slow entries, which is how the slow weights learn, but leaves each batch row's fast
+        entries as the previous sequence in that row left them (already forgotten at forget_rate
+        per step). The fast entries are not averaged across rows: each row's fast state carries
+        into the next sequence in the same row.
 
         With --slow_update_every sequence the slow entries are already one shared matrix (the
-        previous sequence ended with the batch-mean step, written to every copy), so they are
-        left exactly as they are: the mean of B equal copies can differ in the last bit."""
+        previous sequence ended with the batch-mean step, written to every copy), so the mean is
+        skipped and they are left exactly as they are: the mean of B equal copies can differ in
+        the last bit. The fast entries are wiped or kept as above."""
         if self.slow_update_every != "sequence":
             # Suppose per_sample_weights is of shape [B, out_features, in_features]
             # Aggregate across the batch (e.g., average) to get a single copy:
             aggregated = self.per_sample_weights.mean(dim=0, keepdim=True)
-            # Then set every sequence's copy in the batch to this aggregated value:
-            self.per_sample_weights.data.copy_(aggregated.expand_as(self.per_sample_weights))
-
-        # Apply the mask
-        # masked_fill_, not boolean indexing: the same values without a host sync.
-        self.weight.data.masked_fill_(self.ephemeral_mask, 0)
-        self.per_sample_weights.data.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
+            if wipe_fast:
+                # Then set every sequence's copy in the batch to this aggregated value:
+                self.per_sample_weights.data.copy_(aggregated.expand_as(self.per_sample_weights))
+            else:
+                # Slow entries take the batch mean; fast entries keep their per-row values.
+                self.per_sample_weights.data.copy_(torch.where(
+                    self.ephemeral_mask.unsqueeze(0), self.per_sample_weights.data,
+                    aggregated.expand_as(self.per_sample_weights)))
+        if wipe_fast:
+            # masked_fill_, not boolean indexing: the same values without a host sync.
+            self.weight.data.masked_fill_(self.ephemeral_mask, 0)
+            self.per_sample_weights.data.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
         self._retained_outputs = []
@@ -410,6 +480,10 @@ class EphemeralLinear(nn.Linear):
         self.in_traces.data = input
         self.out_traces.data = output
 
+    def pre_activation(self):
+        """This step's pre-activation (the output before the model's nonlinearity), [B, out]."""
+        return self.out_traces.data
+
     def populate_dfa_gradients(self, error_signal):
         """Populate gradients using DFA feedback weights for gradient-based update.
 
@@ -420,7 +494,8 @@ class EphemeralLinear(nn.Linear):
         directly to .grad after train.py clears the preceding DFA step's value."""
         # Project error signal using feedback weights (DFA-specific); last layers use it as is.
         # error_signal: [batch_size, vocab_size] -> projected_error: [batch_size, out_features]
-        projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer)
+        projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer,
+                                              dfa_layer_activation_derivative(self))
 
         # Store projected error for bias updates
         self._last_projected_error = projected_error
@@ -490,7 +565,7 @@ class EphemeralLinear(nn.Linear):
 
         # Update bias using the gradient if this is DFA
         self._update_bias_from_grad(learning_rate)
-        # Apply normalization and weight clipping if enabled
+        # Apply the weight clamps if enabled
         self._apply_regularization()
 
     def _update_bias_from_grad(self, learning_rate):
@@ -531,11 +606,10 @@ class EphemeralLinear(nn.Linear):
             self.bias.data += bias_update
 
     def _apply_regularization(self):
-        """Helper method to apply normalization and weight clipping."""
-        # Each sequence's [out, in] slice is rescaled independently. Plasticity, biases,
-        # feedback matrices, traces, and logged norms are intentionally excluded.
+        """--weight_clamp, then --fast_weight_clamp, on per_sample_weights. Plasticity, biases,
+        feedback matrices, traces, and logged norms are intentionally excluded."""
         self.per_sample_weights.data = clamp_fast_entries(
-            regularized_weight(self.per_sample_weights.data, self.unit_norm_weights, self.weight_clamp, (1, 2)),
+            regularized_weight(self.per_sample_weights.data, self.weight_clamp),
             self.ephemeral_mask, self.fast_weight_clamp)
 
 
@@ -543,7 +617,7 @@ class EphemeralLinear(nn.Linear):
         """Decays the ephemeral entries: w <- (1 - forget_rate * ephemeral_mask) * w, element-wise,
         so each call keeps
         1 - forget_rate of every ephemeral weight. train.py calls this after each update (after
-        the clamp and normalization too), as in the paper: w <- (1 - forget_rate) * (w - lr*alpha*g).
+        the clamps too), as in the paper: w <- (1 - forget_rate) * (w - lr*alpha*g).
         This is done through .data under no_grad to avoid recording the update in autograd."""
         with torch.no_grad():
             self.per_sample_weights.data.mul_(forget_keep(self.forget_rate, self.ephemeral_mask,
@@ -635,10 +709,11 @@ class EphemeralRNN(torch.nn.Module):
     def __init__(
         self, input_size, hidden_size, output_size, num_layers, charset,
         dropout_rate=0, residual_connection=False, init_type='zero',
-        unit_norm_weights=True, weight_clamp=0, updater='dfa',
+        weight_clamp=0, updater='dfa',
         plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2,
         enable_recurrence=True, retain_sequence_bias_grads=False,
-        slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0, slow_update_every=1
+        slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0, layer_norm=False,
+        dfa_fprime=False, slow_update_every=1
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -646,6 +721,8 @@ class EphemeralRNN(torch.nn.Module):
         BPTT (train.py sets it when --grad_norm_clip > 0).
         slow_weight_decay: --slow_weight_decay, applied with each forget step.
         output_tanh: --output_tanh, i2o reads tanh of the trunk instead of the trunk itself.
+        layer_norm: --layer_norm, trunk_layer_norm after each trunk layer's GELU.
+        dfa_fprime: --dfa_fprime, see set_dfa_fprime.
         slow_update_every: --slow_update_every (see windowed_dfa_step); 1 is the per-step update."""
         super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
@@ -663,16 +740,14 @@ class EphemeralRNN(torch.nn.Module):
             if updater != 'dfa':
                 raise ValueError(f"--slow_update_every {self.slow_update_every} supports only the DFA "
                                  f"updater, not {updater!r}")
-            if unit_norm_weights:
-                raise ValueError("--slow_update_every other than 1 does not support --unit_norm_weights: "
-                                 "it rescales each copy's slow and fast entries together, every step")
         self.pending_slow_steps = 0  # steps accumulated in the current --slow_update_every window
+        self.layer_norm = layer_norm
 
         # Using EphemeralLinear instead of Linear
         self.linear_layers = torch.nn.ModuleList([
             EphemeralLinear(
                 inner_size, inner_size, charset,
-                unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
+                weight_clamp=weight_clamp,
                 updater=updater, plasticity=plasticity,
                 batch_size=batch_size, forget_rate=forget_rate,
                 ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
@@ -682,7 +757,7 @@ class EphemeralRNN(torch.nn.Module):
         for _ in range(1, num_layers):
             self.linear_layers.append(EphemeralLinear(
                 inner_size, inner_size, charset,
-                unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
+                weight_clamp=weight_clamp,
                 updater=updater, plasticity=plasticity,
                 batch_size=batch_size, forget_rate=forget_rate,
                 ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
@@ -697,7 +772,7 @@ class EphemeralRNN(torch.nn.Module):
         # i2o is the slow-only emission head.
         self.i2h = EphemeralLinear(
             inner_size, hidden_size, charset,
-            unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
+            weight_clamp=weight_clamp,
             updater=updater, plasticity=plasticity,
             batch_size=batch_size, forget_rate=forget_rate,
             ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
@@ -705,7 +780,7 @@ class EphemeralRNN(torch.nn.Module):
         )
         self.i2o = EphemeralLinear(
             inner_size, output_size, charset,
-            unit_norm_weights=unit_norm_weights, weight_clamp=weight_clamp,
+            weight_clamp=weight_clamp,
             updater=updater, requires_grad=False, is_last_layer=True,
             plasticity=plasticity, batch_size=batch_size, forget_rate=forget_rate,
             ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
@@ -717,6 +792,7 @@ class EphemeralRNN(torch.nn.Module):
             layer.retain_sequence_bias_grads = retain_sequence_bias_grads
         self.grad_clip_stats = GradNormClipStats()
         self.fused_layer_step = None  # set by enable_fused_update (--fused_update)
+        set_dfa_fprime(self, dfa_fprime)
 
     def enable_fused_update(self, compile=True):
         """--fused_update: train.py's DFA step goes through fused_dfa_step. compile=False runs the
@@ -745,7 +821,7 @@ class EphemeralRNN(torch.nn.Module):
             self.fused_layer_step(
                 layer.per_sample_weights.data, None if layer.bias is None else layer.bias.data,
                 error, layer.in_traces.data, layer.fused_plasticity(), layer.ephemeral_mask,
-                layer.forget_rate, learning_rate, update_clamp, layer.unit_norm_weights,
+                layer.forget_rate, learning_rate, update_clamp,
                 layer.weight_clamp, layer.is_last_layer, layer.slow_weight_decay,
                 layer.fast_weight_clamp)
 
@@ -754,7 +830,8 @@ class EphemeralRNN(torch.nn.Module):
         norms (None without --grad_norm_clip). The clip uses the closed form for a rank-1
         gradient, |p_b x_b^T| = |p_b| |x_b|, and scales the projected errors."""
         layers = self.trained_layers()
-        projected = [dfa_projected_error(output_error, layer.feedback_weights, layer.is_last_layer)
+        projected = [dfa_projected_error(output_error, layer.feedback_weights, layer.is_last_layer,
+                                         dfa_layer_activation_derivative(layer))
                      for layer in layers]
         if grad_norm_clip <= 0:
             return projected, None
@@ -769,15 +846,10 @@ class EphemeralRNN(torch.nn.Module):
         return [error * scale.unsqueeze(1) for error in projected], norms
 
     def check_fast_only_step(self):
-        """fast_only_dfa_step needs the DFA updater and no --unit_norm_weights."""
+        """fast_only_dfa_step needs the DFA updater."""
         if self.updater != 'dfa':
             raise ValueError("held-out evaluation needs an EphemeralRNN trained with --updater dfa: "
                              "its fast writes are the DFA step")
-        if any(layer.unit_norm_weights for layer in self.trained_layers()):
-            raise ValueError(
-                "held-out evaluation does not support --unit_norm_weights: it rescales each "
-                "[out, in] slice as a whole, so a fast write would also rescale the frozen slow "
-                "entries, and keeping them frozen would give fast entries training never produced.")
 
     @torch.no_grad()
     def fast_only_dfa_step(self, output_error, learning_rate, update_clamp, grad_norm_clip=0):
@@ -797,7 +869,7 @@ class EphemeralRNN(torch.nn.Module):
         step = self.fused_layer_step or dfa_layer_step
         step(layer.per_sample_weights.data, None, error, layer.in_traces.data,
              layer.fused_plasticity(), layer.ephemeral_mask, layer.forget_rate, learning_rate,
-             update_clamp, layer.unit_norm_weights, layer.weight_clamp, layer.is_last_layer,
+             update_clamp, layer.weight_clamp, layer.is_last_layer,
              layer.slow_weight_decay, layer.fast_weight_clamp, True)
 
     @torch.no_grad()
@@ -844,7 +916,7 @@ class EphemeralRNN(torch.nn.Module):
         return [*self.linear_layers, self.i2h, self.i2o]
 
     def apply_regularization(self):
-        """--unit_norm_weights then --weight_clamp on every layer's per_sample_weights. DFA and
+        """--weight_clamp (and --fast_weight_clamp) on every layer's per_sample_weights. DFA and
         backprop apply it inside apply_update; BPTT calls this after its plain SGD step."""
         for layer in self.trained_layers():
             layer._apply_regularization()
@@ -892,6 +964,8 @@ class EphemeralRNN(torch.nn.Module):
         for layer in self.linear_layers:
             combined = layer(combined)
             combined = F.gelu(combined)
+            if self.layer_norm:
+                combined = trunk_layer_norm(combined)
             # combined = self.dropout(combined)
 
         # Add the residual (original combined tensor) to the output of the layers
@@ -961,12 +1035,13 @@ class EphemeralRNN(torch.nn.Module):
         self.i2h.store_grad_norms()
         self.i2o.store_grad_norms()
 
-    def start_sequence_wipe(self):
-        """Calls start_sequence_wipe on all EphemeralLinear layers."""
+    def start_sequence_wipe(self, wipe_fast=True):
+        """Calls start_sequence_wipe on all EphemeralLinear layers: the slow entries always take
+        the batch mean; the fast entries are zeroed only if wipe_fast (see --wipe_every)."""
         for layer in self.linear_layers:
-            layer.start_sequence_wipe()
-        self.i2h.start_sequence_wipe()
-        self.i2o.start_sequence_wipe()
+            layer.start_sequence_wipe(wipe_fast)
+        self.i2h.start_sequence_wipe(wipe_fast)
+        self.i2o.start_sequence_wipe(wipe_fast)
 
     def set_plasticity(self, value):
         """Sets the ephemeral plasticity (alpha) in all EphemeralLinear layers (used on resume)."""
@@ -1000,14 +1075,18 @@ class DFALinear(nn.Linear):
     start_sequence_wipe() sets every copy to the batch mean."""
 
     def __init__(self, in_features, out_features, bias=True,
-                 unit_norm_weights=False, weight_clamp=0, slow_weight_decay=0):
+                 weight_clamp=0, slow_weight_decay=0):
         super().__init__(in_features, out_features, bias)
-        self.unit_norm_weights = unit_norm_weights
         self.weight_clamp = weight_clamp
         self.slow_weight_decay = slow_weight_decay
         self.is_last_layer = False
         self.register_buffer('feedback_weights', None)  # set by enable_dfa for non-last layers
         self.in_traces = None  # this step's input, recorded by forward (not saved)
+        # --dfa_fprime (set by SimpleRNN): out_traces, this step's pre-activation, is then
+        # recorded too (not saved), and activation names the model's nonlinearity after this layer.
+        self.dfa_fprime = False
+        self.activation = None
+        self.out_traces = None
         self._last_projected_error = None
 
     def enable_dfa(self, vocab_size, is_last_layer):
@@ -1019,12 +1098,20 @@ class DFALinear(nn.Linear):
 
     def forward(self, input):
         self.in_traces = input.detach()
-        return super().forward(input)
+        output = super().forward(input)
+        if self.dfa_fprime:
+            self.out_traces = output.detach()
+        return output
+
+    def pre_activation(self):
+        """This step's pre-activation (the output before the model's nonlinearity), [B, out]."""
+        return self.out_traces
 
     def populate_dfa_gradients(self, error_signal):
         """Sets weight.grad to the batch mean of the per-sequence DFA gradients and bias.grad to
         the batch mean of the projected error. error_signal is not modified."""
-        projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer)
+        projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer,
+                                              dfa_layer_activation_derivative(self))
         self._last_projected_error = projected_error
         self.weight.grad = dfa_per_sample_gradient(projected_error, self.in_traces).mean(dim=0)
         if self.bias is not None:
@@ -1041,8 +1128,7 @@ class DFALinear(nn.Linear):
             self.apply_regularization()
 
     def apply_regularization(self):
-        self.weight.data = regularized_weight(
-            self.weight.data, self.unit_norm_weights, self.weight_clamp, (0, 1))
+        self.weight.data = regularized_weight(self.weight.data, self.weight_clamp)
         # --slow_weight_decay after every update, as the ephemeral model's forget step decays its
         # slow entries (every SimpleRNN weight is slow). Biases are excluded in both models.
         if self.slow_weight_decay:
@@ -1052,11 +1138,12 @@ class DFALinear(nn.Linear):
 class SimpleRNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1,
                  init_type='zero', enable_recurrence=True, updater=None,
-                 residual_connection=False, unit_norm_weights=False, weight_clamp=0,
-                 slow_weight_decay=0, output_tanh=False):
+                 residual_connection=False, weight_clamp=0,
+                 slow_weight_decay=0, output_tanh=False, layer_norm=False, dfa_fprime=False):
         """updater: 'dfa' gives the hidden layers and i2h fixed random DFA feedback matrices (drawn
         after every layer is initialised, so the layers start the same as under the other
-        updaters at the same seed). Other values leave it a plain backprop/BPTT model."""
+        updaters at the same seed). Other values leave it a plain backprop/BPTT model.
+        dfa_fprime: --dfa_fprime, see set_dfa_fprime."""
         super(SimpleRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -1064,13 +1151,13 @@ class SimpleRNN(nn.Module):
         self.init_type = init_type
         self.enable_recurrence = enable_recurrence
         self.output_tanh = output_tanh
+        self.layer_norm = layer_norm  # --layer_norm, as in EphemeralRNN (trunk_layer_norm)
         self.updater = updater
         self.residual_connection = residual_connection
         inner_size = recurrent_trunk_size(input_size, hidden_size)
 
         # Standard linear layers (DFALinear is an nn.Linear that can also take DFA updates)
-        layer_options = {"unit_norm_weights": unit_norm_weights, "weight_clamp": weight_clamp,
-                         "slow_weight_decay": slow_weight_decay}
+        layer_options = {"weight_clamp": weight_clamp, "slow_weight_decay": slow_weight_decay}
         self.linear_layers = nn.ModuleList([DFALinear(inner_size, inner_size, **layer_options)])
         for _ in range(1, num_layers):
             self.linear_layers.append(DFALinear(inner_size, inner_size, **layer_options))
@@ -1087,13 +1174,14 @@ class SimpleRNN(nn.Module):
             for layer in self.dfa_layers():
                 layer.enable_dfa(output_size, is_last_layer=layer is self.i2o)
         self.grad_clip_stats = GradNormClipStats()
+        set_dfa_fprime(self, dfa_fprime)
 
     def dfa_layers(self):
         """Every layer DFA trains, in update order: the hidden layers, i2h, then i2o."""
         return [*self.linear_layers, self.i2h, self.i2o]
 
     def apply_regularization(self):
-        """Apply the configured weights-only normalization and clamp after an SGD step."""
+        """Apply the configured weight clamp (and slow-weight decay) after an SGD step."""
         with torch.no_grad():
             for layer in self.dfa_layers():
                 layer.apply_regularization()
@@ -1108,6 +1196,8 @@ class SimpleRNN(nn.Module):
         for layer in self.linear_layers:
             combined = layer(combined)
             combined = F.gelu(combined)
+            if self.layer_norm:
+                combined = trunk_layer_norm(combined)
             # combined = self.dropout(combined)
 
         if self.residual_connection:
