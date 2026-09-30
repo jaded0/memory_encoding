@@ -257,19 +257,33 @@ class EphemeralLinear(nn.Linear):
 
         self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
 
-    def start_sequence_wipe(self):
-        """Start of a sequence: set every sequence's per_sample_weights to the batch mean, then
-        zero the ephemeral entries (also in the unused base weight) and reset the time counter."""
+    def start_sequence_wipe(self, wipe_fast=True):
+        """Start of a sequence: set every sequence's slow entries to the batch mean (consolidation),
+        then, if wipe_fast, zero the ephemeral entries (also in the unused base weight); reset the
+        time counter either way.
+
+        wipe_fast=False (--wipe_every N > 1, on the sequences between wipes) still averages the
+        slow entries, which is how the slow weights learn, but leaves each batch row's fast
+        entries as the previous sequence in that row left them (already forgotten at forget_rate
+        per step). The fast entries are not averaged across rows: each row's fast state carries
+        into the next sequence in the same row."""
         # Suppose per_sample_weights is of shape [B, out_features, in_features]
         # Aggregate across the batch (e.g., average) to get a single copy:
         aggregated = self.per_sample_weights.mean(dim=0, keepdim=True)
-        # Then set every sequence's copy in the batch to this aggregated value:
-        self.per_sample_weights.data.copy_(aggregated.expand_as(self.per_sample_weights))
+        if wipe_fast:
+            # Then set every sequence's copy in the batch to this aggregated value:
+            self.per_sample_weights.data.copy_(aggregated.expand_as(self.per_sample_weights))
 
-        # Apply the mask
-        # masked_fill_, not boolean indexing: the same values without a host sync.
-        self.weight.data.masked_fill_(self.ephemeral_mask, 0)
-        self.per_sample_weights.data.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
+            # Apply the mask
+            # masked_fill_, not boolean indexing: the same values without a host sync.
+            self.weight.data.masked_fill_(self.ephemeral_mask, 0)
+            self.per_sample_weights.data.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
+        else:
+            # Slow entries take the batch mean; fast entries keep their per-row values. The mean
+            # of the slow entries is the same whether or not the fast entries are wiped.
+            self.per_sample_weights.data.copy_(torch.where(
+                self.ephemeral_mask.unsqueeze(0), self.per_sample_weights.data,
+                aggregated.expand_as(self.per_sample_weights)))
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
         self._retained_outputs = []
@@ -791,12 +805,13 @@ class EphemeralRNN(torch.nn.Module):
         self.i2h.store_grad_norms()
         self.i2o.store_grad_norms()
 
-    def start_sequence_wipe(self):
-        """Calls start_sequence_wipe on all EphemeralLinear layers."""
+    def start_sequence_wipe(self, wipe_fast=True):
+        """Calls start_sequence_wipe on all EphemeralLinear layers: the slow entries always take
+        the batch mean; the fast entries are zeroed only if wipe_fast (see --wipe_every)."""
         for layer in self.linear_layers:
-            layer.start_sequence_wipe()
-        self.i2h.start_sequence_wipe()
-        self.i2o.start_sequence_wipe()
+            layer.start_sequence_wipe(wipe_fast)
+        self.i2h.start_sequence_wipe(wipe_fast)
+        self.i2o.start_sequence_wipe(wipe_fast)
 
     def set_plasticity(self, value):
         """Sets the ephemeral plasticity (alpha) in all EphemeralLinear layers (used on resume)."""
