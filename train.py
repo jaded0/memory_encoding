@@ -352,7 +352,8 @@ def build_model(config, charset, n_characters):
                          dropout_rate=0, enable_recurrence=config['enable_recurrence'], updater=updater,
                          residual_connection=config['residual_connection'],
                          unit_norm_weights=config['unit_norm_weights'], weight_clamp=config['weight_clamp'],
-                         slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'])
+                         slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
+                         layer_norm=config['layer_norm'])
     if config['model_type'] == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{updater}' updater.")
         return EphemeralRNN(
@@ -364,7 +365,7 @@ def build_model(config, charset, n_characters):
             enable_recurrence=config['enable_recurrence'],
             retain_sequence_bias_grads=config['grad_norm_clip'] > 0 and updater != 'dfa',
             slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
-            fast_weight_clamp=config['fast_weight_clamp'])
+            fast_weight_clamp=config['fast_weight_clamp'], layer_norm=config['layer_norm'])
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -454,6 +455,11 @@ def build_parser():
                         help='Both models: the output head i2o reads tanh of the shared trunk instead of '
                              'the trunk (removed from the default on 2026-09-24; see '
                              'docs/tapped_vs_forked_rnn_report.md).')
+    parser.add_argument('--layer_norm', type=str2bool, nargs='?', const=True, default=False,
+                        help='Both models: LayerNorm (no learnable gain or bias) on each trunk layer\'s '
+                             'activations, after the GELU, so the next layer (and its DFA input trace) '
+                             'reads the normalized features. The input and the recurrent state are not '
+                             'normalized.')
     parser.add_argument('--fused_update', type=str2bool, nargs='?', const=True, default=False,
                         help='Ephemeral + DFA only: compile each layer\'s DFA update, clamps and forgetting '
                              'into one kernel (torch.compile). The same math with different rounding, about '
@@ -716,6 +722,7 @@ def main():
             "fused_update": args.fused_update,
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
+            "layer_norm": args.layer_norm,
             "fast_weight_clamp": args.fast_weight_clamp,
             "fused_update_active": config["fused_update_active"],
             "n_hidden": args.hidden_size,

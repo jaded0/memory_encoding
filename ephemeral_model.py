@@ -47,6 +47,16 @@ def recurrent_trunk_size(input_size, hidden_size):
     return input_size + hidden_size
 
 
+def trunk_layer_norm(activations):
+    """--layer_norm: LayerNorm over the feature dimension of one trunk layer's post-GELU
+    activations, [B, width], with no learnable affine (no gain or bias, so no extra slow
+    parameters for DFA to train; the next layer's weights and bias can absorb any scale and
+    shift). Each row gets zero mean and unit variance (eps 1e-5, torch's default). It sits after
+    the activation, so it is exactly what the next layer (trunk, i2h or i2o) reads: that layer's
+    forward records it as its input trace, and the DFA outer product uses it."""
+    return F.layer_norm(activations, activations.shape[-1:])
+
+
 def regularized_weight(weight, unit_norm_weights, weight_clamp, norm_dims):
     """Return weights normalized over norm_dims, then element-wise clamped; biases are excluded."""
     if unit_norm_weights:
@@ -518,14 +528,15 @@ class EphemeralRNN(torch.nn.Module):
         unit_norm_weights=True, weight_clamp=0, updater='dfa',
         plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2,
         enable_recurrence=True, retain_sequence_bias_grads=False,
-        slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0
+        slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0, layer_norm=False
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
         retain_sequence_bias_grads: needed by clip_grad_norm_per_sequence under backprop and
         BPTT (train.py sets it when --grad_norm_clip > 0).
         slow_weight_decay: --slow_weight_decay, applied with each forget step.
-        output_tanh: --output_tanh, i2o reads tanh of the trunk instead of the trunk itself."""
+        output_tanh: --output_tanh, i2o reads tanh of the trunk instead of the trunk itself.
+        layer_norm: --layer_norm, trunk_layer_norm after each trunk layer's GELU."""
         super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -537,6 +548,7 @@ class EphemeralRNN(torch.nn.Module):
         self.forget_rate = forget_rate
         self.enable_recurrence = enable_recurrence
         self.output_tanh = output_tanh
+        self.layer_norm = layer_norm
 
         # Using EphemeralLinear instead of Linear
         self.linear_layers = torch.nn.ModuleList([
@@ -719,6 +731,8 @@ class EphemeralRNN(torch.nn.Module):
         for layer in self.linear_layers:
             combined = layer(combined)
             combined = F.gelu(combined)
+            if self.layer_norm:
+                combined = trunk_layer_norm(combined)
             # combined = self.dropout(combined)
 
         # Add the residual (original combined tensor) to the output of the layers
@@ -880,7 +894,7 @@ class SimpleRNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1,
                  init_type='zero', enable_recurrence=True, updater=None,
                  residual_connection=False, unit_norm_weights=False, weight_clamp=0,
-                 slow_weight_decay=0, output_tanh=False):
+                 slow_weight_decay=0, output_tanh=False, layer_norm=False):
         """updater: 'dfa' gives the hidden layers and i2h fixed random DFA feedback matrices (drawn
         after every layer is initialised, so the layers start the same as under the other
         updaters at the same seed). Other values leave it a plain backprop/BPTT model."""
@@ -891,6 +905,7 @@ class SimpleRNN(nn.Module):
         self.init_type = init_type
         self.enable_recurrence = enable_recurrence
         self.output_tanh = output_tanh
+        self.layer_norm = layer_norm  # --layer_norm, as in EphemeralRNN (trunk_layer_norm)
         self.updater = updater
         self.residual_connection = residual_connection
         inner_size = recurrent_trunk_size(input_size, hidden_size)
@@ -935,6 +950,8 @@ class SimpleRNN(nn.Module):
         for layer in self.linear_layers:
             combined = layer(combined)
             combined = F.gelu(combined)
+            if self.layer_norm:
+                combined = trunk_layer_norm(combined)
             # combined = self.dropout(combined)
 
         if self.residual_connection:

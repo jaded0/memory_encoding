@@ -118,6 +118,23 @@ Two further stabilizers, both off by default:
 - `--output_tanh` (both models): the output head reads `tanh` of the shared trunk. This was the
   default until 2026-09-24 (`docs/tapped_vs_forked_rnn_report.md`).
 
+One normalization, off by default:
+- `--layer_norm` (both models, every updater): LayerNorm over the features of each trunk
+  layer's output, after its GELU: `combined = LN(gelu(layer(combined)))`, zero mean and unit
+  variance per sequence and step (`trunk_layer_norm`, eps 1e-5). It has no learnable gain or
+  bias, so it adds no parameters: an affine pair would be slow weights that DFA has no rule
+  for, and the next layer's weights and bias can absorb any scale and shift. It goes after the
+  activation because DFA's outer product uses each layer's recorded input (`in_traces`): placed
+  there, the normalized features are exactly what the next trunk layer, `i2h` and `i2o` read and
+  what their DFA gradients use, and every such input row has norm √(input + hidden), which bounds
+  the input side of the rank-1 DFA gradient `p·xᵀ`. The first layer's input (`x_t`, `h_{t−1}`) is
+  not normalized, nor is the `tanh`-bounded recurrent state; with `--residual_connection` the
+  residual is added after the last LayerNorm. DFA still omits every activation derivative, the
+  LayerNorm Jacobian included (see Known issues); backprop and BPTT differentiate through it.
+  A resume refuses a changed `--layer_norm`. Held-out evaluation supports it. The paper's
+  "layer normalization actively harms performance" (`paper/paper_content.tex:195`) had no code
+  behind it before this flag.
+
 Ephemeral BPTT ignores `--ephemeral_update_clamp` by design: it clamps only fast-weight updates,
 and under BPTT those are wiped before any forward pass reads them (see Known issues).
 
@@ -334,6 +351,7 @@ python train.py --updater bptt --model_type ephemeral
 - `--forget_rate`: Fraction of each ephemeral weight removed per step
 - `--ephemeral_update_clamp` (ephemeral model) / `--grad_norm_clip` (`rnn` baseline): update clamp or gradient-norm clip
 - `--unit_norm_weights`, `--weight_clamp`: rescaling and clamping of the weights after each update
+- `--layer_norm`: affine-free LayerNorm on each trunk layer's post-GELU activations (both models)
 - `--resume` / `--resume_checkpoint PATH`: Resume from `latest_checkpoint.pth`, or from an explicit checkpoint
 - `--batch_size`: Number of sequences processed together
 - `--seed`: Seed Python, NumPy, Torch, dataset shuffling, and DataLoader sampling (unset = drawn from the OS; see below)

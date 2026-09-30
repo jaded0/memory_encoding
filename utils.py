@@ -163,6 +163,8 @@ def str2bool(v):
 # 12: --grad_norm_clip also clips the ephemeral model (per sequence, before alpha), and ephemeral
 #     BPTT applies unit_norm_weights and weight_clamp after its update, as does backprop to a
 #     layer with no gradient (i2h).
+#     (--layer_norm was added at 12 without a bump: off, the forward pass and the golden trace are
+#     unchanged, and load_checkpoint refuses a resume that changes it.)
 CHECKPOINT_CODE_VERSION = 12
 
 
@@ -361,6 +363,10 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     # slurm_run.sh keys checkpoints by job name and always resumes, so a reused job name for a
     # new experiment would silently continue an old checkpoint. A different dataset or
     # learning rate means a different experiment. Checked only if the checkpoint recorded them.
+    # --layer_norm changes the forward pass, so a resume may not switch it. A checkpoint from
+    # before the flag existed had none.
+    if config.get('layer_norm', False) != loaded_config.get('layer_norm', False):
+        mismatches.append(('layer_norm', config.get('layer_norm', False), loaded_config.get('layer_norm', False)))
     for key in ('dataset', 'learning_rate'):
         if key in loaded_config and config.get(key) != loaded_config[key]:
             mismatches.append((key, config.get(key), loaded_config[key]))
