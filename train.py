@@ -501,7 +501,7 @@ def build_parser():
     parser.add_argument('--heldout_eval_every', type=int, default=0,
                         help='Ephemeral + DFA, synthetic datasets: every N iterations, evaluate '
                              '--heldout_batches batches of the validation split with the slow weights '
-                             'frozen, under the observed, strict and no_fast protocols (heldout.py), '
+                             'frozen, under the observed, strict, no_fast and free_running protocols (heldout.py), '
                              'logged as heldout_<protocol>/<metric> with the next interval (0 = off). '
                              'The training run itself is unchanged.')
     parser.add_argument('--heldout_batches', type=int, default=4,
