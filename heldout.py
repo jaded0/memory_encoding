@@ -4,24 +4,32 @@ Each episode starts as a training sequence does (start_sequence_wipe: the batch'
 become their mean and the fast entries zero). Each step then predicts, is scored, and only
 then sees its target, which writes the fast entries with the training DFA step
 (EphemeralRNN.fast_only_dfa_step: the same helpers, clamps and forgetting as train.py). Slow
-entries, biases and the output head i2o stay bit for bit. Three protocols:
+entries, biases and the output head i2o stay bit for bit. Four protocols:
 
   observed  every target writes, as in training (teacher-forced writes during the answer)
   strict    no writes from the step that predicts the first recall target onward; the fast
             entries still forget each step, so "no writes" is not "no change"
   no_fast   no fast weights at all: they stay at their wiped zeros (the slow scaffold alone)
+  free_running
+            self-targets (efference copy): observed up to the step that predicts the first
+            recall target (strict's boundary); from there on the model's own prediction replaces
+            the truth, both as the next input and as the write's target (DFA error softmax -
+            onehot(own prediction)), so a confident prediction writes little. Predictions are
+            still scored against the true targets. The own prediction is the argmax, or a sample
+            from the softmax with free_running_sample (a seed); padding steps stay padding.
 
 Metrics are metrics.IntervalMetrics over the episodes (recall_acc, recall_acc_lag_<k>, ...)
 plus first_answer_acc, the accuracy on each episode's first recall target, which no answer
 write can have helped in any protocol.
 
 Used by train.py --heldout_eval_every N, or on a saved checkpoint:
-    python heldout.py --checkpoint PATH [--dataset NAME] [--protocols observed strict no_fast]
+    python heldout.py --checkpoint PATH [--dataset NAME] [--protocols observed strict no_fast free_running]
 """
 import argparse
 import json
 
 import torch
+import torch.nn.functional as F
 from datasets import load_from_disk
 
 from ephemeral_model import EphemeralRNN, dfa_output_error
@@ -30,16 +38,19 @@ from preprocess import OneHotCollate, is_synthetic, preprocess_rows
 from reproducibility import capture_rng_state, restore_rng_state
 from utils import initialize_charset, load_checkpoint, model_input, read_checkpoint, upgrade_legacy_config
 
-PROTOCOLS = ("observed", "strict", "no_fast")
+PROTOCOLS = ("observed", "strict", "no_fast", "free_running")
 
 
 @torch.no_grad()
-def evaluate_held_out(model, onehot, update_mask, config):
+def evaluate_held_out(model, onehot, update_mask, config, self_from=None, sample_generator=None):
     """Runs one batch of episodes, onehot [B, T, vocab], prequentially with frozen slow weights.
     update_mask [B, T-1] (bool) selects the steps whose target writes the fast entries; None
     means no fast weights. config supplies input_mode, pe_matrix, learning_rate,
-    ephemeral_update_clamp and grad_norm_clip, as in training. Returns the predictions and
-    per-sequence losses, [T-1, B] each (IntervalMetrics's layout). Changes the model's state."""
+    ephemeral_update_clamp and grad_norm_clip, as in training. self_from [B] (free_running): from
+    that step on, a row's own prediction (argmax, or a softmax sample drawn with
+    sample_generator) is its next input and its write target, in place of the truth. Returns the
+    predictions and per-sequence losses against the true targets, [T-1, B] each
+    (IntervalMetrics's layout). Changes the model's state."""
     if not isinstance(model, EphemeralRNN):
         raise ValueError("held-out evaluation needs an EphemeralRNN (SimpleRNN has no fast weights)")
     model.check_fast_only_step()
@@ -49,13 +60,28 @@ def evaluate_held_out(model, onehot, update_mask, config):
     if update_mask is not None and (update_mask.dtype != torch.bool or update_mask.shape != (batch, steps)):
         raise ValueError(f"update_mask must be boolean [{batch}, {steps}]")
     criterion = torch.nn.CrossEntropyLoss(reduction='none')
+    stream = onehot
+    if self_from is not None:
+        stream, self_from = onehot.clone(), self_from.to(onehot.device)
     model.start_sequence_wipe()
     hidden = model.initHidden(batch)
     preds, losses = [], []
     for i in range(steps):
-        output, hidden = model(model_input(onehot, i, config['input_mode'], config['pe_matrix']), hidden)
-        loss, output_error = dfa_output_error(output, onehot[:, i + 1], criterion)
-        preds.append(output.argmax(dim=1))
+        output, hidden = model(model_input(stream, i, config['input_mode'], config['pe_matrix']), hidden)
+        pred = output.argmax(dim=1)
+        if self_from is not None:
+            if sample_generator is not None:
+                probs = torch.softmax(output.detach().float(), dim=1)
+                sampled = torch.multinomial(probs, 1, generator=sample_generator)[:, 0]
+                pred = torch.where(self_from <= i, sampled, pred)
+            # The own prediction becomes the next input and this step's target (not on padding).
+            own = (self_from <= i) & (onehot[:, i + 1].sum(dim=1) > 0)
+            stream[own, i + 1] = F.one_hot(pred[own], stream.shape[-1]).to(stream.dtype)
+            _, output_error = dfa_output_error(output, stream[:, i + 1], criterion)
+            loss = criterion(output.detach(), onehot[:, i + 1])  # scored against the truth
+        else:
+            loss, output_error = dfa_output_error(output, onehot[:, i + 1], criterion)
+        preds.append(pred)
         losses.append(loss.detach())
         if update_mask is not None:
             # A masked row gets zero error: its fast entries only forget, as a padding step does.
@@ -77,14 +103,17 @@ def update_mask(protocol, texts, dataset, onehot):
     mask = torch.ones(batch, steps, dtype=torch.bool)
     if protocol == "strict":
         mask &= torch.arange(steps) < first_recall_steps(texts, dataset, steps)[:, None]
-    elif protocol != "observed":
+    elif protocol not in ("observed", "free_running"):
         raise ValueError(f"unknown protocol {protocol!r}; choose from {PROTOCOLS}")
     return mask.to(onehot.device)
 
 
-def evaluate_protocols(model, batches, config, dataset, protocols=PROTOCOLS, prefix="heldout"):
+def evaluate_protocols(model, batches, config, dataset, protocols=PROTOCOLS, prefix="heldout",
+                       free_running_sample=None):
     """Every protocol over batches [(texts, onehot)], as {f'{prefix}_{protocol}/{metric}': value}.
-    The model's whole state is restored afterwards, so a training run continues unchanged."""
+    free_running_sample (a seed) makes free_running sample its own predictions from the softmax
+    instead of taking the argmax. The model's whole state is restored afterwards, so a training
+    run continues unchanged (sampling uses its own generator, not the global RNG)."""
     saved = {key: value.clone() for key, value in model.state_dict().items()}
     was_training = model.training
     model.eval()
@@ -93,8 +122,14 @@ def evaluate_protocols(model, batches, config, dataset, protocols=PROTOCOLS, pre
         for protocol in protocols:
             interval = IntervalMetrics(dataset)
             first_hits = first_count = 0
+            generator = None
+            if protocol == "free_running" and free_running_sample is not None:
+                generator = torch.Generator(device=batches[0][1].device).manual_seed(free_running_sample)
             for texts, onehot in batches:
-                preds, losses = evaluate_held_out(model, onehot, update_mask(protocol, texts, dataset, onehot), config)
+                steps = onehot.shape[1] - 1
+                self_from = first_recall_steps(texts, dataset, steps) if protocol == "free_running" else None
+                preds, losses = evaluate_held_out(model, onehot, update_mask(protocol, texts, dataset, onehot),
+                                                  config, self_from, generator)
                 interval.update(texts, onehot, preds, losses)
                 steps = preds.shape[0]
                 first = first_recall_steps(texts, dataset, steps).to(preds.device)
@@ -141,6 +176,9 @@ def main(argv=None):
     parser.add_argument("--batches", type=int, default=0, help="batches to evaluate (0 = the whole split)")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--json", default=None, help="also write the results here")
+    parser.add_argument("--free_running_sample", type=int, default=None, metavar="SEED",
+                        help="free_running samples its own predictions from the softmax with this seed "
+                             "(default: the argmax)")
     args = parser.parse_args(argv)
 
     from train import build_model, build_parser, positional_encoding  # train.py imports this module
@@ -156,9 +194,11 @@ def main(argv=None):
     config["pe_matrix"] = positional_encoding(config["positional_encoding_dim"], args.device)
     dataset = args.dataset or config["dataset"]
     batches = load_heldout_batches(dataset, config["batch_size"], args.batches, args.device, args.split)
-    results = evaluate_protocols(model, batches, config, dataset, args.protocols)
+    results = evaluate_protocols(model, batches, config, dataset, args.protocols,
+                                 free_running_sample=args.free_running_sample)
     header = {"checkpoint": args.checkpoint, "iteration": next_iter - 1, "dataset": dataset,
-              "split": args.split, "episodes": len(batches) * config["batch_size"]}
+              "split": args.split, "episodes": len(batches) * config["batch_size"],
+              "free_running_sample": args.free_running_sample}
     print(json.dumps(header))
     for key, value in results.items():
         print(f"  {key}: {value:.4f}")

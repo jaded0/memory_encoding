@@ -164,6 +164,91 @@ class ProtocolTest(unittest.TestCase):
                              results[f"heldout_{protocol}/recall_acc_lag_1"])
             self.assertIn(f"heldout_{protocol}/recall_acc_lag_3", results)
 
+    def trace(self, protocol, texts, model=None, oracle=False, generator=None):
+        """Runs protocol on texts, recording each step's model input and output and the fast
+        entries before each step (and at the end). oracle replaces each output with confident
+        logits on the true next character: a perfect model."""
+        model = model or build()
+        onehot = episodes(texts)
+        inputs, outputs, states = [], [], []
+        fast = lambda: [layer.per_sample_weights[:, layer.ephemeral_mask].clone() for layer in model.linear_layers]
+
+        def before(_, args):
+            inputs.append(args[0].clone())
+            states.append(fast())
+
+        def after(_, __, out):
+            if oracle:
+                out = (20.0 * onehot[:, len(inputs)], out[1])
+            outputs.append(out[0].clone())
+            return out
+
+        hooks = [model.register_forward_pre_hook(before), model.register_forward_hook(after)]
+        steps = onehot.shape[1] - 1
+        self_from = heldout.first_recall_steps(texts, DATASET, steps) if protocol == "free_running" else None
+        preds, losses = heldout.evaluate_held_out(
+            model, onehot, heldout.update_mask(protocol, texts, DATASET, onehot), config(), self_from, generator)
+        for hook in hooks:
+            hook.remove()
+        states.append(fast())
+        return preds, losses, inputs, outputs, states
+
+    def test_free_running_is_observed_up_to_the_recall_boundary(self):
+        free, observed = self.trace("free_running", TEXTS), self.trace("observed", TEXTS)
+        firsts = heldout.first_recall_steps(TEXTS, DATASET, 6).tolist()
+        self.assertEqual(firsts, [2, 3])
+        for row, first in enumerate(firsts):
+            # Up to and including the step that predicts the first recall target: the same inputs,
+            # predictions, losses, and fast entries before each step.
+            for step in range(first + 1):
+                self.assertTrue(torch.equal(free[2][step][row], observed[2][step][row]))
+                self.assertEqual(free[0][step, row], observed[0][step, row])
+                self.assertEqual(free[1][step, row], observed[1][step, row])
+                for mine, theirs in zip(free[4][step], observed[4][step]):
+                    self.assertTrue(torch.equal(mine[row], theirs[row]))
+        # Not vacuous: the untrained model's own predictions are not the truth, so they diverge.
+        self.assertFalse(all(torch.equal(a, b) for a, b in zip(free[4][-1], observed[4][-1])))
+
+    def test_inputs_after_the_boundary_are_the_models_own_predictions(self):
+        preds, losses, inputs, outputs, _ = self.trace("free_running", TEXTS)
+        onehot, vocab = episodes(TEXTS), len(CHARSET)
+        wrong = 0
+        for row, first in enumerate(heldout.first_recall_steps(TEXTS, DATASET, 6).tolist()):
+            for step in range(first, 5):
+                self.assertTrue(torch.equal(inputs[step + 1][row, :vocab], F.one_hot(preds[step, row], vocab).float()))
+                if step > first:  # last_two: the previous character is also the model's own
+                    self.assertTrue(torch.equal(inputs[step + 1][row, vocab:2 * vocab],
+                                                F.one_hot(preds[step - 1, row], vocab).float()))
+            for step in range(first, 6):
+                # Scored against the true target, not the model's own.
+                truth = onehot[row, step + 1].argmax()
+                expected = F.cross_entropy(outputs[step][row:row + 1], truth[None])
+                torch.testing.assert_close(losses[step, row], expected)
+                wrong += int(preds[step, row] != truth)
+        self.assertGreater(wrong, 0)
+
+    def test_a_perfect_model_free_runs_exactly_as_observed(self):
+        free, observed = self.trace("free_running", TEXTS, oracle=True), self.trace("observed", TEXTS, oracle=True)
+        for mine, theirs in zip(free[:2], observed[:2]):
+            self.assertTrue(torch.equal(mine, theirs))
+        for step in range(len(free[2])):
+            self.assertTrue(torch.equal(free[2][step], observed[2][step]))
+        for mine, theirs in zip(free[4][-1], observed[4][-1]):
+            self.assertTrue(torch.equal(mine, theirs))
+        self.assertTrue(any(entries.abs().sum() > 0 for entries in free[4][-1]))
+
+    def test_sampling_is_seeded_and_leaves_the_global_rng_alone(self):
+        runs = []
+        for _ in range(2):
+            model = build()
+            before = torch.get_rng_state()
+            runs.append(self.trace("free_running", TEXTS, model, generator=torch.Generator().manual_seed(5))[0])
+            self.assertTrue(torch.equal(torch.get_rng_state(), before))
+        self.assertTrue(torch.equal(runs[0], runs[1]))
+        results = heldout.evaluate_protocols(build(), [(TEXTS, episodes(TEXTS))], config(), DATASET,
+                                             ["free_running"], free_running_sample=5)
+        self.assertIn("heldout_free_running/recall_acc", results)
+
     def test_rejected_models(self):
         onehot = episodes(TEXTS)
         with self.assertRaisesRegex(ValueError, "unit_norm_weights"):

@@ -501,13 +501,14 @@ training. `--output_tanh` and the input settings come through the same forward p
 `--slow_weight_decay` does not act. `tests/test_heldout.py` pins the fast entries against
 `train_batch`'s own step with slow updates undone: bit for bit, and to rounding with
 `--grad_norm_clip`, since training clips the materialized gradient and the evaluator uses the
-closed form. There are three protocols:
+closed form. There are four protocols:
 
 | Protocol | Fast writes |
 | --- | --- |
 | `observed` | Every target writes, as in training: teacher-forced writes during the answer |
 | `strict` | None from the step that predicts the first recall target onward. The fast entries still forget every step |
 | `no_fast` | No fast weights: they stay at their wiped zeros, leaving only the slow scaffold |
+| `free_running` | Self-targets (efference copy). As `observed` up to `strict`'s boundary; from the step that predicts the first recall target on, the model's own argmax replaces the truth as the next input and as the write's target (error softmax − onehot(own)). Still scored against the true targets. `heldout.py --free_running_sample SEED` samples from the softmax instead |
 
 Each protocol reports `metrics.IntervalMetrics` (`recall_acc`, `recall_acc_lag_<k>`,
 `final_char_acc`, ...) under `heldout_<protocol>/`. It also reports `first_answer_acc`,
@@ -519,7 +520,8 @@ accuracy on each episode's first recall target, which no answer write can have h
   is restored afterwards and the evaluation draws no random numbers, so the training run is
   unchanged.
 - A saved checkpoint: `python heldout.py --checkpoint PATH [--dataset NAME] [--protocols
-  observed strict no_fast] [--batches 0] [--json out.json]`. The default is the whole
+  observed strict no_fast free_running] [--free_running_sample SEED] [--batches 0] [--json
+  out.json]`. The default is the whole
   validation split.
 - Only `--model_type ephemeral --updater dfa` is supported. `--unit_norm_weights` is refused.
   It rescales each `[out, in]` slice as a whole, so a fast write would also rescale the frozen
