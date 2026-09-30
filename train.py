@@ -371,7 +371,7 @@ def build_model(config, charset, n_characters):
                          residual_connection=config['residual_connection'],
                          weight_clamp=config['weight_clamp'],
                          slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
-                         layer_norm=config['layer_norm'])
+                         layer_norm=config['layer_norm'], dfa_fprime=config.get('dfa_fprime', False))
     if config['model_type'] == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{updater}' updater.")
         return EphemeralRNN(
@@ -383,7 +383,8 @@ def build_model(config, charset, n_characters):
             enable_recurrence=config['enable_recurrence'],
             retain_sequence_bias_grads=config['grad_norm_clip'] > 0 and updater != 'dfa',
             slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
-            fast_weight_clamp=config['fast_weight_clamp'], layer_norm=config['layer_norm'])
+            fast_weight_clamp=config['fast_weight_clamp'], layer_norm=config['layer_norm'],
+            dfa_fprime=config.get('dfa_fprime', False))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -510,6 +511,10 @@ def build_parser():
                              'activations, after the GELU, so the next layer (and its DFA input trace) '
                              'reads the normalized features. The input and the recurrent state are not '
                              'normalized.')
+    parser.add_argument('--dfa_fprime', type=str2bool, nargs='?', const=True, default=False,
+                        help='DFA only, both models: multiply each non-output layer\'s projected error by '
+                             'its activation derivative at the current pre-activation (Nokland 2016): '
+                             'gelu\' for the trunk layers, tanh\' for i2h; i2o keeps the raw error.')
     parser.add_argument('--fused_update', type=str2bool, nargs='?', const=True, default=False,
                         help='Ephemeral + DFA only: compile each layer\'s DFA update, clamps and forgetting '
                              'into one kernel (torch.compile). The same math with different rounding, about '
@@ -590,6 +595,8 @@ def check_argument_combinations(args, parser):
         parser.error("--wipe_every must be at least 1.")
     if args.wipe_every > 1 and args.model_type != 'ephemeral':
         parser.error("--wipe_every > 1 needs --model_type ephemeral (SimpleRNN has no fast weights).")
+    if args.dfa_fprime and args.updater != 'dfa':
+        parser.error("--dfa_fprime applies only to --updater dfa.")
     if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa "
                      "(see EphemeralRNN.check_fast_only_step).")
@@ -777,6 +784,7 @@ def main():
             "ephemeral_update_clamp": args.ephemeral_update_clamp,
             "grad_norm_clip": args.grad_norm_clip,
             "fused_update": args.fused_update,
+            "dfa_fprime": args.dfa_fprime,
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
             "layer_norm": args.layer_norm,
