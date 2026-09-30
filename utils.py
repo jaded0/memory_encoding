@@ -364,6 +364,11 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     for key in ('dataset', 'learning_rate'):
         if key in loaded_config and config.get(key) != loaded_config[key]:
             mismatches.append((key, config.get(key), loaded_config[key]))
+    # --slow_update_every changes when the slow weights learn, so a run cannot switch it on resume
+    # (a checkpoint from before the flag was per-step, 1). Checked only if this run records it.
+    if 'slow_update_every' in config and config['slow_update_every'] != loaded_config.get('slow_update_every', 1):
+        mismatches.append(('slow_update_every', config['slow_update_every'],
+                           loaded_config.get('slow_update_every', 1)))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")

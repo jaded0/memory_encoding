@@ -1,6 +1,6 @@
 # train.py
 import torch
-from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error
+from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
@@ -111,7 +111,12 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             losses.append(loss.detach())
 
             # Apply DFA updates
-            if isinstance(rnn, EphemeralRNN) and rnn.fused_layer_step is not None and not state.get('log_norms_now', False):
+            if isinstance(rnn, EphemeralRNN) and rnn.slow_update_every != 1:
+                # --slow_update_every N or sequence: this step writes the fast entries; the slow
+                # step is accumulated and applied every N steps and at the end of the sequence.
+                rnn.windowed_dfa_step(output_error, config["learning_rate"], config["ephemeral_update_clamp"],
+                                      config.get('grad_norm_clip', 0), log_norms=state.get('log_norms_now', False))
+            elif isinstance(rnn, EphemeralRNN) and rnn.fused_layer_step is not None and not state.get('log_norms_now', False):
                 # --fused_update: the same step as the branch below, one kernel per layer. Steps that
                 # log update norms take the branch below, which materializes the update.
                 rnn.fused_dfa_step(output_error, config["learning_rate"], config["ephemeral_update_clamp"],
@@ -303,6 +308,10 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 all_outputs.append(output[0])
                 all_labels.append(final_char[0])
 
+    if updater == 'dfa' and isinstance(rnn, EphemeralRNN) and rnn.slow_update_every != 1:
+        # --slow_update_every: the sequence's last (or only) window is applied before it ends.
+        rnn.apply_pending_slow_update(config["learning_rate"])
+
     # Calculate final loss
     if updater == 'dfa' and losses:
         stacked_losses = torch.stack(losses)
@@ -364,7 +373,8 @@ def build_model(config, charset, n_characters):
             enable_recurrence=config['enable_recurrence'],
             retain_sequence_bias_grads=config['grad_norm_clip'] > 0 and updater != 'dfa',
             slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
-            fast_weight_clamp=config['fast_weight_clamp'])
+            fast_weight_clamp=config['fast_weight_clamp'],
+            slow_update_every=config.get('slow_update_every', 1))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -459,6 +469,14 @@ def build_parser():
                              'into one kernel (torch.compile). The same math with different rounding, about '
                              '1e-7 relative per step. Needs compute capability 7.0+; a P100 falls back '
                              'to the unfused step. Norm-logging steps always run unfused.')
+    parser.add_argument('--slow_update_every', type=parse_slow_update_every, default=1,
+                        help='Ephemeral + DFA: how often the slow parameters (slow entries, i2o, biases) '
+                             'take their DFA step, in steps (characters), or "sequence". 1 = every step '
+                             '(the per-step path, unchanged). N > 1: the fast entries still change every '
+                             'step; each sequence\'s slow gradients are summed over N steps and applied '
+                             'together (and at the end of each sequence). sequence: slow parameters are '
+                             'frozen within a sequence, and the batch mean of the per-sequence sums is '
+                             'applied at its end. See README "Update rate of the slow weights".')
     parser.add_argument('--heldout_eval_every', type=int, default=0,
                         help='Ephemeral + DFA, synthetic datasets: every N iterations, evaluate '
                              '--heldout_batches batches of the validation split with the slow weights '
@@ -524,6 +542,10 @@ def resolve_deprecated_args(args, parser):
 
 
 def check_argument_combinations(args, parser):
+    if args.slow_update_every != 1 and (args.model_type != 'ephemeral' or args.updater != 'dfa'
+                                        or args.unit_norm_weights):
+        parser.error("--slow_update_every other than 1 supports only --model_type ephemeral --updater dfa, "
+                     "without --unit_norm_weights (it rescales slow and fast entries together every step).")
     if args.fused_update and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--fused_update supports only --model_type ephemeral --updater dfa.")
     if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'
@@ -714,6 +736,7 @@ def main():
             "ephemeral_update_clamp": args.ephemeral_update_clamp,
             "grad_norm_clip": args.grad_norm_clip,
             "fused_update": args.fused_update,
+            "slow_update_every": args.slow_update_every,
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
             "fast_weight_clamp": args.fast_weight_clamp,

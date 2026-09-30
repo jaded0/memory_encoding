@@ -60,9 +60,16 @@ def regularized_weight(weight, unit_norm_weights, weight_clamp, norm_dims):
 def ephemeral_update(gradient, plasticity, ephemeral_mask, update_clamp, is_last_layer):
     """The update a layer's per_sample_weights take, before the learning rate, [B, out, in]:
     -plasticity * gradient, with the ephemeral entries clamped element-wise to
-    [-update_clamp, update_clamp] (0 = off). A last layer (i2o) has no ephemeral entries: -gradient."""
+    [-update_clamp, update_clamp] (0 = off). A last layer (i2o) has no ephemeral entries: -gradient.
+
+    plasticity is the layer's [out, in] tensor, or a float alpha (EphemeralLinear.fused_plasticity):
+    alpha on the mask and 1 elsewhere, built from the bool mask. Those are the tensor's float32
+    values, so the result is bit-identical, and a compiled step reads one byte per entry (the
+    mask) instead of the mask plus the four-byte plasticity."""
     update = -gradient
     if not is_last_layer:
+        if not torch.is_tensor(plasticity):
+            plasticity = torch.where(ephemeral_mask, plasticity, 1.0)
         update = update * plasticity.unsqueeze(0)
         if update_clamp > 0:
             update = torch.where(ephemeral_mask.unsqueeze(0),
@@ -131,6 +138,33 @@ def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral
         bias.add_(dfa_bias_update(projected_error, learning_rate))
 
 
+def parse_slow_update_every(value):
+    """--slow_update_every: a positive integer N (steps) or 'sequence'."""
+    if isinstance(value, str) and value.strip().lower() == "sequence":
+        return "sequence"
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = 0
+    if isinstance(value, bool) or number < 1 or str(number) != str(value).strip():
+        raise ValueError(f"--slow_update_every takes a positive integer or 'sequence', not {value!r}")
+    return number
+
+
+def slow_window_step(weights, gradient_sum, ephemeral_mask, learning_rate: float, weight_clamp: float,
+                     decay: float):
+    """The slow entries' update at the end of a --slow_update_every window, [..., out, in]:
+    weights - learning_rate * gradient_sum, then --weight_clamp, then the window's
+    --slow_weight_decay (decay = (1 - slow_weight_decay) ** steps; 1 = off): the order a per-step
+    update takes. Fast entries (the mask) keep their values."""
+    updated = weights - learning_rate * gradient_sum
+    if weight_clamp != 0:
+        updated = updated.clamp(-weight_clamp, weight_clamp)
+    if decay != 1:
+        updated = updated * decay
+    return torch.where(ephemeral_mask, weights, updated)
+
+
 def per_sequence_clip_scale(norms, max_norm):
     """--grad_norm_clip's factor for each sequence, [B]: min(1, max_norm / (norm + 1e-6)), the
     same coefficient torch.nn.utils.clip_grad_norm_ uses. It is exactly 1 where the clip does
@@ -173,14 +207,16 @@ class GradNormClipStats:
 
 
 class EphemeralLinear(nn.Linear):
-    def __init__(self, in_features, out_features, charset, bias=True, unit_norm_weights=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2, slow_weight_decay=0, fast_weight_clamp=0):
+    def __init__(self, in_features, out_features, charset, bias=True, unit_norm_weights=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2, slow_weight_decay=0, fast_weight_clamp=0, slow_update_every=1):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see apply_forget_step). The paper's "forgetting rate
         coefficient 0.7" is 1 - forget_rate, i.e. forget_rate = 0.3. Same meaning as --forget_rate.
         plasticity: alpha, the learning-rate multiplier on the ephemeral entries (--plasticity).
         ephemeral_fraction: fraction of entries that are ephemeral (--ephemeral_fraction).
         unit_norm_weights, weight_clamp: applied after each update (--unit_norm_weights,
-        --weight_clamp; see _apply_regularization)."""
+        --weight_clamp; see _apply_regularization).
+        slow_update_every: --slow_update_every, 1 (every step), N or 'sequence'. Anything but 1
+        allocates the window's accumulators (see accumulate_slow_gradient)."""
         super(EphemeralLinear, self).__init__(in_features, out_features, bias)
 
         # Set requires_grad for the base class parameters
@@ -250,15 +286,54 @@ class EphemeralLinear(nn.Linear):
         print(f"Number of non-zero values in self.plasticity: {torch.count_nonzero(self.plasticity).item()}")
 
         self.plasticity_feedback_weights = nn.Parameter(torch.nn.init.xavier_normal_(torch.empty(len(charset), out_features)), requires_grad=requires_grad)
+        self._fused_plasticity = None  # cache for fused_plasticity()
+
+        # --slow_update_every other than 1: the slow gradients of the current window, in
+        # non-persistent buffers (never in checkpoints: a window always ends with its sequence,
+        # so they are zero between batches). 'sequence' keeps their batch sum, [out, in]; N keeps
+        # each step's projected error and input, [N, B, out] and [N, B, in], since each copy then
+        # takes its own sequence's sum. No random numbers are drawn.
+        self.slow_update_every = parse_slow_update_every(slow_update_every)
+        if self.slow_update_every == "sequence":
+            self.register_buffer('slow_grad_sum', torch.zeros(out_features, in_features), persistent=False)
+        elif self.slow_update_every != 1:
+            n = self.slow_update_every
+            self.register_buffer('window_errors', torch.zeros(n, batch_size, out_features), persistent=False)
+            self.register_buffer('window_inputs', torch.zeros(n, batch_size, in_features), persistent=False)
+        if self.slow_update_every != 1 and bias:
+            self.register_buffer('bias_grad_sum', torch.zeros(out_features), persistent=False)
+
+    def fused_plasticity(self):
+        """alpha as a float when the plasticity tensor is alpha on the mask and 1 elsewhere (always
+        so in training: see set_plasticity), else the tensor itself. The fused and windowed steps
+        pass it to ephemeral_update, which rebuilds the same values from the bool mask. Checked
+        once (a host sync) and cached until set_plasticity or a state-dict load."""
+        if self._fused_plasticity is None:
+            with torch.no_grad():
+                plasticity, mask = self.plasticity, self.ephemeral_mask
+                fast = plasticity[mask]
+                alpha = float(fast[0]) if fast.numel() else 1.0
+                uniform = bool((fast == alpha).all()) and bool((plasticity[~mask] == 1).all())
+            self._fused_plasticity = alpha if uniform else plasticity
+        return self._fused_plasticity
+
+    def _load_from_state_dict(self, *args, **kwargs):
+        self._fused_plasticity = None
+        super()._load_from_state_dict(*args, **kwargs)
 
     def start_sequence_wipe(self):
         """Start of a sequence: set every sequence's per_sample_weights to the batch mean, then
-        zero the ephemeral entries (also in the unused base weight) and reset the time counter."""
-        # Suppose per_sample_weights is of shape [B, out_features, in_features]
-        # Aggregate across the batch (e.g., average) to get a single copy:
-        aggregated = self.per_sample_weights.mean(dim=0, keepdim=True)
-        # Then set every sequence's copy in the batch to this aggregated value:
-        self.per_sample_weights.data.copy_(aggregated.expand_as(self.per_sample_weights))
+        zero the ephemeral entries (also in the unused base weight) and reset the time counter.
+
+        With --slow_update_every sequence the slow entries are already one shared matrix (the
+        previous sequence ended with the batch-mean step, written to every copy), so they are
+        left exactly as they are: the mean of B equal copies can differ in the last bit."""
+        if self.slow_update_every != "sequence":
+            # Suppose per_sample_weights is of shape [B, out_features, in_features]
+            # Aggregate across the batch (e.g., average) to get a single copy:
+            aggregated = self.per_sample_weights.mean(dim=0, keepdim=True)
+            # Then set every sequence's copy in the batch to this aggregated value:
+            self.per_sample_weights.data.copy_(aggregated.expand_as(self.per_sample_weights))
 
         # Apply the mask
         # masked_fill_, not boolean indexing: the same values without a host sync.
@@ -267,6 +342,50 @@ class EphemeralLinear(nn.Linear):
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
         self._retained_outputs = []
+
+    def accumulate_slow_gradient(self, projected_error, slot):
+        """--slow_update_every other than 1: adds this step's DFA gradient (projected_error [B, out]
+        times the input trace) to the window instead of applying it. 'sequence' adds the batch sum
+        sum_b p_b x_b^T to slow_grad_sum [out, in] (one GEMM, no [B, out, in] tensor); N stores
+        the step in window slot `slot`. The bias share, the batch mean of the projected error,
+        goes to bias_grad_sum. Every entry is accumulated; only the slow ones are ever applied."""
+        inputs = self.in_traces.data
+        if self.slow_update_every == "sequence":
+            self.slow_grad_sum.addmm_(projected_error.t(), inputs)
+        else:
+            self.window_errors[slot].copy_(projected_error)
+            self.window_inputs[slot].copy_(inputs)
+        if self.bias is not None:
+            self.bias_grad_sum.add_(projected_error.mean(dim=0))
+
+    def apply_slow_window(self, learning_rate, steps):
+        """Ends a --slow_update_every window of `steps` steps: the slow entries and the bias take
+        the accumulated step, and the accumulators are zeroed.
+
+        'sequence': the batch mean of the per-sequence sums, S <- S - lr * (1/B) sum_b sum_t g_bt,
+        written to every copy, so the slow entries stay one shared matrix. N: each copy takes its
+        own sequence's sum, w_b <- w_b - lr * sum_t g_bt, which is what `steps` per-step updates
+        give without the drift in between (start_sequence_wipe still averages the copies). Then
+        --weight_clamp, then --slow_weight_decay as (1 - d) ** steps, so a window decays as much as
+        `steps` per-step updates. The bias takes -lr times the summed batch-mean projected errors."""
+        if steps == 0:
+            return
+        weights = self.per_sample_weights.data
+        decay = (1 - self.slow_weight_decay) ** steps if self.slow_weight_decay else 1.0
+        if self.slow_update_every == "sequence":
+            shared = slow_window_step(weights[0], self.slow_grad_sum / self.batch_size, self.ephemeral_mask,
+                                      learning_rate, self.weight_clamp, decay)
+            weights.copy_(torch.where(self.ephemeral_mask, weights, shared.unsqueeze(0)))
+            self.slow_grad_sum.zero_()
+        else:
+            # [B, out, steps] @ [B, steps, in]: each sequence's own summed gradient
+            gradient_sum = torch.bmm(self.window_errors[:steps].permute(1, 2, 0),
+                                     self.window_inputs[:steps].transpose(0, 1))
+            weights.copy_(slow_window_step(weights, gradient_sum, self.ephemeral_mask.unsqueeze(0),
+                                           learning_rate, self.weight_clamp, decay))
+        if self.bias is not None:
+            self.bias.data.add_(-learning_rate * self.bias_grad_sum)
+            self.bias_grad_sum.zero_()
 
     def forward(self, input):
         batch_size = input.size(0)
@@ -509,6 +628,7 @@ class EphemeralLinear(nn.Linear):
         with torch.no_grad():
             # Only update plasticity values where the mask is True (ephemeral weights)
             self.plasticity.data[self.ephemeral_mask] = value
+            self._fused_plasticity = None
             print(f"Set plasticity to {value} for {torch.sum(self.ephemeral_mask).item()} ephemeral weights")
 
 class EphemeralRNN(torch.nn.Module):
@@ -518,14 +638,15 @@ class EphemeralRNN(torch.nn.Module):
         unit_norm_weights=True, weight_clamp=0, updater='dfa',
         plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2,
         enable_recurrence=True, retain_sequence_bias_grads=False,
-        slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0
+        slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0, slow_update_every=1
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
         retain_sequence_bias_grads: needed by clip_grad_norm_per_sequence under backprop and
         BPTT (train.py sets it when --grad_norm_clip > 0).
         slow_weight_decay: --slow_weight_decay, applied with each forget step.
-        output_tanh: --output_tanh, i2o reads tanh of the trunk instead of the trunk itself."""
+        output_tanh: --output_tanh, i2o reads tanh of the trunk instead of the trunk itself.
+        slow_update_every: --slow_update_every (see windowed_dfa_step); 1 is the per-step update."""
         super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -537,6 +658,15 @@ class EphemeralRNN(torch.nn.Module):
         self.forget_rate = forget_rate
         self.enable_recurrence = enable_recurrence
         self.output_tanh = output_tanh
+        self.slow_update_every = parse_slow_update_every(slow_update_every)
+        if self.slow_update_every != 1:
+            if updater != 'dfa':
+                raise ValueError(f"--slow_update_every {self.slow_update_every} supports only the DFA "
+                                 f"updater, not {updater!r}")
+            if unit_norm_weights:
+                raise ValueError("--slow_update_every other than 1 does not support --unit_norm_weights: "
+                                 "it rescales each copy's slow and fast entries together, every step")
+        self.pending_slow_steps = 0  # steps accumulated in the current --slow_update_every window
 
         # Using EphemeralLinear instead of Linear
         self.linear_layers = torch.nn.ModuleList([
@@ -546,7 +676,7 @@ class EphemeralRNN(torch.nn.Module):
                 updater=updater, plasticity=plasticity,
                 batch_size=batch_size, forget_rate=forget_rate,
                 ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
-            fast_weight_clamp=fast_weight_clamp
+            fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every
             )
         ])
         for _ in range(1, num_layers):
@@ -556,7 +686,7 @@ class EphemeralRNN(torch.nn.Module):
                 updater=updater, plasticity=plasticity,
                 batch_size=batch_size, forget_rate=forget_rate,
                 ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
-            fast_weight_clamp=fast_weight_clamp
+            fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every
             ))
 
         # Dropout layers
@@ -571,7 +701,7 @@ class EphemeralRNN(torch.nn.Module):
             updater=updater, plasticity=plasticity,
             batch_size=batch_size, forget_rate=forget_rate,
             ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
-            fast_weight_clamp=fast_weight_clamp
+            fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every
         )
         self.i2o = EphemeralLinear(
             inner_size, output_size, charset,
@@ -579,7 +709,7 @@ class EphemeralRNN(torch.nn.Module):
             updater=updater, requires_grad=False, is_last_layer=True,
             plasticity=plasticity, batch_size=batch_size, forget_rate=forget_rate,
             ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
-            fast_weight_clamp=fast_weight_clamp
+            fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every
         )
         self.softmax = torch.nn.LogSoftmax(dim=1)
         self.updater = updater
@@ -614,7 +744,7 @@ class EphemeralRNN(torch.nn.Module):
             layer._last_projected_error = error
             self.fused_layer_step(
                 layer.per_sample_weights.data, None if layer.bias is None else layer.bias.data,
-                error, layer.in_traces.data, layer.plasticity, layer.ephemeral_mask,
+                error, layer.in_traces.data, layer.fused_plasticity(), layer.ephemeral_mask,
                 layer.forget_rate, learning_rate, update_clamp, layer.unit_norm_weights,
                 layer.weight_clamp, layer.is_last_layer, layer.slow_weight_decay,
                 layer.fast_weight_clamp)
@@ -656,15 +786,58 @@ class EphemeralRNN(torch.nn.Module):
         biases and i2o stay bit for bit, and --slow_weight_decay does not act. Rows whose
         output_error is zero only forget. Used by heldout.py; it records no clip statistics."""
         self.check_fast_only_step()
-        step = self.fused_layer_step or dfa_layer_step
         projected, _ = self.dfa_step_errors(output_error, grad_norm_clip)
         for layer, error in zip(self.trained_layers(), projected):
             if layer.is_last_layer:
                 continue  # i2o has no ephemeral entries: the frozen step would leave it unchanged
-            step(layer.per_sample_weights.data, None, error, layer.in_traces.data,
-                 layer.plasticity, layer.ephemeral_mask, layer.forget_rate, learning_rate,
-                 update_clamp, layer.unit_norm_weights, layer.weight_clamp, layer.is_last_layer,
-                 layer.slow_weight_decay, layer.fast_weight_clamp, True)
+            self._fast_entry_step(layer, error, learning_rate, update_clamp)
+
+    def _fast_entry_step(self, layer, error, learning_rate, update_clamp):
+        """dfa_layer_step with freeze_slow: this step on the ephemeral entries only (bias frozen)."""
+        step = self.fused_layer_step or dfa_layer_step
+        step(layer.per_sample_weights.data, None, error, layer.in_traces.data,
+             layer.fused_plasticity(), layer.ephemeral_mask, layer.forget_rate, learning_rate,
+             update_clamp, layer.unit_norm_weights, layer.weight_clamp, layer.is_last_layer,
+             layer.slow_weight_decay, layer.fast_weight_clamp, True)
+
+    @torch.no_grad()
+    def windowed_dfa_step(self, output_error, learning_rate, update_clamp, grad_norm_clip=0,
+                          log_norms=False):
+        """The DFA step under --slow_update_every N or 'sequence' (train.py's DFA branch).
+
+        The fast entries take this step's update exactly as under the per-step update (the same
+        projected errors, --grad_norm_clip, alpha, clamps and forgetting, through dfa_layer_step
+        with freeze_slow, as fast_only_dfa_step), fused if --fused_update. Everything slow (the
+        slow entries of every layer, i2o included, and every bias) is left as it is, and this
+        step's gradient is accumulated instead (accumulate_slow_gradient). After N steps, and at
+        the end of every sequence (train.py calls apply_pending_slow_update), the window's sum is
+        applied (EphemeralLinear.apply_slow_window). log_norms also records the per-step update
+        norms the per-step path logs (the slow part as the would-be per-step update)."""
+        projected, norms = self.dfa_step_errors(output_error, grad_norm_clip)
+        if norms is not None:
+            self.grad_clip_stats.record(norms, grad_norm_clip)
+        slot = self.pending_slow_steps
+        for layer, error in zip(self.trained_layers(), projected):
+            layer._last_projected_error = error
+            if log_norms:
+                layer._log_update_norms(ephemeral_update(
+                    dfa_per_sample_gradient(error, layer.in_traces.data), layer.plasticity,
+                    layer.ephemeral_mask, update_clamp, layer.is_last_layer))
+            layer.accumulate_slow_gradient(error, slot)
+            if not layer.is_last_layer:
+                self._fast_entry_step(layer, error, learning_rate, update_clamp)
+        self.pending_slow_steps += 1
+        if self.pending_slow_steps == self.slow_update_every:
+            self.apply_pending_slow_update(learning_rate)
+
+    @torch.no_grad()
+    def apply_pending_slow_update(self, learning_rate):
+        """Applies the current --slow_update_every window's accumulated slow step (if any) to
+        every layer and starts a new window. train.py calls it at the end of every sequence, so
+        a window never spans a wipe and nothing is pending between batches (or in a checkpoint)."""
+        for layer in self.trained_layers():
+            layer.apply_slow_window(learning_rate, self.pending_slow_steps)
+        self.pending_slow_steps = 0
 
     def trained_layers(self):
         """Every EphemeralLinear, in update order: the hidden layers, i2h, then i2o."""
