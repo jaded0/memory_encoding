@@ -5,7 +5,7 @@
 # array task:
 #   kv           ephemeral DFA on kv_unique_{2,4,8} and kv_reassign_{2,4}, with held-out recall
 #                (heldout.py) every 250k.
-#   kv_bptt      SimpleRNN + BPTT with recurrence on, at the same lr, on kv_unique_4 and
+#   kv_bptt      SimpleRNN + BPTT with recurrence on (Adam 1e-4, clip 1, residual), on kv_unique_4 and
 #                kv_reassign_4.
 # Every run logs recall_acc and the answer classes kv_correct / kv_stale / kv_wrong_key /
 # kv_other (metrics.IntervalMetrics).
@@ -54,7 +54,8 @@ model=(--model_type ephemeral --updater dfa --enable_recurrence false --fused_up
 lr=1e-4 plasticity=3e4 fraction=0.1 extra=()
 case $arm in
     kv) extra=(--heldout_eval_every "$heldout_every" --heldout_batches 4) ;;
-    kv_bptt) model=(--model_type rnn --updater bptt --enable_recurrence true --fused_update false) ;;
+    kv_bptt) model=(--model_type rnn --updater bptt --enable_recurrence true --fused_update false)
+                 extra=(--optimizer adam --grad_norm_clip 1 --residual_connection true) ;;
     *) echo "Unknown arm $arm"; exit 1 ;;
 esac
 
@@ -69,7 +70,7 @@ export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python
 export HF_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
-export TORCHINDUCTOR_CACHE_DIR=${TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID:-local}
+export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID:-local}_XXXXXX")
 
 echo "Array job: ${SLURM_ARRAY_JOB_ID:-local}_${task_id} (restart count ${SLURM_RESTART_COUNT:-0})"
 echo "Run: $arm, $dataset, seed $seed, $n_iters iterations, lr $lr, plasticity $plasticity," \

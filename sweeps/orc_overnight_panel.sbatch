@@ -3,7 +3,7 @@
 # DFA, recurrence off, lr 1e-4, plasticity 1e5, 10% fast, no clamp, no output tanh). One run per
 # array task, in priority order:
 #   4pal         4-char reversal at the recipe. 2025 never ran it past 495k (untested, not failed).
-#   4pal_bptt    SimpleRNN + BPTT with recurrence on, the same task, at the recipe's lr.
+#   4pal_bptt    SimpleRNN + BPTT with recurrence on, the same task (Adam 1e-4, clip 1, residual).
 #   a7e4         3-char reversal at plasticity 7e4, the 2025 cell that converged 7 of 7.
 #   bptt         SimpleRNN + BPTT on 3-char at lr 1e-4: the fair head-to-head at the good recipe.
 #   no_fast      the recipe with --ephemeral_fraction 0: no fast memory.
@@ -114,6 +114,7 @@ case $arm in
     tanh_lr3e-4) lr=3e-4 plasticity=3e4 extra=(--output_tanh true) ;;
     tanh_lr1e-3) lr=1e-3 plasticity=1e4 extra=(--output_tanh true) ;;
     4pal_bptt|bptt|keyrecall_bptt) model=(--model_type rnn --updater bptt --enable_recurrence true --fused_update false)
+                    extra=(--optimizer adam --grad_norm_clip 1 --residual_connection true)
                     heldout=false ;;
     no_fast) fraction=0 heldout=false ;;
     keyrecall_no_fast) plasticity=3e4 fraction=0 heldout=false ;;

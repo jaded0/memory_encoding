@@ -70,7 +70,7 @@ export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python
 export HF_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
-export TORCHINDUCTOR_CACHE_DIR=${TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID:-local}
+export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID:-local}_XXXXXX")
 
 echo "Array job: ${SLURM_ARRAY_JOB_ID:-local}_${task_id} (restart count ${SLURM_RESTART_COUNT:-0})"
 echo "Run: $arm, $dataset, seed $seed, $n_iters iterations, lr $lr, plasticity $plasticity," \
