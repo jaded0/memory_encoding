@@ -46,7 +46,9 @@ export WANDB_EXECUTABLE=$CONDA_PREFIX/bin/python
 export HF_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
-export TORCHINDUCTOR_CACHE_DIR=${TMPDIR:-/tmp}/inductor_$SLURM_JOB_ID
+# A fresh directory per start: a requeued job keeps its job ID, and on some nodes (cs-1-5,
+# 2026-09-30) the previous start's directory was not writable, so torch.compile failed.
+export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID:-local}_XXXXXX")
 
 echo "Array job: ${SLURM_ARRAY_JOB_ID}_${task_id}"
 echo "Arm: $arm (fused_update $fused), seed $seed, code $COMMIT"
