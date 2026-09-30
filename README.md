@@ -569,6 +569,24 @@ accuracy on each episode's first recall target, which no answer write can have h
   strings also occur in training. Held out means fresh fast state and frozen slow weights, not
   unseen strings.
 
+### Key-value memory tasks (`kv_tasks.py`)
+
+Associative recall as ordinary synthetic datasets (`--dataset kv_unique_4`, ...). An episode is
+K key-value pairs (keys `a`-`j`, values `0`-`9`), optional distractors `.`, the query marker
+`?`, a key and its value, which is the only recall target:
+
+| Dataset | Example | Answer |
+| --- | --- | --- |
+| `kv_unique_<K>` | `c7a2h2e9?a2` | K distinct keys (Ba et al. 2016); values may repeat |
+| `kv_reassign_<K>` | `d5d1j0d6?d6` | the queried key is assigned c ~ U{1..K} times; its latest value, which differs from the previous one |
+| `..._d<D>` | `c7a2h2e9........?a2` | D distractors before `?` (lag + D) |
+
+Generate with `python kv_tasks.py [names] [--seed 0]` (default: K = 2, 4, 8 in both modes;
+1,000,000 / 5,000 / 20,000 rows, seeded per split). Besides `recall_acc` (chance 1/10), the
+metrics classify each answer as `kv_correct`, `kv_stale` (an earlier value of the queried key),
+`kv_wrong_key` (a value bound to another key in the episode) or `kv_other`, in training and
+under each held-out protocol.
+
 ### Advanced Features
 
 - **Positional Encoding**: Add positional information with `--positional_encoding_dim N`
@@ -600,6 +618,7 @@ regenerate them.
 - `train.py`: Main training script; `train_batch` runs one batch under any of the three updaters
 - `ephemeral_model.py`: Implementation of EphemeralRNN and EphemeralLinear layers
 - `preprocess.py`: Data loading and preprocessing utilities
+- `synth_datasets.py`, `kv_tasks.py`: synthetic dataset generators (`kv_tasks.py`: key-value tasks)
 - `reproducibility.py`: Seed resolution, RNG and data-stream checkpoint state
 - `utils.py`: Helper functions and utilities
 - `tests/`: Test suite; `tests/README.md` has the golden-trace contract, pinned known behaviours and regeneration log
