@@ -96,9 +96,14 @@ before the flag existed count as `sgd`).
 With `sgd` at the default lr 1e-4, the 3-layer SimpleRNN learns very slowly through its state:
 each step's transition is four linear layers (three GELU trunk layers and `i2h`) at PyTorch's
 default initialization, so the per-step state Jacobian has spectral norm about 0.05 at
-initialization. Key recall (lag 2–3, no lag-1 targets) stays at chance for 1M iterations; use
-`--optimizer adam` with `--grad_norm_clip`, or `--residual_connection`, for a baseline that
-represents standard BPTT training.
+initialization. Key recall (lag 2–3, no lag-1 targets) stays at chance for 1M iterations
+(palindromes have lag-1 targets, which the state path learns first). For a baseline that
+represents standard BPTT training, use `--optimizer adam --learning_rate 1e-4 --grad_norm_clip 1
+--residual_connection true` (hidden size 1024, 3 layers). Adam alone is enough for key recall
+(0.99 by 10k iterations) but leaves `kv_unique_4` (lags up to 8) at chance; the residual gives the
+state an identity path through the trunk, and with it `kv_unique_4` reaches the 0.37 that a
+from-scratch GRU or LSTM reaches in the same number of steps. At that width Adam at 3e-4 or 1e-3
+stays at chance.
 
 Three separate clipping mechanisms exist, and only the first is gradient clipping in the usual
 sense. They used to be confused under one flag, `--grad_clip`; see [Renamed flags](#renamed-flags-2026-09).
