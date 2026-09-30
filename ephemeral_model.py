@@ -10,21 +10,54 @@ import torch.nn.utils.parametrize as parametrize
 
 
 # DFA pieces shared by EphemeralLinear (the ephemeral model) and DFALinear (the SimpleRNN
-# baseline), so the two models' DFA stays the same computation. Note: neither multiplies the
-# projected error by the layer's activation derivative; see README "Known issues".
+# baseline), so the two models' DFA stays the same computation. By default neither multiplies
+# the projected error by the layer's activation derivative; --dfa_fprime does, in both (Nøkland
+# 2016); see README "Known issues".
 
 def init_feedback_weights(vocab_size, out_features):
     """A layer's fixed random DFA feedback matrix B, [vocab, out]: xavier_normal_."""
     return torch.nn.init.xavier_normal_(torch.empty(vocab_size, out_features))
 
 
-def dfa_projected_error(error_signal, feedback_weights, is_last_layer):
+_INV_SQRT2 = 1 / math.sqrt(2)
+_INV_SQRT_2PI = 1 / math.sqrt(2 * math.pi)
+
+
+def dfa_activation_derivative(pre_activation, activation):
+    """f'(a), [B, out], for the nonlinearity that follows a layer, at its pre-activation a
+    (--dfa_fprime). 'gelu' is the exact (erf) GELU that F.gelu computes by default:
+    Phi(a) + a * phi(a). 'tanh': 1 - tanh(a)^2."""
+    if activation == 'gelu':
+        cdf = 0.5 * (1 + torch.erf(pre_activation * _INV_SQRT2))
+        pdf = torch.exp(-0.5 * pre_activation.square()) * _INV_SQRT_2PI
+        return cdf + pre_activation * pdf
+    if activation == 'tanh':
+        return 1 - torch.tanh(pre_activation).square()
+    raise ValueError(f"No DFA activation derivative for activation {activation!r}")
+
+
+def dfa_projected_error(error_signal, feedback_weights, is_last_layer, activation_derivative=None):
     """The error a layer's DFA update uses, [B, out]: the output error itself for a last layer
-    (i2o), else error_signal @ feedback_weights. error_signal is train.py's
+    (i2o), else error_signal @ feedback_weights, multiplied element-wise by
+    activation_derivative (f'(a) at the layer's pre-activation, [B, out]) when it is given
+    (--dfa_fprime; Nøkland 2016: delta_l = (B_l e) * f'(a_l)). error_signal is train.py's
     output_error, [B, vocab]; it is never modified, and a last layer gets that same object."""
     if is_last_layer:
         return error_signal
-    return error_signal @ feedback_weights
+    projected = error_signal @ feedback_weights
+    if activation_derivative is not None:
+        projected = projected * activation_derivative
+    return projected
+
+
+def dfa_layer_activation_derivative(layer):
+    """--dfa_fprime: f'(a) for a non-last layer (EphemeralLinear or DFALinear) at the
+    pre-activation its last forward recorded, or None (flag off, or a last layer, whose error is
+    the output error itself). layer.activation names the nonlinearity the model applies to the
+    layer's output ('gelu' for the trunk, 'tanh' for i2h)."""
+    if not layer.dfa_fprime or layer.is_last_layer:
+        return None
+    return dfa_activation_derivative(layer.pre_activation(), layer.activation)
 
 
 def dfa_per_sample_gradient(projected_error, input):
@@ -172,6 +205,20 @@ class GradNormClipStats:
         return result
 
 
+def set_dfa_fprime(model, enabled):
+    """--dfa_fprime for EphemeralRNN or SimpleRNN: each non-output layer's projected DFA error is
+    multiplied by the derivative of the nonlinearity the model's forward applies to that layer's
+    output, at this step's pre-activation: gelu' for the trunk layers (F.gelu, exact erf form)
+    and tanh' for i2h (hidden_t = tanh(i2h(.))). i2o keeps the raw output error. --output_tanh
+    and the residual connection change only what i2o and i2h read, not any layer's own
+    nonlinearity, so they do not change the derivatives. Off (the default), nothing is computed
+    or recorded beyond what the models already do, and the step is unchanged."""
+    for layer in model.linear_layers:
+        layer.dfa_fprime, layer.activation = enabled, 'gelu'
+    model.i2h.dfa_fprime, model.i2h.activation = enabled, 'tanh'
+    model.i2o.dfa_fprime, model.i2o.activation = enabled, None
+
+
 class EphemeralLinear(nn.Linear):
     def __init__(self, in_features, out_features, charset, bias=True, unit_norm_weights=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2, slow_weight_decay=0, fast_weight_clamp=0):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
@@ -194,6 +241,10 @@ class EphemeralLinear(nn.Linear):
         self.weight_clamp = weight_clamp
         self.updater = updater
         self.is_last_layer = is_last_layer
+        # --dfa_fprime (set by EphemeralRNN): scale the projected DFA error by f'(pre-activation),
+        # where activation names the nonlinearity the model applies to this layer's output.
+        self.dfa_fprime = False
+        self.activation = None
         self.in_traces = nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
         self.out_traces = nn.Parameter(torch.zeros(batch_size, out_features), requires_grad=requires_grad)
 
@@ -291,6 +342,10 @@ class EphemeralLinear(nn.Linear):
         self.in_traces.data = input
         self.out_traces.data = output
 
+    def pre_activation(self):
+        """This step's pre-activation (the output before the model's nonlinearity), [B, out]."""
+        return self.out_traces.data
+
     def populate_dfa_gradients(self, error_signal):
         """Populate gradients using DFA feedback weights for gradient-based update.
 
@@ -301,7 +356,8 @@ class EphemeralLinear(nn.Linear):
         directly to .grad after train.py clears the preceding DFA step's value."""
         # Project error signal using feedback weights (DFA-specific); last layers use it as is.
         # error_signal: [batch_size, vocab_size] -> projected_error: [batch_size, out_features]
-        projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer)
+        projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer,
+                                              dfa_layer_activation_derivative(self))
 
         # Store projected error for bias updates
         self._last_projected_error = projected_error
@@ -518,14 +574,15 @@ class EphemeralRNN(torch.nn.Module):
         unit_norm_weights=True, weight_clamp=0, updater='dfa',
         plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2,
         enable_recurrence=True, retain_sequence_bias_grads=False,
-        slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0
+        slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0, dfa_fprime=False
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
         retain_sequence_bias_grads: needed by clip_grad_norm_per_sequence under backprop and
         BPTT (train.py sets it when --grad_norm_clip > 0).
         slow_weight_decay: --slow_weight_decay, applied with each forget step.
-        output_tanh: --output_tanh, i2o reads tanh of the trunk instead of the trunk itself."""
+        output_tanh: --output_tanh, i2o reads tanh of the trunk instead of the trunk itself.
+        dfa_fprime: --dfa_fprime, see set_dfa_fprime."""
         super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -587,6 +644,7 @@ class EphemeralRNN(torch.nn.Module):
             layer.retain_sequence_bias_grads = retain_sequence_bias_grads
         self.grad_clip_stats = GradNormClipStats()
         self.fused_layer_step = None  # set by enable_fused_update (--fused_update)
+        set_dfa_fprime(self, dfa_fprime)
 
     def enable_fused_update(self, compile=True):
         """--fused_update: train.py's DFA step goes through fused_dfa_step. compile=False runs the
@@ -624,7 +682,8 @@ class EphemeralRNN(torch.nn.Module):
         norms (None without --grad_norm_clip). The clip uses the closed form for a rank-1
         gradient, |p_b x_b^T| = |p_b| |x_b|, and scales the projected errors."""
         layers = self.trained_layers()
-        projected = [dfa_projected_error(output_error, layer.feedback_weights, layer.is_last_layer)
+        projected = [dfa_projected_error(output_error, layer.feedback_weights, layer.is_last_layer,
+                                         dfa_layer_activation_derivative(layer))
                      for layer in layers]
         if grad_norm_clip <= 0:
             return projected, None
@@ -835,6 +894,11 @@ class DFALinear(nn.Linear):
         self.is_last_layer = False
         self.register_buffer('feedback_weights', None)  # set by enable_dfa for non-last layers
         self.in_traces = None  # this step's input, recorded by forward (not saved)
+        # --dfa_fprime (set by SimpleRNN): out_traces, this step's pre-activation, is then
+        # recorded too (not saved), and activation names the model's nonlinearity after this layer.
+        self.dfa_fprime = False
+        self.activation = None
+        self.out_traces = None
         self._last_projected_error = None
 
     def enable_dfa(self, vocab_size, is_last_layer):
@@ -846,12 +910,20 @@ class DFALinear(nn.Linear):
 
     def forward(self, input):
         self.in_traces = input.detach()
-        return super().forward(input)
+        output = super().forward(input)
+        if self.dfa_fprime:
+            self.out_traces = output.detach()
+        return output
+
+    def pre_activation(self):
+        """This step's pre-activation (the output before the model's nonlinearity), [B, out]."""
+        return self.out_traces
 
     def populate_dfa_gradients(self, error_signal):
         """Sets weight.grad to the batch mean of the per-sequence DFA gradients and bias.grad to
         the batch mean of the projected error. error_signal is not modified."""
-        projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer)
+        projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer,
+                                              dfa_layer_activation_derivative(self))
         self._last_projected_error = projected_error
         self.weight.grad = dfa_per_sample_gradient(projected_error, self.in_traces).mean(dim=0)
         if self.bias is not None:
@@ -880,10 +952,11 @@ class SimpleRNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, num_layers, dropout_rate=0.1,
                  init_type='zero', enable_recurrence=True, updater=None,
                  residual_connection=False, unit_norm_weights=False, weight_clamp=0,
-                 slow_weight_decay=0, output_tanh=False):
+                 slow_weight_decay=0, output_tanh=False, dfa_fprime=False):
         """updater: 'dfa' gives the hidden layers and i2h fixed random DFA feedback matrices (drawn
         after every layer is initialised, so the layers start the same as under the other
-        updaters at the same seed). Other values leave it a plain backprop/BPTT model."""
+        updaters at the same seed). Other values leave it a plain backprop/BPTT model.
+        dfa_fprime: --dfa_fprime, see set_dfa_fprime."""
         super(SimpleRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -914,6 +987,7 @@ class SimpleRNN(nn.Module):
             for layer in self.dfa_layers():
                 layer.enable_dfa(output_size, is_last_layer=layer is self.i2o)
         self.grad_clip_stats = GradNormClipStats()
+        set_dfa_fprime(self, dfa_fprime)
 
     def dfa_layers(self):
         """Every layer DFA trains, in update order: the hidden layers, i2h, then i2o."""

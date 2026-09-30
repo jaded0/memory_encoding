@@ -98,6 +98,10 @@ class EvaluatorMatchesTrainerTest(unittest.TestCase):
         self.check(exact=True, model_options={"fast_weight_clamp": 0.01})
         self.check(exact=True, model_options={"weight_clamp": 0.01, "fast_weight_clamp": 0})
 
+    def test_fast_entries_match_the_training_step_with_dfa_fprime(self):
+        # The evaluator's projected errors go through the same f' as the training step's.
+        self.check(exact=True, model_options={"fast_weight_clamp": 0.01, "dfa_fprime": True})
+
     def test_with_grad_norm_clip_they_match_to_rounding(self):
         # Training clips the materialized gradient; the evaluator uses the closed form.
         self.check(exact=False, model_options={"fast_weight_clamp": 0.01}, grad_norm_clip=0.05)

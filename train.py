@@ -352,7 +352,8 @@ def build_model(config, charset, n_characters):
                          dropout_rate=0, enable_recurrence=config['enable_recurrence'], updater=updater,
                          residual_connection=config['residual_connection'],
                          unit_norm_weights=config['unit_norm_weights'], weight_clamp=config['weight_clamp'],
-                         slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'])
+                         slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
+                         dfa_fprime=config.get('dfa_fprime', False))
     if config['model_type'] == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{updater}' updater.")
         return EphemeralRNN(
@@ -364,7 +365,7 @@ def build_model(config, charset, n_characters):
             enable_recurrence=config['enable_recurrence'],
             retain_sequence_bias_grads=config['grad_norm_clip'] > 0 and updater != 'dfa',
             slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
-            fast_weight_clamp=config['fast_weight_clamp'])
+            fast_weight_clamp=config['fast_weight_clamp'], dfa_fprime=config.get('dfa_fprime', False))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -454,6 +455,10 @@ def build_parser():
                         help='Both models: the output head i2o reads tanh of the shared trunk instead of '
                              'the trunk (removed from the default on 2026-09-24; see '
                              'docs/tapped_vs_forked_rnn_report.md).')
+    parser.add_argument('--dfa_fprime', type=str2bool, nargs='?', const=True, default=False,
+                        help='DFA only, both models: multiply each non-output layer\'s projected error by '
+                             'its activation derivative at the current pre-activation (Nokland 2016): '
+                             'gelu\' for the trunk layers, tanh\' for i2h; i2o keeps the raw error.')
     parser.add_argument('--fused_update', type=str2bool, nargs='?', const=True, default=False,
                         help='Ephemeral + DFA only: compile each layer\'s DFA update, clamps and forgetting '
                              'into one kernel (torch.compile). The same math with different rounding, about '
@@ -526,6 +531,8 @@ def resolve_deprecated_args(args, parser):
 def check_argument_combinations(args, parser):
     if args.fused_update and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--fused_update supports only --model_type ephemeral --updater dfa.")
+    if args.dfa_fprime and args.updater != 'dfa':
+        parser.error("--dfa_fprime applies only to --updater dfa.")
     if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'
                                         or args.unit_norm_weights):
         parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa, "
@@ -714,6 +721,7 @@ def main():
             "ephemeral_update_clamp": args.ephemeral_update_clamp,
             "grad_norm_clip": args.grad_norm_clip,
             "fused_update": args.fused_update,
+            "dfa_fprime": args.dfa_fprime,
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
             "fast_weight_clamp": args.fast_weight_clamp,

@@ -343,6 +343,8 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
         'charset_size': None,
         'seed': None,
         'deterministic': False,
+        # --dfa_fprime changes what every DFA step writes; absent in older checkpoints (off).
+        'dfa_fprime': False,
     }
     mismatches = [
         (key, config.get(key, default), loaded_config.get(key, default))

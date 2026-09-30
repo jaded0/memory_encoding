@@ -118,6 +118,20 @@ Two further stabilizers, both off by default:
 - `--output_tanh` (both models): the output head reads `tanh` of the shared trunk. This was the
   default until 2026-09-24 (`docs/tapped_vs_forked_rnn_report.md`).
 
+`--dfa_fprime` (both models, DFA only; default off): the standard DFA rule of Nøkland (2016).
+Each non-output layer's projected error is multiplied element-wise by the derivative of that
+layer's nonlinearity at this step's pre-activation, δ_l = (output_error @ B_l) ⊙ f′(a_l):
+gelu′ (exact erf form, as `F.gelu`) for the trunk layers and tanh′ for `i2h`; `i2o` keeps the
+raw output error. `--output_tanh` and `--residual_connection` change only what `i2o` and `i2h`
+read, not a layer's own nonlinearity, so they leave f′ alone. The weight step is still the outer
+product with the layer input and the bias step the batch mean of δ_l, so `--grad_norm_clip`'s
+rank-1 closed form, `--fused_update` and held-out evaluation all take the same δ_l (it is
+applied in the shared `dfa_projected_error`). `EphemeralLinear` already records the
+pre-activation as `out_traces`; `DFALinear` records it only when the flag is on. Off, nothing
+changes (the golden traces are byte-identical). A resume refuses a checkpoint with a different
+`dfa_fprime`. `tests/test_dfa_fprime.py` checks it against an autograd reference on a tiny
+model, for both models, and fused against unfused.
+
 Ephemeral BPTT ignores `--ephemeral_update_clamp` by design: it clamps only fast-weight updates,
 and under BPTT those are wiped before any forward pass reads them (see Known issues).
 
@@ -225,7 +239,8 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   rescaled, together with the then-stored `forgetting_factor`, so α and the forget rate
   drifted from the CLI values after the first update). `--weight_clamp` is applied after the
   normalization, so a clamp of 1 or more never binds when `--unit_norm_weights` is on.
-- **DFA omits the activation derivative f′ (to examine; not changed).** Every non-output
+- **DFA omits the activation derivative f′ by default (to examine; `--dfa_fprime` adds it,
+  2026-09-29).** Every non-output
   layer's DFA error is the output error projected straight through its feedback matrix,
   `projected = output_error @ feedback_weights` (`dfa_projected_error`,
   `ephemeral_model.py:21-27`), and that is used as is for the weight step (outer product with
@@ -239,7 +254,9 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   on purpose, so that the two models' DFA is the same computation. Any future change must be
   applied to both, most simply in the shared `dfa_*` helpers (`EphemeralLinear` already records
   each step's pre-activation as `out_traces`; `DFALinear` records only its input). It would
-  change every DFA golden trace.
+  change every DFA golden trace. **Update 2026-09-29:** `--dfa_fprime` implements exactly that,
+  opt-in, in the shared helpers (see Updaters), so both variants can be compared; the default
+  is unchanged until the comparison decides it.
 - **`EphemeralLinear._update_bias` is dead code with a flipped sign.** Nothing calls it,
   and it adds `+lr·projected_error` (`ephemeral_model.py:243-250`). The live bias update is
   `_update_bias_from_grad`, which subtracts (`ephemeral_model.py:215-226`).
