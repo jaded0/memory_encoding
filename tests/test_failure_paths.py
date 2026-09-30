@@ -40,6 +40,31 @@ def run_main(*extra_args, checkpoint_dir):
         train_module.main()
 
 
+class AtomicCheckpointSaveTest(unittest.TestCase):
+    def test_interrupted_save_keeps_the_previous_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            save_checkpoint({"marker": 1}, directory, "c.pth")
+            real_save = torch.save
+
+            def save_then_die(obj, path):
+                real_save(obj, path)
+                with open(path, "r+b") as f:
+                    f.truncate(10)  # a half-written file, as when a signal lands mid-write
+                raise RuntimeError("DataLoader worker is killed by signal: Terminated.")
+
+            with patch("torch.save", side_effect=save_then_die), self.assertRaises(RuntimeError):
+                save_checkpoint({"marker": 2}, directory, "c.pth")
+            self.assertEqual(torch.load(os.path.join(directory, "c.pth"))["marker"], 1)
+            self.assertEqual(os.listdir(directory), ["c.pth"])
+
+    def test_completed_save_replaces_the_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            save_checkpoint({"marker": 1}, directory, "c.pth")
+            save_checkpoint({"marker": 2}, directory, "c.pth")
+            self.assertEqual(torch.load(os.path.join(directory, "c.pth"))["marker"], 2)
+            self.assertEqual(os.listdir(directory), ["c.pth"])
+
+
 class CheckpointCompatibilityTest(unittest.TestCase):
     def save(self, directory, config):
         with contextlib.redirect_stdout(io.StringIO()):

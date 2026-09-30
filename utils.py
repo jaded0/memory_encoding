@@ -182,9 +182,17 @@ def check_checkpoint_code_version(checkpoint, checkpoint_path="<checkpoint>"):
 
 def save_checkpoint(state_dict, checkpoint_dir, filename="checkpoint.pth"):
     """Saves checkpoint to disk, stamped with code_version = CHECKPOINT_CODE_VERSION
-    unless the caller already set it."""
+    unless the caller already set it. Writes a temporary file and renames it over the old one,
+    so a save interrupted by a signal leaves the previous checkpoint intact (a SIGTERM mid-save
+    truncated a run's only checkpoint on 2026-09-30)."""
     filepath = os.path.join(checkpoint_dir, filename)
-    torch.save({**state_dict, 'code_version': state_dict.get('code_version', CHECKPOINT_CODE_VERSION)}, filepath)
+    tmp_path = f"{filepath}.tmp.{os.getpid()}"
+    try:
+        torch.save({**state_dict, 'code_version': state_dict.get('code_version', CHECKPOINT_CODE_VERSION)}, tmp_path)
+        os.replace(tmp_path, filepath)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
     print(f"Checkpoint saved to {filepath}")
 
 def read_checkpoint(checkpoint_path):
