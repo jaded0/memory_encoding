@@ -29,7 +29,7 @@ def build(model_type, updater, **options):
     with contextlib.redirect_stdout(io.StringIO()):
         if model_type == "rnn":
             return SimpleRNN(len(CHARSET), 4, len(CHARSET), 2, updater=updater, **options)
-        return EphemeralRNN(len(CHARSET), 4, len(CHARSET), 2, CHARSET, unit_norm_weights=False, updater=updater,
+        return EphemeralRNN(len(CHARSET), 4, len(CHARSET), 2, CHARSET, updater=updater,
                             plasticity=3.0, batch_size=2, forget_rate=0.25, ephemeral_fraction=0.5, **options)
 
 
@@ -37,7 +37,7 @@ class SlowWeightDecayTest(unittest.TestCase):
     def test_forget_step_decays_slow_entries_and_forgets_fast_ones(self):
         torch.manual_seed(0)
         with contextlib.redirect_stdout(io.StringIO()):
-            layer = EphemeralLinear(5, 4, CHARSET, unit_norm_weights=False, batch_size=2, ephemeral_fraction=0.5,
+            layer = EphemeralLinear(5, 4, CHARSET, batch_size=2, ephemeral_fraction=0.5,
                                     forget_rate=0.25, slow_weight_decay=0.1)
         layer.per_sample_weights.data.normal_()
         before = layer.per_sample_weights.detach().clone()

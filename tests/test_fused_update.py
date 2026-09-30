@@ -19,10 +19,10 @@ BATCHES = (torch.tensor([[0, 1, 2, 3, 1], [3, 2, 0, 1, 2], [1, 1, 3, 0, 2]]),
            torch.tensor([[2, 0, 3, 1, 2], [1, 3, 2, 0, 1], [0, 0, 1, 2, 3]]))
 
 
-def build(updater="dfa", unit_norm_weights=False, weight_clamp=0, slow_weight_decay=0, fast_weight_clamp=0):
+def build(updater="dfa", layer_norm=False, weight_clamp=0, slow_weight_decay=0, fast_weight_clamp=0):
     seed_everything(11, deterministic=True)
     with contextlib.redirect_stdout(io.StringIO()):
-        return EphemeralRNN(len(CHARSET), 4, len(CHARSET), 2, CHARSET, unit_norm_weights=unit_norm_weights,
+        return EphemeralRNN(len(CHARSET), 4, len(CHARSET), 2, CHARSET, layer_norm=layer_norm,
                             weight_clamp=weight_clamp, updater=updater, plasticity=3.0, batch_size=3,
                             forget_rate=0.25, ephemeral_fraction=0.5, enable_recurrence=True,
                             slow_weight_decay=slow_weight_decay, fast_weight_clamp=fast_weight_clamp)
@@ -48,8 +48,8 @@ def state(model):
             for name, tensor in (("weights", layer.per_sample_weights), ("bias", layer.bias))}
 
 
-SETTINGS = [dict(update_clamp=clamp, weight_clamp=weight_clamp, unit_norm_weights=unit_norm)
-            for clamp, weight_clamp, unit_norm in itertools.product((0, 0.05), (0, 0.2), (False, True))]
+SETTINGS = [dict(update_clamp=clamp, weight_clamp=weight_clamp, layer_norm=layer_norm)
+            for clamp, weight_clamp, layer_norm in itertools.product((0, 0.05), (0, 0.2), (False, True))]
 
 
 class FusedUpdateTest(unittest.TestCase):
@@ -60,7 +60,7 @@ class FusedUpdateTest(unittest.TestCase):
     def test_eager_fused_step_is_bit_identical_to_the_unfused_step(self):
         for settings in SETTINGS:
             with self.subTest(**settings):
-                model_settings = {k: settings[k] for k in ("weight_clamp", "unit_norm_weights")}
+                model_settings = {k: settings[k] for k in ("weight_clamp", "layer_norm")}
                 unfused, fused = build(**model_settings), build(**model_settings)
                 fused.enable_fused_update(compile=False)
                 expected_losses = run(unfused, update_clamp=settings["update_clamp"])

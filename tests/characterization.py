@@ -19,17 +19,18 @@ SEQUENCES = (
     [[2, 0, 3, 1, 2], [1, 3, 2, 0, 1]],
 )
 BASE_SETTINGS = {
-    "unit_norm_weights": False,
+    "layer_norm": False,
     "weight_clamp": 0,
     "learning_rate": 0.01,
     "num_sequences": 1,
 }
 CASES = {
-    # weight_clamp 0.2 binds after unit_norm_weights; 1 would not (a unit-norm tensor has no entry
-    # above 1). lr 1.0 makes the second BPTT sequence's hidden-layer step (~lr**2) large
-    # enough for the rel 1e-6 comparison instead of falling under abs_tol 1e-7.
+    # --layer_norm on the trunk and a weight_clamp of 0.2, which binds. (Until 2026-09 this case
+    # ran unit_norm_weights, since removed, instead of layer_norm.) lr 1.0 makes the second BPTT
+    # sequence's hidden-layer step (~lr**2) large enough for the rel 1e-6 comparison instead of
+    # falling under abs_tol 1e-7.
     "normalize_clip_2seq": {
-        "unit_norm_weights": True,
+        "layer_norm": True,
         "weight_clamp": 0.2,
         "learning_rate": 1.0,
         "num_sequences": 2,
@@ -210,7 +211,7 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED, case=None):
             output_size=len(charset),
             num_layers=1,
             charset=charset,
-            unit_norm_weights=settings["unit_norm_weights"],
+            layer_norm=settings["layer_norm"],
             residual_connection=False,
             weight_clamp=settings["weight_clamp"],
             updater=updater,
@@ -265,7 +266,7 @@ def run_characterization(updater, seed=CHARACTERIZATION_SEED, case=None):
         "input_mode": "last_two",
         "hidden_size": 4,
         "num_layers": 1,
-        "unit_norm_weights": settings["unit_norm_weights"],
+        "layer_norm": settings["layer_norm"],
         "residual_connection": False,
         "weight_clamp": settings["weight_clamp"],
         "learning_rate": settings["learning_rate"],

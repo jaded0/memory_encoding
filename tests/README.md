@@ -16,13 +16,14 @@ CUDA_VISIBLE_DEVICES="" python -m pytest tests/ -q
 | `test_reproducibility.py` | Seeding, strict deterministic mode, RNG capture/restore, seeded data order and workers |
 | `test_failure_paths.py` | Checkpoint compatibility (including a changed `forget_rate`, `dataset` or `learning_rate`, and a different or missing `code_version`, in `load_checkpoint` and in a `--resume` that then trains nothing), the resume config diff (including an old config key), missing or unreadable checkpoints, explicit resume, non-finite loss, time-limit (124) and SIGTERM (143) exits |
 | `test_legacy_checkpoints.py` | Checkpoints written before the 2026-09 renames (`fixtures/legacy_names`, made at 1775121 by `make_legacy_checkpoints.py` there). They have no `code_version`, so resuming them with the old or the new flag names is refused and leaves them untouched. At the unit level, `upgrade_legacy_state_dict` maps their state dicts exactly as the test's own independent renamer does, and `upgrade_legacy_config` maps their configs to the new keys. A bad `forgetting_factor`, or a missing or unexpected state-dict key, fails the load |
-| `test_cli_aliases.py` | Old flag names parse to the new settings, each with one deprecation line, and none appears in `--help`. `--grad_clip` follows `--model_type`. Removed flags are ignored, and conflicting old and new values are an error. Old config keys map to what the old flags parse to |
+| `test_cli_aliases.py` | Old flag names parse to the new settings, each with one deprecation line, and none appears in `--help`. `--grad_clip` follows `--model_type`. Removed flags are ignored, and conflicting old and new values are an error. The removed `--unit_norm_weights` (`--normalize`) accepts false with a note and refuses true; an old config's false is dropped and its true kept, for `load_checkpoint` to refuse (`test_legacy_checkpoints.py`). Old config keys map to what the old flags parse to |
 | `test_dfa_error_signals.py` | The DFA path's per-layer error tensors (every layer, `i2h` included, is populated each step), projected errors, gradients and bias steps, checked at populate and at update time against values computed independently. It fails on an in-place change to the shared `output_error` (see the main README) |
 | `test_preprocess.py` | Processed-dataset naming (the code hash ignores comment-only and docstring-only edits, not code edits), saved rows and batches (against the old one-hot pipeline), and a missing processed dataset: prepared automatically outside SLURM, the setup-hint error under SLURM, and the `EPHEMERAL_AUTO_PREPROCESS` override both ways (raw download mocked) |
 | `test_metrics.py` | Interval metrics, recall targets and chance levels |
-| `test_heldout.py` | `heldout.py`: with slow updates undone after each training step, `train_batch` and the evaluator give the same predictions, losses and fast entries bit for bit (with `--ephemeral_update_clamp`, `--fast_weight_clamp`, `--weight_clamp`, `--output_tanh`, `--slow_weight_decay`, recurrence, `last_two` input and positional encoding), and to rounding with `--grad_norm_clip`. Also: the `strict` mask; masked steps only forget; slow entries and biases stay frozen and `no_fast` leaves fast entries at zero; `evaluate_protocols` restores the model state; `--unit_norm_weights`, non-DFA and a wrong batch size are refused. `--heldout_eval_every` logs the metrics and leaves the trained weights identical, and `heldout.py --checkpoint` reads the resulting checkpoint |
+| `test_heldout.py` | `heldout.py`: with slow updates undone after each training step, `train_batch` and the evaluator give the same predictions, losses and fast entries bit for bit (with `--ephemeral_update_clamp`, `--fast_weight_clamp`, `--weight_clamp`, `--output_tanh`, `--slow_weight_decay`, recurrence, `last_two` input and positional encoding), and to rounding with `--grad_norm_clip`. Also: the `strict` mask; masked steps only forget; slow entries and biases stay frozen and `no_fast` leaves fast entries at zero; `evaluate_protocols` restores the model state; non-DFA and a wrong batch size are refused. `--heldout_eval_every` logs the metrics and leaves the trained weights identical, and `heldout.py --checkpoint` reads the resulting checkpoint |
 | `test_grad_norm_clip.py` | The ephemeral model's per-sequence `--grad_norm_clip`: a threshold that never binds is bit-identical to no clip under every updater; at batch size 1 it equals `clip_grad_norm_` over every trained gradient (backprop, BPTT, and DFA with the bias errors); each sequence is clipped independently, to the threshold, with direction kept; the norm is of the raw, pre-α gradient; the DFA order is clip, α, update clamp, update, weight clamp, forget |
-| `test_layer_mechanics.py` | Single mechanics checked in isolation: `--unit_norm_weights` rescales each ephemeral sequence slice independently and each SimpleRNN shared matrix as a whole; normalization then weight clamp applies under all updaters. In the forked layout, output and state heads receive the same shared trunk tensor directly; `i2h` gets explicit DFA every step, no same-step backprop gradient, and future credit under BPTT; recurrence-off still executes both heads but feeds back zeros. SimpleRNN DFA mechanics and gradient clipping are checked independently |
+| `test_layer_mechanics.py` | Single mechanics checked in isolation: without clamps, regularization leaves the weights alone, and the constructors no longer take `unit_norm_weights`; the weight clamp applies under all updaters. In the forked layout, output and state heads receive the same shared trunk tensor directly; `i2h` gets explicit DFA every step, no same-step backprop gradient, and future credit under BPTT; recurrence-off still executes both heads but feeds back zeros. SimpleRNN DFA mechanics and gradient clipping are checked independently |
+| `test_layer_norm.py` | `--layer_norm` in both models: each trunk output (the next layer's, `i2h`'s and `i2o`'s input trace) is normalized, LN(gelu(pre-activation)); the first layer's input and the recurrent state are not; no parameters are added and off is the old forward; the DFA gradient is the outer product with the normalized input; every updater trains finite, with and without the residual; the fused step matches; held-out evaluation matches the training step bit for bit, and `heldout.py --checkpoint` rebuilds a `--layer_norm` model; a resume refuses a changed `--layer_norm` |
 | `test_optimizer.py` | `--optimizer`: `sgd` is the default for every model and updater; `adam` is accepted only for the `rnn` baseline under backprop and BPTT; Adam's first BPTT step equals `-lr * g / (\|g\| + eps)` on a gradient computed independently; a changed optimizer is a checkpoint mismatch (old checkpoints mean `sgd`); Adam's moments are saved and continue on resume |
 | `legacy/test_plast_clip_update.py` | Changing `--plasticity` on resume updates checkpoint plasticity; RNG round-trip |
 
@@ -34,18 +35,18 @@ thread, CPU. There are two cases per updater, and one SimpleRNN case under DFA:
 
 - **Base** (keys `dfa`, `backprop`, `bptt`): one call on a batch of two
   five-token sequences over `abcd`. The model has one layer and hidden size 4,
-  `last_two` input and recurrence on, with `unit_norm_weights` and
+  `last_two` input and recurrence on, with `layer_norm` and
   `weight_clamp` off. lr 0.01, `ephemeral_update_clamp` 0.2, α (`plasticity`)
   3.0, `forget_rate` 0.25, `ephemeral_fraction` 0.5.
 - **`normalize_clip_2seq`** (keys `<updater>/normalize_clip_2seq`; the name
   predates the flag renames): the same model and seed with
-  `unit_norm_weights=True`, `weight_clamp` 0.2 and lr 1.0, and two consecutive
+  `layer_norm=True` (until 2026-09, `unit_norm_weights=True`, since removed),
+  `weight_clamp` 0.2 and lr 1.0, and two consecutive
   calls on the same model (the base batch, then a second batch), so the second
   call starts from the first call's weights and `start_sequence_wipe()`. The
   trace stores each call's inputs, outputs and loss under `calls`, and the
-  model state and event log after both. `weight_clamp` is 0.2 because the
-  unit-norm rescaling runs first and leaves no entry above 1, so a clamp of 1
-  never binds. lr is 1.0 so that the step BPTT takes on `i2h` after the
+  model state and event log after both. The 0.2 clamp binds on 5-81% of each
+  layer's final entries under every updater. lr is 1.0 so that the step BPTT takes on `i2h` after the
   second sequence (about lr², since it goes through the `i2o` weights the first
   sequence set) sits well above the comparison's `abs_tol` of 1e-7.
 - **`rnn`** (key `dfa/rnn`, DFA only): the SimpleRNN baseline (one layer,
@@ -81,14 +82,15 @@ from the default initialization.
 | DFA | 1.4029185772 | 4 | 0 | 4 / 4 | 4 |
 | Backprop | 1.4031186402 | 4 | 4 | 4 / 4 (all `i2h` no-ops) | 4 |
 | BPTT | 1.4008217752 | 1 | 1 | 0 / 0 (manual SGD step) | 0 |
-| DFA, `normalize_clip_2seq` | 1.5828555822, 1.5795941353 | 8 | 0 | 8 / 8 | 8 |
-| Backprop, `normalize_clip_2seq` | 1.6084297001, 1.5168787539 | 8 | 8 | 8 / 8 (`i2h` only regularized) | 8 |
-| BPTT, `normalize_clip_2seq` | 1.4008217752, 1.3782653511 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
+| DFA, `normalize_clip_2seq` | 2.2593905926, 2.9282708168 | 8 | 0 | 8 / 8 | 8 |
+| Backprop, `normalize_clip_2seq` | 2.1886075735, 2.2193542421 | 8 | 8 | 8 / 8 (`i2h` only regularized) | 8 |
+| BPTT, `normalize_clip_2seq` | 1.7200192511, 2.1591987312 | 2 | 2 | 0 / 0 (manual SGD step) | 0 |
 | DFA, `rnn` (SimpleRNN) | 1.4085035324, 1.4315583706 | 0 | 0 | 8 / 8 (`apply_dfa_update`; `i2o` 8 too) | 8 |
 
-In `normalize_clip_2seq`, BPTT's first loss equals the base case's, because the
-update, and the `unit_norm_weights` and `weight_clamp` that follow it, come after
-the last step.
+In `normalize_clip_2seq`, BPTT's first loss is the untrained model's with
+`layer_norm` on (its update, and the `weight_clamp` that follows it, come after
+the last step). Until 2026-09 it equalled the base case's, since `unit_norm_weights`
+acted only after the update.
 
 ### Pinned known bugs
 
@@ -142,3 +144,4 @@ Pass `--output PATH` to write somewhere else for comparison.
 | 2026-09-24 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Matched SimpleRNN's architecture to EphemeralRNN: every trunk layer is `input + hidden` wide, uses GELU, and supports the same residual placement. Only `dfa/rnn` changes; its losses are 1.4085 and 1.4316. `CHECKPOINT_CODE_VERSION` 9 → 10 |
 | 2026-09-24 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Applied `--unit_norm_weights` and `--weight_clamp` to SimpleRNN after every DFA, backprop, and BPTT update. The fixture uses both settings off for `dfa/rnn`, so regenerated traces are byte-identical. `CHECKPOINT_CODE_VERSION` 10 → 11 |
 | 2026-09-25 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Parity with SimpleRNN, which regularizes every layer after every update (Jaden's rule). (1) Ephemeral BPTT now applies `--unit_norm_weights` and `--weight_clamp` after its SGD step: they bound the slow weights, which BPTT trains; only `--ephemeral_update_clamp` stays ignored, since its fast entries are wiped unread. (2) A layer with no gradient in a step (the forked `i2h` under per-step backprop) is still regularized; `apply_update` used to return before regularizing it. `bptt/normalize_clip_2seq`: first loss identical (1.4008217752, the update comes after the last step), second 1.3696093559 → 1.3782653511. `backprop/normalize_clip_2seq`: 1.6084581614 → 1.6084297001 and 1.5166777074 → 1.5168787539. The other five traces are byte-identical. Same commit: `--grad_norm_clip` now also clips the ephemeral model, per sequence and before α; it is 0 in every trace, and `tests/test_grad_norm_clip.py` pins it. Same machine and versions. `CHECKPOINT_CODE_VERSION` 11 → 12 |
+| 2026-09-29 | this commit (see `git log -- tests/fixtures/training_traces.json`) | Removed `--unit_norm_weights` (the old `--normalize`; see the main README's "Renamed flags"). The `normalize_clip_2seq` case, which ran it, now runs `--layer_norm` (added the commit before, off by default, when the fixture regenerated byte-identical) with the same `weight_clamp` 0.2 and lr 1.0. Its three traces change: DFA 1.5829, 1.5796 → 2.2594, 2.9283; backprop 1.6084, 1.5169 → 2.1886, 2.2194; BPTT 1.4008, 1.3783 → 1.7200, 2.1592 (lr 1.0 with unit-variance trunk features makes big steps; the case pins mechanics, not learning). The three base traces change only in their `configuration` key `unit_norm_weights: false` → `layer_norm: false`; every value is identical (checked with the key renamed). `dfa/rnn` is byte-identical. `CHECKPOINT_CODE_VERSION` stays 12: the default mechanics are unchanged, and a checkpoint trained with `unit_norm_weights` true is refused by `load_checkpoint` |
