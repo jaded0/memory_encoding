@@ -65,8 +65,8 @@ heads still execute but zeros are fed to the next step instead of `h_t`.
 | `--updater` | `--model_type ephemeral` | `--model_type rnn` (SimpleRNN baseline) |
 | --- | --- | --- |
 | `dfa` | Every step: DFA gradients, `apply_update`, forget | Every step: the same DFA gradients without ephemeral weights (all layers, `i2h` included; see below), then `w -= lr * grad`; `--grad_norm_clip` is a global grad-norm clip |
-| `backprop` | Every step: `backward()` on the batch-mean step loss, `scale_ephemeral_grads`, `apply_update`, forget; the forked `i2h` gets no same-step gradient | Every step: `torch.optim.SGD` on the batch-mean step loss; forked `i2h` gets no same-step gradient; `--grad_norm_clip` is a global grad-norm clip |
-| `bptt` | After the last step: `backward()` on the batch-mean summed loss, `scale_ephemeral_grads`, plain `p -= lr * p.grad`, forget | After the last step: `torch.optim.SGD`; `--grad_norm_clip` is a global grad-norm clip |
+| `backprop` | Every step: `backward()` on the batch-mean step loss, `scale_ephemeral_grads`, `apply_update`, forget; the forked `i2h` gets no same-step gradient | Every step: `--optimizer` (SGD, or Adam) on the batch-mean step loss; forked `i2h` gets no same-step gradient; `--grad_norm_clip` is a global grad-norm clip |
+| `bptt` | After the last step: `backward()` on the batch-mean summed loss, `scale_ephemeral_grads`, plain `p -= lr * p.grad`, forget | After the last step: `--optimizer` (SGD, or Adam); `--grad_norm_clip` is a global grad-norm clip |
 
 For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is `--batch_size`):
 
@@ -82,6 +82,23 @@ For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is 
 | `--grad_norm_clip` | Each sequence's raw gradient rescaled to norm ≤ c, before α | Same as DFA | Same, on the gradient summed over the sequence |
 | `--ephemeral_update_clamp` | Element-wise clamp on α-scaled ephemeral updates | Same as DFA | Ignored |
 | `--weight_clamp`, `--unit_norm_weights` | Applied after each update | Applied after each update | Applied after the update (since `CHECKPOINT_CODE_VERSION` 12) |
+
+`--optimizer {sgd,adam}` (default `sgd`) picks `torch.optim.SGD` or `torch.optim.Adam` (default
+betas and eps) at `--learning_rate`. It applies only to the SimpleRNN baseline under `backprop` and
+`bptt`; any other combination with `adam` is an error. The ephemeral model has no optimizer step:
+its fast entries are per-sequence copies wiped at every sequence start, so Adam's moment estimates
+would average the gradients of unrelated sequences, and Adam's per-coordinate normalization would
+cancel the α scaling that defines plasticity (the step would be about `lr` whatever α is). DFA,
+for both models, applies its update by hand from the projected error. A checkpoint stores the
+optimizer's state, and resuming with a different `--optimizer` is refused (checkpoints written
+before the flag existed count as `sgd`).
+
+With `sgd` at the default lr 1e-4, the 3-layer SimpleRNN learns very slowly through its state:
+each step's transition is four linear layers (three GELU trunk layers and `i2h`) at PyTorch's
+default initialization, so the per-step state Jacobian has spectral norm about 0.05 at
+initialization. Key recall (lag 2–3, no lag-1 targets) stays at chance for 1M iterations; use
+`--optimizer adam` with `--grad_norm_clip`, or `--residual_connection`, for a baseline that
+represents standard BPTT training.
 
 Three separate clipping mechanisms exist, and only the first is gradient clipping in the usual
 sense. They used to be confused under one flag, `--grad_clip`; see [Renamed flags](#renamed-flags-2026-09).
@@ -329,6 +346,7 @@ python train.py --updater bptt --model_type ephemeral
 - `--updater`: Choose between `dfa`, `backprop`, or `bptt`
 - `--model_type`: Choose between `rnn` or `ephemeral`
 - `--learning_rate`: Learning rate for weight updates
+- `--optimizer`: `sgd` (default) or `adam`, for the `rnn` baseline under `backprop`/`bptt`
 - `--plasticity`: Plasticity (learning-rate multiplier, alpha) of the ephemeral weights
 - `--ephemeral_fraction`: Fraction of each hidden layer's weights that are ephemeral
 - `--forget_rate`: Fraction of each ephemeral weight removed per step
@@ -344,7 +362,7 @@ Resuming is opt-in: without `--resume` or `--resume_checkpoint`, training starts
 scratch even if `latest_checkpoint.pth` exists. `--resume` with no checkpoint present starts
 from scratch; a missing explicit `--resume_checkpoint` is an error. Once a checkpoint is
 chosen, any load failure aborts the run, including a mismatch in hidden size, layer count,
-updater, model type, charset size, `--forget_rate`, `--dataset` or `--learning_rate`
+updater, model type, charset size, `--optimizer`, `--forget_rate`, `--dataset` or `--learning_rate`
 (`utils.py`, `load_checkpoint`). A changed `--forget_rate` is refused because it would
 change a running experiment's decay (before 2026-09 the checkpoint stored the per-entry rate
 as `forgetting_factor`, and the new value was silently ignored). A changed dataset or learning rate is refused because it

@@ -337,6 +337,14 @@ def positional_encoding(pos_dim, device, max_len=2000):
     return pe_matrix.to(device)
 
 
+def build_optimizer(model, config):
+    """The optimizer for backprop and BPTT. Only the SimpleRNN baseline steps through it; the
+    ephemeral model's slow and fast weights take manual steps, and its SGD object is unused."""
+    if config.get('optimizer', 'sgd') == 'adam':
+        return torch.optim.Adam(model.parameters(), lr=config['learning_rate'])
+    return torch.optim.SGD(model.parameters(), lr=config['learning_rate'])
+
+
 def build_model(config, charset, n_characters):
     """The model a run's config describes (train.py's own config, or a checkpoint's)."""
     if config['input_mode'] not in ('last_one', 'last_two'):
@@ -427,6 +435,10 @@ def build_parser():
     parser = argparse.ArgumentParser(description='Train a model with specified hyperparameters.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--learning_rate', type=float, default=1e-4, help='Learning rate for the optimizer')
+    parser.add_argument('--optimizer', type=str, default='sgd', choices=['sgd', 'adam'],
+                        help='rnn baseline under backprop or bptt: torch.optim.SGD or torch.optim.Adam '
+                             '(default betas and eps) at --learning_rate. The ephemeral model and DFA '
+                             'take manual per-sequence steps and support only sgd (see README).')
     _add_argument(parser, '--plasticity', type=float, default=1e5,
                   help='Plasticity alpha: the learning-rate multiplier on the ephemeral weights (slow weights have 1).')
     for flag in IGNORED_FLAGS:
@@ -526,6 +538,9 @@ def resolve_deprecated_args(args, parser):
 def check_argument_combinations(args, parser):
     if args.fused_update and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--fused_update supports only --model_type ephemeral --updater dfa.")
+    if args.optimizer != 'sgd' and (args.model_type != 'rnn' or args.updater == 'dfa'):
+        parser.error(f"--optimizer {args.optimizer} supports only --model_type rnn with --updater backprop "
+                     "or bptt: the ephemeral model and DFA update their weights by hand, per sequence.")
     if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'
                                         or args.unit_norm_weights):
         parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa, "
@@ -637,7 +652,7 @@ def main():
 
     # Optimizer is only needed for backprop and bptt (regardless of model type)
     if args.updater in ['backprop', 'bptt']:
-        optimizer = torch.optim.SGD(rnn.parameters(), lr=config['learning_rate'])
+        optimizer = build_optimizer(rnn, config)
 
     state = {
         "training_instance": 0,
