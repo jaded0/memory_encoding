@@ -75,13 +75,13 @@ For the ephemeral model (`g` is the gradient of one sequence's own loss, `B` is 
 | Error signal | Per-sequence `output_error`; hidden layers receive it through fixed random `feedback_weights` | Autograd | Autograd |
 | Hidden state | Detached every step | Detached every step | Not detached |
 | When weights change | Every step | Every step | Once, after the last step |
-| Order per update | Grad-norm clip, α, update clamp, update, normalize, weight clamp, then forget | Same as DFA | Grad-norm clip, α, update, then forget (once) |
+| Order per update | Grad-norm clip, α, update clamp, update, weight clamp, then forget | Same as DFA | Grad-norm clip, α, update, weight clamp, then forget (once) |
 | Step on an ephemeral weight | `lr·α·g` | `lr·α²·g/B` | `lr·α·g/B`, zeroed by the next `start_sequence_wipe()` |
 | Step on a slow weight | `lr·g` | `lr·g/B` | `lr·g/B` |
 | Layers that change | Hidden layers, `i2h` (direct feedback), `i2o` | Hidden layers and `i2o`; `i2h` only through future loss under BPTT | Every parameter with a gradient (hidden layers, `i2h`, `i2o`) |
 | `--grad_norm_clip` | Each sequence's raw gradient rescaled to norm ≤ c, before α | Same as DFA | Same, on the gradient summed over the sequence |
 | `--ephemeral_update_clamp` | Element-wise clamp on α-scaled ephemeral updates | Same as DFA | Ignored |
-| `--weight_clamp`, `--unit_norm_weights` | Applied after each update | Applied after each update | Applied after the update (since `CHECKPOINT_CODE_VERSION` 12) |
+| `--weight_clamp` | Applied after each update | Applied after each update | Applied after the update (since `CHECKPOINT_CODE_VERSION` 12) |
 
 `--optimizer {sgd,adam}` (default `sgd`) picks `torch.optim.SGD` or `torch.optim.Adam` (default
 betas and eps) at `--learning_rate`. It applies only to the SimpleRNN baseline under `backprop` and
@@ -140,6 +140,23 @@ Two further stabilizers, both off by default:
 - `--output_tanh` (both models): the output head reads `tanh` of the shared trunk. This was the
   default until 2026-09-24 (`docs/tapped_vs_forked_rnn_report.md`).
 
+One normalization, off by default:
+- `--layer_norm` (both models, every updater): LayerNorm over the features of each trunk
+  layer's output, after its GELU: `combined = LN(gelu(layer(combined)))`, zero mean and unit
+  variance per sequence and step (`trunk_layer_norm`, eps 1e-5). It has no learnable gain or
+  bias, so it adds no parameters: an affine pair would be slow weights that DFA has no rule
+  for, and the next layer's weights and bias can absorb any scale and shift. It goes after the
+  activation because DFA's outer product uses each layer's recorded input (`in_traces`): placed
+  there, the normalized features are exactly what the next trunk layer, `i2h` and `i2o` read and
+  what their DFA gradients use, and every such input row has norm √(input + hidden), which bounds
+  the input side of the rank-1 DFA gradient `p·xᵀ`. The first layer's input (`x_t`, `h_{t−1}`) is
+  not normalized, nor is the `tanh`-bounded recurrent state; with `--residual_connection` the
+  residual is added after the last LayerNorm. DFA still omits every activation derivative, the
+  LayerNorm Jacobian included (see Known issues); backprop and BPTT differentiate through it.
+  A resume refuses a changed `--layer_norm`. Held-out evaluation supports it. The paper's
+  "layer normalization actively harms performance" (`paper/paper_content.tex:195`) had no code
+  behind it before this flag.
+
 Ephemeral BPTT ignores `--ephemeral_update_clamp` by design: it clamps only fast-weight updates,
 and under BPTT those are wiped before any forward pass reads them (see Known issues).
 
@@ -162,9 +179,8 @@ removed, so the two models can be compared under DFA. SimpleRNN's layers are `DF
   to the batch mean before the next sequence, so each step's contribution to the batch-mean
   weight is the same `lr·mean_B(g)`.
 - There is no plasticity, ephemeral mask, forgetting or wiping. `--ephemeral_update_clamp`
-  is ignored, since it only clamps ephemeral entries. `--unit_norm_weights` normalizes each
-  shared layer's complete weight matrix and `--weight_clamp` then clamps its entries, after
-  every DFA or SGD update; biases and feedback matrices are excluded. `--grad_norm_clip` clips
+  is ignored, since it only clamps ephemeral entries. `--weight_clamp` clamps each shared
+  layer's weight entries after every DFA or SGD update; biases and feedback matrices are excluded. `--grad_norm_clip` clips
   the global norm of the DFA gradients before the step, as it does for the SGD gradients under
   backprop and BPTT. Non-zero, it no longer matches the ephemeral model's DFA step exactly,
   because the ephemeral model clips each sequence's gradient separately.
@@ -235,18 +251,8 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   does not increment `training_instance`. Checked on a small model (under the old flag
   names): changing α, `--forget_rate` or the update clamp leaves a four-sequence BPTT loss
   trajectory bit-identical. Until `CHECKPOINT_CODE_VERSION` 12 it also ignored
-  `--weight_clamp` and `--unit_norm_weights`. Those bound the slow weights, which do learn,
-  so it now applies them after the SGD step, as SimpleRNN does under BPTT.
-- **`--unit_norm_weights` rescales the `per_sample_weights` only, one sequence at a time.**
-  `_apply_regularization` divides each sequence's `[out, in]` slice of a layer's
-  `per_sample_weights` by that slice's own L2 norm after each update
-  (`ephemeral_model.py:252-264`), so one sequence's scale does not depend on the others in
-  the batch. (Until 2026-09 the norm was taken over the whole `[batch, out, in]` tensor.)
-  `plasticity`, the bias, the feedback weights,
-  the traces and the logged update norms are left alone (until 2026-09 they were all
-  rescaled, together with the then-stored `forgetting_factor`, so α and the forget rate
-  drifted from the CLI values after the first update). `--weight_clamp` is applied after the
-  normalization, so a clamp of 1 or more never binds when `--unit_norm_weights` is on.
+  `--weight_clamp` (and the since-removed `--unit_norm_weights`). That clamp bounds the slow
+  weights, which do learn, so it now applies after the SGD step, as SimpleRNN does under BPTT.
 - **DFA omits the activation derivative f′ (to examine; not changed).** Every non-output
   layer's DFA error is the output error projected straight through its feedback matrix,
   `projected = output_error @ feedback_weights` (`dfa_projected_error`,
@@ -293,7 +299,7 @@ key-recall legend "ephemeral 0.0001 0.5" is lr 1e-4, `--forget_rate 0.5`).
 Ordering: as in the paper (`:124-127`), the decay comes after each update in all three
 updaters (`train.py:167`, `:231`, `:288`), so one step is
 `w ← (1 − forget_rate)·(w − lr·α·g)`. Under DFA and backprop the update it follows
-includes `--ephemeral_update_clamp`, `--unit_norm_weights` and `--weight_clamp`. (The class constructors used to
+includes `--ephemeral_update_clamp`, `--weight_clamp` and `--fast_weight_clamp`. (The class constructors used to
 default to `forget_rate=0.7`, a leftover of the paper's coefficient that would have kept
 only 0.3 of each weight. They now default to 0.01, matching the CLI; `train.py` always
 passed `--forget_rate` explicitly, so no run changed.)
@@ -356,7 +362,8 @@ python train.py --updater bptt --model_type ephemeral
 - `--ephemeral_fraction`: Fraction of each hidden layer's weights that are ephemeral
 - `--forget_rate`: Fraction of each ephemeral weight removed per step
 - `--ephemeral_update_clamp` (ephemeral model) / `--grad_norm_clip` (`rnn` baseline): update clamp or gradient-norm clip
-- `--unit_norm_weights`, `--weight_clamp`: rescaling and clamping of the weights after each update
+- `--weight_clamp`: clamping of the weights after each update
+- `--layer_norm`: affine-free LayerNorm on each trunk layer's post-GELU activations (both models)
 - `--resume` / `--resume_checkpoint PATH`: Resume from `latest_checkpoint.pth`, or from an explicit checkpoint
 - `--batch_size`: Number of sequences processed together
 - `--seed`: Seed Python, NumPy, Torch, dataset shuffling, and DataLoader sampling (unset = drawn from the OS; see below)
@@ -412,8 +419,19 @@ name with different values is an error. The old names are hidden from `python tr
 | `--plast_proportion` | `--ephemeral_fraction` | |
 | `--grad_clip` | `--ephemeral_update_clamp` with `--model_type ephemeral`, `--grad_norm_clip` with `--model_type rnn` | Each model only ever used the one that applies to it |
 | `--clip_weights` | `--weight_clamp` | |
-| `--normalize` | `--unit_norm_weights` | |
+| `--normalize` | `--unit_norm_weights` (since removed; see below) | |
 | `--plast_learning_rate`, `--imprint_rate` | (removed) | Were unused; still accepted and ignored |
+| `--unit_norm_weights`, `--normalize` | (removed 2026-09) | `false` is still accepted, with a note, and ignored; `true` is an error. For a normalization use `--layer_norm` |
+
+`--unit_norm_weights` (the old `--normalize`) divided each sequence's whole `[out, in]` weight
+slice by its L2 norm after every update. On a 1033-wide layer that leaves entries around 1e-3,
+far below the fast-weight magnitudes the memory needs, so it removed the memory for a trivial
+reason; 2 of the 4,701 archived 2025 runs used it (best final-character accuracy 0.75, near the
+no-memory ceiling). It was removed rather than kept as a trap. A checkpoint whose config has it
+false (every run since 2025) loads as before, and the key is dropped so the resume diff does not
+show it; one with it true is refused by `load_checkpoint` (and so by `heldout.py`), since this
+code cannot run that model. `CHECKPOINT_CODE_VERSION` stays 12: with it false, as every
+checkpoint that can still load had it, the mechanics are unchanged.
 
 W&B also renamed its keys: `high_lr` → `nominal_ephemeral_lr`, `effective_lr` →
 `nominal_mean_lr`, and `avg_high_plast_*` / `avg_low_plast_*` → `avg_ephemeral_*` /
@@ -544,10 +562,8 @@ accuracy on each episode's first recall target, which no answer write can have h
 - A saved checkpoint: `python heldout.py --checkpoint PATH [--dataset NAME] [--protocols
   observed strict no_fast] [--batches 0] [--json out.json]`. The default is the whole
   validation split.
-- Only `--model_type ephemeral --updater dfa` is supported. `--unit_norm_weights` is refused.
-  It rescales each `[out, in]` slice as a whole, so a fast write would also rescale the frozen
-  slow entries. Keeping them frozen would instead give fast entries that training never
-  produces.
+- Only `--model_type ephemeral --updater dfa` is supported. `--layer_norm` works: it acts on
+  activations, not weights, so the fast-only step is unchanged.
 - The batch size is the model's (fast weights are `[B, out, in]`).
 - The synthetic tasks are small (3-char palindromes have 399 distinct strings), so validation
   strings also occur in training. Held out means fresh fast state and frozen slow weights, not
@@ -557,7 +573,7 @@ accuracy on each episode's first recall target, which no answer write can have h
 
 - **Positional Encoding**: Add positional information with `--positional_encoding_dim N`
 - **Residual Connections**: Enable/disable with `--residual_connection True/False`
-- **Weight Normalization**: Enable/disable with `--unit_norm_weights True/False`
+- **Layer Normalization**: Enable/disable with `--layer_norm True/False` (trunk activations)
 - **Input Modes**: Choose between `--input_mode last_one` or `--input_mode last_two`
 
 ## Testing

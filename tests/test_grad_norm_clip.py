@@ -23,7 +23,7 @@ def build(updater, batch_size=3, plasticity=PLASTICITY, retain=False, weight_cla
           enable_recurrence=True):
     seed_everything(7, deterministic=True)
     with contextlib.redirect_stdout(io.StringIO()):
-        return EphemeralRNN(len(CHARSET), HIDDEN, len(CHARSET), 2, CHARSET, unit_norm_weights=False,
+        return EphemeralRNN(len(CHARSET), HIDDEN, len(CHARSET), 2, CHARSET,
                             weight_clamp=weight_clamp, updater=updater, plasticity=plasticity,
                             batch_size=batch_size, forget_rate=0.25, ephemeral_fraction=0.5,
                             enable_recurrence=enable_recurrence, retain_sequence_bias_grads=retain)

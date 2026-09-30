@@ -38,13 +38,15 @@ CASES = {
     "backprop": ["--updater", "backprop"],
     "rnn_backprop": ["--model_type", "rnn", "--updater", "backprop"],
 }
-# The same settings under today's names.
-NEW_BASE_ARGV = [flag.replace("--normalize", "--unit_norm_weights") for flag in OLD_BASE_ARGV]
+# The same settings under today's names. --normalize (later --unit_norm_weights) was removed in
+# 2026-09: false, the base value, is simply left out, and the dfa case's true no longer exists.
+_NORMALIZE = OLD_BASE_ARGV.index("--normalize")
+NEW_BASE_ARGV = OLD_BASE_ARGV[:_NORMALIZE] + OLD_BASE_ARGV[_NORMALIZE + 2:]
 NEW_COMMON = ["--seed", "11", "--deterministic", "True", "--learning_rate", "0.05",
               "--plasticity", "3", "--ephemeral_fraction", "0.5",
               "--weight_clamp", "0.5", "--forget_rate", "0.25"]
 NEW_CASES = {
-    "dfa": ["--updater", "dfa", "--unit_norm_weights", "True", "--ephemeral_update_clamp", "0.2"],
+    "dfa": ["--updater", "dfa", "--ephemeral_update_clamp", "0.2"],
     "backprop": ["--updater", "backprop", "--ephemeral_update_clamp", "0.2"],
     "rnn_backprop": ["--model_type", "rnn", "--updater", "backprop", "--grad_norm_clip", "0.2"],
 }
@@ -116,8 +118,15 @@ class LegacyCheckpointResumeTest(unittest.TestCase):
         for case in CASES:
             for names in ("old", "new"):
                 with self.subTest(case=case, flag_names=names), tempfile.TemporaryDirectory() as directory:
-                    with self.assertRaisesRegex(RuntimeError, "has no code_version.*start the run fresh"):
-                        resume_legacy(case, directory, names)
+                    if case == "dfa" and names == "old":
+                        # Its --normalize True was removed: the parser refuses it before anything.
+                        stderr = io.StringIO()
+                        with self.assertRaises(SystemExit), contextlib.redirect_stderr(stderr):
+                            resume_legacy(case, directory, names)
+                        self.assertIn("--normalize was removed", stderr.getvalue())
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "has no code_version.*start the run fresh"):
+                            resume_legacy(case, directory, names)
                     # Refused before training: the checkpoint is left exactly as it was.
                     resumed = torch.load(os.path.join(directory, "latest_checkpoint.pth"), weights_only=False)
                     self.assertEqual(resumed["iter"], legacy(case, "iter3.pth")["iter"])
@@ -126,7 +135,7 @@ class LegacyCheckpointResumeTest(unittest.TestCase):
 
 def build_model(updater="dfa"):
     with contextlib.redirect_stdout(io.StringIO()):
-        return EphemeralRNN(4, 4, 4, 1, "23. ", unit_norm_weights=True, weight_clamp=0.5, updater=updater,
+        return EphemeralRNN(4, 4, 4, 1, "23. ", weight_clamp=0.5, updater=updater,
                             plasticity=3.0, batch_size=2, forget_rate=FORGET_RATE, ephemeral_fraction=0.5,
                             enable_recurrence=False)
 
@@ -175,7 +184,8 @@ class LegacyStateDictLoadTest(unittest.TestCase):
                         self.assertNotIn(old_key, config)
                     self.assertEqual((config["plasticity"], config["ephemeral_fraction"], config["weight_clamp"]),
                                      (3.0, 0.5, 0.5))
-                    self.assertEqual(config["unit_norm_weights"], case == "dfa")
+                    # --normalize False is dropped (removed setting); True is kept for the refusal.
+                    self.assertEqual(config.get("unit_norm_weights"), True if case == "dfa" else None)
                     clamp = ("grad_norm_clip", "ephemeral_update_clamp")[case != "rnn_backprop"]
                     other = ("grad_norm_clip", "ephemeral_update_clamp")[case == "rnn_backprop"]
                     self.assertEqual((config[clamp], config[other]), (0.2, 0))
@@ -184,6 +194,20 @@ class LegacyStateDictLoadTest(unittest.TestCase):
         model = build_model()
         self.load({"config": self.CONFIG, "model_state_dict": model.state_dict(),
                    "code_version": CHECKPOINT_CODE_VERSION})
+
+    def test_removed_unit_norm_weights_loads_when_false_and_is_refused_when_true(self):
+        model = build_model()
+        for key in ("unit_norm_weights", "normalize"):
+            with self.subTest(key=key):
+                checkpoint = {"config": {**self.CONFIG, key: False}, "model_state_dict": model.state_dict(),
+                              "code_version": CHECKPOINT_CODE_VERSION}
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    load_checkpoint("<memory>", build_model(), self.CONFIG, checkpoint=checkpoint)
+                self.assertIn("Config matches the checkpoint.", output.getvalue())  # no diff noise
+                checkpoint["config"][key] = True
+                with self.assertRaisesRegex(RuntimeError, "unit_norm_weights=True.*was removed"):
+                    self.load(checkpoint)
 
     def test_forgetting_factor_other_than_forget_rate_on_the_mask_raises(self):
         for change in ("scaled", "off_mask"):

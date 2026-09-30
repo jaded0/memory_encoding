@@ -55,7 +55,8 @@
   - Run flag `--heldout_eval_every N` (off by default) and the standalone
     `python heldout.py --checkpoint PATH`. Both report the protocols `observed`, `strict` and
     `no_fast`, with per-lag recall and `first_answer_acc`.
-  - `--unit_norm_weights` is refused, with the reason.
+  - `--unit_norm_weights` was refused, with the reason (the flag was removed on 2026-09-29;
+    `--layer_norm` is the normalization now, and held-out evaluation supports it).
   - Removed as unneeded: the `continue` mode, per-row resets and `HeldOutBatch`.
   - The key-value generator (Pile B, 699b93e) stays parked on branch `heldout-eval`.
 - The main checkout `/home/jaden/memory_encoding` is on branch `heldout-eval` (moved there so the

@@ -24,7 +24,7 @@ CHARSET = list("abcd")
 
 def build_model():
     with contextlib.redirect_stdout(io.StringIO()):
-        return EphemeralRNN(8, 4, 4, 2, CHARSET, unit_norm_weights=False, weight_clamp=0, updater="dfa",
+        return EphemeralRNN(8, 4, 4, 2, CHARSET, weight_clamp=0, updater="dfa",
                             plasticity=3.0, batch_size=2, forget_rate=0.25, ephemeral_fraction=0.5,
                             enable_recurrence=True)
 

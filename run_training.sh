@@ -52,7 +52,6 @@ PLAST_PROPORTION=0.2         # Fraction of each layer's weights that are ephemer
 ENABLE_RECURRENCE=false      # Feed the hidden state back into the next step
 
 # --- Regularization & Stability ---
-NORMALIZE=false              # Rescale each layer's parameters to unit norm after each update
 CLIP_WEIGHTS=1               # Clamp ephemeral weights to [-CLIP_WEIGHTS, CLIP_WEIGHTS] (0 = off)
 
 # ======================== Model Architecture ==================================
@@ -92,7 +91,6 @@ python -u train.py \
     --slow_weight_decay $SLOW_WEIGHT_DECAY \
     --output_tanh $OUTPUT_TANH \
     --forget_rate $FORGET_RATE \
-    --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \
     --num_layers $NUM_LAYERS \

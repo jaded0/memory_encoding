@@ -10,10 +10,10 @@ RENAMED = {  # old flag -> (new dest, value given, parsed value)
     "--plast_clip": ("plasticity", "7", 7.0),
     "--plast_proportion": ("ephemeral_fraction", "0.3", 0.3),
     "--clip_weights": ("weight_clamp", "0.5", 0.5),
-    "--normalize": ("unit_norm_weights", "True", True),
 }
 OLD_NAMES = {"plast_clip", "plast_proportion", "clip_weights", "normalize", "grad_clip",
-             "plast_learning_rate", "imprint_rate"}
+             "plast_learning_rate", "imprint_rate", "unit_norm_weights"}
+REMOVED = ("--unit_norm_weights", "--normalize")  # removed 2026-09: false is accepted, true is an error
 
 
 def parse(*argv):
@@ -42,15 +42,28 @@ class DeprecatedFlagTest(unittest.TestCase):
 
     def test_old_names_are_hidden_from_help(self):
         help_text = build_parser().format_help()
-        for old in (*RENAMED, "--grad_clip", "--plast_learning_rate", "--imprint_rate"):
+        for old in (*RENAMED, *REMOVED, "--grad_clip", "--plast_learning_rate", "--imprint_rate"):
             with self.subTest(flag=old):
                 self.assertNotIn(old, help_text)
-        for new in ("--plasticity", "--ephemeral_fraction", "--weight_clamp", "--unit_norm_weights",
+        for new in ("--plasticity", "--ephemeral_fraction", "--weight_clamp", "--layer_norm",
                     "--ephemeral_update_clamp", "--grad_norm_clip"):
             self.assertIn(new, help_text)
 
-    def test_normalize_without_a_value_means_true(self):
-        self.assertTrue(parse("--normalize")[0]["unit_norm_weights"])
+    def test_removed_unit_norm_weights_accepts_false_and_refuses_true(self):
+        for flag in REMOVED:
+            with self.subTest(flag=flag):
+                for value in ("False", "false", "0"):
+                    args, printed = parse(flag, value)
+                    self.assertEqual(args, parse()[0])
+                    self.assertEqual(printed.splitlines(), [
+                        f"DEPRECATED: {flag} was removed; false is its only setting, so it is ignored. Remove it."])
+                for argv in ((flag, "True"), (flag, "true"), (flag,)):
+                    stderr = io.StringIO()
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                        parse_args(list(argv))
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(f"{flag} was removed", stderr.getvalue())
+                    self.assertIn("--layer_norm", stderr.getvalue())
 
     def test_grad_clip_sets_the_clip_the_model_type_uses(self):
         for model_type, target, other in (("ephemeral", "ephemeral_update_clamp", "grad_norm_clip"),
@@ -75,7 +88,7 @@ class DeprecatedFlagTest(unittest.TestCase):
         ])
 
     def test_no_old_name_reaches_the_config(self):
-        argv = ["--plast_clip", "7", "--plast_proportion", "0.3", "--clip_weights", "0.5", "--normalize", "True",
+        argv = ["--plast_clip", "7", "--plast_proportion", "0.3", "--clip_weights", "0.5", "--normalize", "False",
                 "--grad_clip", "0.2", "--plast_learning_rate", "0.005", "--imprint_rate", "0"]
         args = parse(*argv)[0]
         self.assertFalse(OLD_NAMES & set(args))
@@ -94,12 +107,12 @@ class DeprecatedFlagTest(unittest.TestCase):
 class LegacyConfigKeyTest(unittest.TestCase):
     def test_old_config_keys_map_to_what_the_old_flags_parse_to(self):
         old_argv = ["--plast_clip", "7", "--plast_proportion", "0.3", "--clip_weights", "0.5",
-                    "--normalize", "True", "--grad_clip", "0.2", "--plast_learning_rate", "0.005",
+                    "--normalize", "False", "--grad_clip", "0.2", "--plast_learning_rate", "0.005",
                     "--imprint_rate", "0"]
-        old_config = {"plast_clip": 7.0, "plast_proportion": 0.3, "clip_weights": 0.5, "normalize": True,
+        old_config = {"plast_clip": 7.0, "plast_proportion": 0.3, "clip_weights": 0.5, "normalize": False,
                       "grad_clip": 0.2, "plast_learning_rate": 0.005, "imprint_rate": 0.0}
-        keys = ("plasticity", "ephemeral_fraction", "weight_clamp", "unit_norm_weights",
-                "ephemeral_update_clamp", "grad_norm_clip")
+        keys = ("plasticity", "ephemeral_fraction", "weight_clamp", "ephemeral_update_clamp",
+                "grad_norm_clip")
         for model_type in ("ephemeral", "ethereal", "rnn"):
             with self.subTest(model_type=model_type):
                 cli_model_type = "rnn" if model_type == "rnn" else "ephemeral"
@@ -107,6 +120,13 @@ class LegacyConfigKeyTest(unittest.TestCase):
                 upgraded = upgrade_legacy_config({**old_config, "model_type": model_type})
                 self.assertEqual({key: upgraded[key] for key in keys}, {key: parsed[key] for key in keys})
                 self.assertFalse(OLD_NAMES & set(upgraded))
+
+    def test_removed_unit_norm_weights_is_dropped_when_false_and_kept_when_true(self):
+        for key in ("normalize", "unit_norm_weights"):
+            with self.subTest(key=key):
+                self.assertEqual(upgrade_legacy_config({key: False, "plasticity": 7.0}), {"plasticity": 7.0})
+                # Kept, so that load_checkpoint refuses it (tests/test_failure_paths.py).
+                self.assertEqual(upgrade_legacy_config({key: True}), {"unit_norm_weights": True})
 
     def test_grad_clip_without_model_type_is_left_for_the_diff(self):
         self.assertEqual(upgrade_legacy_config({"grad_clip": 0.2}), {"grad_clip": 0.2})
