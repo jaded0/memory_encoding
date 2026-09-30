@@ -343,6 +343,8 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
         'charset_size': None,
         'seed': None,
         'deterministic': False,
+        # Checkpoints from before --optimizer existed were all trained with SGD.
+        'optimizer': 'sgd',
     }
     mismatches = [
         (key, config.get(key, default), loaded_config.get(key, default))
