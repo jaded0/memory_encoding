@@ -203,6 +203,16 @@ def save_checkpoint(state_dict, checkpoint_dir, filename="checkpoint.pth"):
             os.remove(tmp_path)
     print(f"Checkpoint saved to {filepath}")
 
+def keep_numbered_checkpoint(state_dict, checkpoint_dir, iteration, keep_max=0):
+    """--checkpoint_keep_every: saves checkpoint_<iteration>.pth next to latest_checkpoint.pth and,
+    with keep_max > 0, deletes all but the newest keep_max numbered copies."""
+    save_checkpoint(state_dict, checkpoint_dir, f"checkpoint_{iteration:08d}.pth")
+    if keep_max > 0:
+        numbered = sorted(name for name in os.listdir(checkpoint_dir)
+                          if name.startswith("checkpoint_") and name.endswith(".pth"))
+        for name in numbered[:-keep_max]:
+            os.remove(os.path.join(checkpoint_dir, name))
+
 def read_checkpoint(checkpoint_path):
     """Reads a checkpoint dict from disk onto the CPU."""
     if not os.path.isfile(checkpoint_path):

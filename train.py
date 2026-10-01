@@ -7,7 +7,8 @@ from preprocess import load_and_preprocess_data
 from reproducibility import DataStream, capture_rng_state, record_seed_in_slurm, resolve_seed, seed_everything
 from metrics import IntervalMetrics, recall_chance
 from heldout import evaluate_protocols, load_heldout_batches
-from utils import model_input, randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint, check_checkpoint_code_version, CHECKPOINT_CODE_VERSION
+from loop_trace import NULL_TRACER, LoopTracer, summarize as summarize_traces
+from utils import model_input, randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint, check_checkpoint_code_version, CHECKPOINT_CODE_VERSION, keep_numbered_checkpoint
 import time
 import math
 import argparse
@@ -70,8 +71,11 @@ def wb_mark_end(reason: str, tags=None, exit_code: int | None = None):
         current = set(getattr(run, "tags", []))
         run.tags = list(current.union(set(tags)))
 
-def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
-    """Trains on one batch of sequences with DFA, backprop or BPTT."""
+def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False,
+                tracer=None):
+    """Trains on one batch of sequences with DFA, backprop or BPTT. tracer (a loop_trace.LoopTracer,
+    ephemeral + DFA only) records the within-sequence feedback-loop traces without changing
+    anything; the caller reads them with tracer.finish() afterwards."""
     updater = config['updater']
     criterion = config['criterion']
     batch_size = onehot_line_tensor.shape[0]
@@ -93,6 +97,12 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
 
     # Summed on the device in float64, the same sums Python floats gave, so no step waits on a
     # host sync; read once at the end of the batch.
+    if tracer is None:
+        tracer = NULL_TRACER
+    else:
+        if updater != 'dfa' or not isinstance(rnn, EphemeralRNN):
+            raise ValueError("loop tracing supports only the ephemeral model with the DFA updater")
+        tracer.begin(onehot_line_tensor.size(1) - 1, batch_size)
     loss_total = torch.zeros((), dtype=torch.float64, device=onehot_line_tensor.device)
     losses = []  # For DFA (per-batch losses)
     step_preds, step_losses = [], []  # [T-1] x [B], for per-interval metrics
@@ -124,6 +134,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             # --fast_backward_per_forward 1/N: only every N-th character (the first, N+1-th, ...)
             # gets a fast update. The slow stream and the forgetting are unchanged.
             skip_fast = isinstance(rnn, EphemeralRNN) and i % rnn.fast_subsample != 0
+            tracer.before_update(i, output, output_error, loss, hidden, fast_write=not skip_fast)
 
             # Apply DFA updates
             if isinstance(rnn, EphemeralRNN) and rnn.slow_update_every != 1:
@@ -186,6 +197,8 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     layer.apply_dfa_update(config["learning_rate"])
                 # The grads are left in place (the next step's zero_grad clears them) so that
                 # get_all_norms logs them, as it does for the backprop baseline.
+
+            tracer.after_update(i)
 
             if isinstance(rnn, EphemeralRNN) and rnn.fast_iterations > 1:
                 # --fast_backward_per_forward K: K - 1 more fast-only steps on this character; the
@@ -348,7 +361,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
     return output, loss_avg, torch.stack(step_preds), torch.stack(step_losses), all_outputs, all_labels
 
 
-def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False):
+def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False, tracer=None):
     """Main training function that sets up criterion and calls train_batch."""
     # For ALL updaters, use 'none' reduction to preserve per-example gradients
     # This allows independent weight updates per sequence in the batch
@@ -357,7 +370,7 @@ def train(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, l
         print(f"Warning: Overriding criterion reduction to 'none' for {config['updater']} training.")
         config['criterion'] = type(config['criterion'])(reduction='none')
     
-    return train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs)
+    return train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs, tracer)
 
 def positional_encoding(pos_dim, device, max_len=2000):
     """The [max_len, pos_dim] sinusoidal encoding added to each step's input
@@ -563,6 +576,18 @@ def build_parser():
                              'together (and at the end of each sequence). sequence: slow parameters are '
                              'frozen within a sequence, and the batch mean of the per-sequence sums is '
                              'applied at its end. See README "Update rate of the slow weights".')
+    parser.add_argument('--trace_loop_every', type=int, default=0,
+                        help='Ephemeral + DFA: every N iterations (a multiple of --print_freq; 0 = off) record '
+                             'the per-step, within-sequence feedback-loop traces of that iteration\'s batch '
+                             '(trunk activation norm, fast-weight norm, max logit, the per-step loop gain, ...; '
+                             'see loop_trace.py), log their summaries with the interval metrics, and write the '
+                             'arrays to <checkpoint_dir>/traces/trace_<iter>.pt. Observation only: training is '
+                             'bit-identical with it on or off.')
+    parser.add_argument('--checkpoint_keep_every', type=int, default=0,
+                        help='Also keep a numbered copy checkpoint_<iter>.pth every N iterations (0 = off; '
+                             'latest_checkpoint.pth is saved as before). trace_replay.py reads them.')
+    parser.add_argument('--checkpoint_keep_max', type=int, default=0,
+                        help='With --checkpoint_keep_every: keep only the newest M numbered copies (0 = all).')
     parser.add_argument('--heldout_eval_every', type=int, default=0,
                         help='Ephemeral + DFA, synthetic datasets: every N iterations, evaluate '
                              '--heldout_batches batches of the validation split with the slow weights '
@@ -638,6 +663,14 @@ def check_argument_combinations(args, parser):
     if args.optimizer != 'sgd' and (args.model_type != 'rnn' or args.updater == 'dfa'):
         parser.error(f"--optimizer {args.optimizer} supports only --model_type rnn with --updater backprop "
                      "or bptt: the ephemeral model and DFA update their weights by hand, per sequence.")
+    if args.trace_loop_every < 0 or args.checkpoint_keep_every < 0 or args.checkpoint_keep_max < 0:
+        parser.error("--trace_loop_every, --checkpoint_keep_every and --checkpoint_keep_max must not be negative.")
+    if args.trace_loop_every > 0:
+        if args.model_type != 'ephemeral' or args.updater != 'dfa':
+            parser.error("--trace_loop_every supports only --model_type ephemeral --updater dfa.")
+        if args.print_freq <= 0 or args.trace_loop_every % args.print_freq != 0:
+            parser.error("--trace_loop_every must be a multiple of --print_freq (the traces are logged "
+                         "with the interval metrics).")
     if args.wipe_every < 1:
         parser.error("--wipe_every must be at least 1.")
     if args.wipe_every > 1 and args.model_type != 'ephemeral':
@@ -812,6 +845,12 @@ def main():
             print("--fused_update: the DFA step is compiled per layer (first steps include compilation).")
 
     heldout_batches, heldout_metrics = None, {}
+    tracer, trace_metrics = None, {}
+    if args.trace_loop_every > 0:
+        tracer = LoopTracer(rnn, args.learning_rate, args.ephemeral_update_clamp, args.grad_norm_clip)
+        os.makedirs(os.path.join(args.checkpoint_dir, "traces"), exist_ok=True)
+        print(f"Loop traces every {args.trace_loop_every} iterations, written to "
+              f"{os.path.join(args.checkpoint_dir, 'traces')}.")
     if args.heldout_eval_every > 0:
         heldout_batches = load_heldout_batches(args.dataset, args.batch_size, args.heldout_batches,
                                                next(rnn.parameters()).device)
@@ -948,9 +987,16 @@ def main():
             # --- Train Step ---
             state["log_norms_now"] = (iter % args.print_freq == 0)
             # The train function returns step-by-step outputs for the first batch item if log_outputs=True
+            tracing_now = tracer is not None and iter % args.trace_loop_every == 0
             output, loss, step_preds, step_losses, current_iter_all_outputs, current_iter_all_labels = train(
-                line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train
+                line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train,
+                tracer=tracer if tracing_now else None
             )
+            if tracing_now:
+                traces = tracer.finish()
+                torch.save({"iter": iter, "traces": traces},
+                           os.path.join(args.checkpoint_dir, "traces", f"trace_{iter:08d}.pt"))
+                trace_metrics = summarize_traces(traces)
             
             # Terminate on a non-finite loss (NaN or inf; isnan alone misses inf)
             if not math.isfinite(loss):
@@ -1067,7 +1113,8 @@ def main():
                 metrics = interval.summary()
                 metrics.update(rnn.grad_clip_stats.summary())
                 metrics.update(heldout_metrics)
-                heldout_metrics = {}
+                metrics.update(trace_metrics)
+                heldout_metrics, trace_metrics = {}, {}
                 metrics["iters_per_sec"] = interval.iterations / (time.time() - interval_start)
                 avg_loss_plot = metrics.get("loss", float("nan"))
 
@@ -1171,6 +1218,8 @@ def main():
             # ==============================================================
             if args.checkpoint_save_freq > 0 and iter % args.checkpoint_save_freq == 0:
                 save_checkpoint(checkpoint_state(iter + 1), args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
+            if args.checkpoint_keep_every > 0 and iter % args.checkpoint_keep_every == 0:
+                keep_numbered_checkpoint(checkpoint_state(iter + 1), args.checkpoint_dir, iter, args.checkpoint_keep_max)
 
         # End of training loop - mark normal completion if no early stopping occurred
         if args.track and wandb.run and not nan_detected and not early_stopped and not stopped_by_signal:

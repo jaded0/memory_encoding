@@ -688,6 +688,26 @@ accuracy on each episode's first recall target, which no answer write can have h
   strings also occur in training. Held out means fresh fast state and frozen slow weights, not
   unseen strings.
 
+### Feedback-loop traces (`--trace_loop_every`, `trace_replay.py`)
+
+Observation only: nothing about training changes (tests check weights and losses bit for bit). Every
+`--trace_loop_every N` iterations (a multiple of `--print_freq`; 0 = off) the batch's per-step,
+within-sequence traces are recorded by `loop_trace.LoopTracer`: trunk activation norm, fast-weight
+norm, the fast write norm, the per-step **loop gain** (write norm at step t over step t-1; sustained
+above 1 means amplification), max logit and logit norm, per-step loss, and each layer's fast and
+slow contribution to its pre-activation. Summaries (`trace/...`) join the interval metrics; the
+arrays go to `<checkpoint_dir>/traces/trace_<iter>.pt`. `--checkpoint_keep_every N` (with
+`--checkpoint_keep_max M`) keeps numbered checkpoints for the replay tool:
+
+```bash
+python trace_replay.py --checkpoints runs/control --batches 2 --out replay.pt   # every checkpoint_*.pth
+python plots/loop_figures.py replay.pt --out figures/loop   # see the script's --help
+```
+
+It works with `--fused_update`, every `--slow_update_every` and `--fast_backward_per_forward` (the
+extra fast passes are not traced; the first pass is). The collection interface and what the traces mean
+are in the vault design note "ephemeral weights feedback-loop instrumentation design 2026-09-30".
+
 ### Key-value memory tasks (`kv_tasks.py`)
 
 Associative recall as ordinary synthetic datasets (`--dataset kv_unique_4`, ...). An episode is
