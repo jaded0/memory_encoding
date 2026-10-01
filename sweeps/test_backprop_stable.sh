@@ -29,7 +29,6 @@ PLAST_PROPORTION=0.2            # Proportion of weights that are plastic
 ENABLE_RECURRENCE=true          # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
-NORMALIZE=false                 # Normalize weights post-update
 CLIP_WEIGHTS=0                  # Max absolute weight value (0=off)
 
 # --- Model Architecture ---
@@ -65,7 +64,6 @@ python -u train.py \
     --plasticity $PLAST_CLIP \
     $GRAD_CLIP_FLAG $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
-    --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \
     --num_layers $NUM_LAYERS \
