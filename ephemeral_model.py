@@ -156,7 +156,7 @@ def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral
                    forget_rate: float, learning_rate: float, update_clamp: float,
                    weight_clamp: float, is_last_layer: bool,
                    slow_weight_decay: float = 0.0, fast_weight_clamp: float = 0.0,
-                   freeze_slow: bool = False, freeze_fast: bool = False):
+                   freeze_slow: bool = False, freeze_fast: bool = False, fast_forget: bool = True):
     """One EphemeralLinear's whole DFA step, in place on weights and bias: the DFA gradient, the
     update and weight clamp (apply_update), then forgetting (apply_forget_step).
     It is built from the same helpers as those methods, in the same order, so run eagerly it
@@ -168,7 +168,9 @@ def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral
     clamps act entry by entry, so the fast entries come out as in training.
 
     freeze_fast (--fast_backward_per_forward 1/N, on a character that gets no fast update): the
-    slow entries and the bias take their step as usual, and the ephemeral entries only forget."""
+    slow entries and the bias take their step as usual, and the ephemeral entries only forget
+    (fast_forget=False: they are left exactly as they are, the slow half of a K >= 2 character,
+    whose fast half already forgot)."""
     update = ephemeral_update(dfa_per_sample_gradient(projected_error, inputs), plasticity,
                               ephemeral_mask, update_clamp, is_last_layer)
     updated = clamp_fast_entries(
@@ -178,7 +180,7 @@ def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral
     if freeze_slow:
         updated = torch.where(ephemeral_mask.unsqueeze(0), updated, weights)
     if freeze_fast:
-        forgotten = weights * forget_keep(forget_rate, ephemeral_mask, slow_weight_decay)
+        forgotten = weights * forget_keep(forget_rate, ephemeral_mask, slow_weight_decay) if fast_forget else weights
         updated = torch.where(ephemeral_mask.unsqueeze(0), forgotten, updated)
     weights.copy_(updated)
     if bias is not None:
@@ -779,6 +781,7 @@ class EphemeralRNN(torch.nn.Module):
         if self.fast_backward_per_forward != 1 and updater != 'dfa':
             raise ValueError(f"--fast_backward_per_forward {self.fast_backward_per_forward} supports "
                              f"only the DFA updater, not {updater!r}")
+        self._force_split_step = False  # tests: take the K >= 2 split step even for K = 1
         self.layer_norm = layer_norm
 
         # Using EphemeralLinear instead of Linear
@@ -913,15 +916,60 @@ class EphemeralRNN(torch.nn.Module):
              learning_rate, update_clamp, layer.weight_clamp, layer.is_last_layer,
              layer.slow_weight_decay if forget else 0.0, layer.fast_weight_clamp, True)
 
+    @property
+    def split_step(self):
+        """K >= 2 (or the testing hook): a character's DFA step is split in two, see split_dfa_step."""
+        return self.fast_iterations > 1 or self._force_split_step
+
+    @torch.no_grad()
+    def split_dfa_step(self, output_error, learning_rate, update_clamp, grad_norm_clip=0,
+                       log_norms=False):
+        """--fast_backward_per_forward K >= 2, --slow_update_every 1: the first half of a character's
+        DFA step. The fast entries take pass 1's step now (the same projected errors, clip, alpha,
+        clamps and the character's one forgetting step, as fast_only_dfa_step). Everything slow
+        waits: pass 1's projected errors and layer inputs are saved and returned, and
+        apply_slow_step applies the slow half from them after the extra passes, so every pass sees
+        the same slow weights and the slow gradient is pass 1's, from the weights before the step."""
+        projected, norms = self.dfa_step_errors(output_error, grad_norm_clip)
+        if norms is not None:
+            self.grad_clip_stats.record(norms, grad_norm_clip)
+        saved = []
+        for layer, error in zip(self.trained_layers(), projected):
+            layer._last_projected_error = error
+            inputs = layer.in_traces.data
+            if log_norms:
+                layer._log_update_norms(ephemeral_update(
+                    dfa_per_sample_gradient(error, inputs), layer.plasticity,
+                    layer.ephemeral_mask, update_clamp, layer.is_last_layer))
+            saved.append((error, inputs))
+            if not layer.is_last_layer:
+                self._fast_entry_step(layer, error, learning_rate, update_clamp)
+        return saved
+
+    @torch.no_grad()
+    def apply_slow_step(self, saved, learning_rate, update_clamp):
+        """The second half of split_dfa_step: every layer's slow entries (i2o included), bias,
+        --weight_clamp and --slow_weight_decay (which rides on the forget step in the fused
+        step), from the saved pass-1 errors and inputs. The fast entries are left as they are:
+        their forgetting was in the first half."""
+        step = self.fused_layer_step or dfa_layer_step
+        for layer, (error, inputs) in zip(self.trained_layers(), saved):
+            step(layer.per_sample_weights.data, None if layer.bias is None else layer.bias.data,
+                 error, inputs, layer.fused_plasticity(), layer.ephemeral_mask,
+                 layer.forget_rate, learning_rate, update_clamp, layer.weight_clamp,
+                 layer.is_last_layer, layer.slow_weight_decay, layer.fast_weight_clamp,
+                 False, True, False)
+
     @torch.no_grad()
     def extra_fast_iterations(self, input, hidden, target, criterion, learning_rate, update_clamp,
                               grad_norm_clip=0):
-        """--fast_backward_per_forward K >= 2, after the character's first (ordinary) step: K - 1
-        times, forward the same input from the same incoming hidden state with the fast weights
-        as the last step left them, take the output error of that fresh output, and apply a
-        fast-only DFA step without forgetting (forgetting happened once, in the first step). Slow
-        entries, i2o and biases do not change, and no clip statistics or loss are recorded.
-        Returns the hidden state of the final pass."""
+        """--fast_backward_per_forward K >= 2, after the character's first pass: K - 1 times,
+        forward the same input from the same incoming hidden state with the fast weights as the
+        last step left them (the slow weights are still the pre-step ones), take the output error
+        of that fresh output, and apply a fast-only DFA step without forgetting (forgetting
+        happened once, in the first pass). Slow entries, i2o and biases do not change, and no clip
+        statistics or loss are recorded. Returns the hidden state of the final pass (the incoming
+        one if K = 1, for the testing hook)."""
         final_hidden = None
         for _ in range(self.fast_iterations - 1):
             output, final_hidden = self(input, hidden)
@@ -953,7 +1001,7 @@ class EphemeralRNN(torch.nn.Module):
 
     @torch.no_grad()
     def windowed_dfa_step(self, output_error, learning_rate, update_clamp, grad_norm_clip=0,
-                          log_norms=False, skip_fast=False):
+                          log_norms=False, skip_fast=False, defer_apply=False):
         """The DFA step under --slow_update_every N or 'sequence' (train.py's DFA branch).
 
         The fast entries take this step's update exactly as under the per-step update (the same
@@ -965,7 +1013,9 @@ class EphemeralRNN(torch.nn.Module):
         applied (EphemeralLinear.apply_slow_window). log_norms also records the per-step update
         norms the per-step path logs (the slow part as the would-be per-step update).
         skip_fast (--fast_backward_per_forward 1/N, a character with no fast update): the fast
-        entries only forget (a step with zero error), the slow gradient is accumulated as usual."""
+        entries only forget (a step with zero error), the slow gradient is accumulated as usual.
+        defer_apply (K >= 2): a window that fills up is not applied here; the caller calls
+        finish_slow_window after the extra passes, so they see the same slow weights."""
         projected, norms = self.dfa_step_errors(output_error, grad_norm_clip)
         if norms is not None:
             self.grad_clip_stats.record(norms, grad_norm_clip)
@@ -981,6 +1031,12 @@ class EphemeralRNN(torch.nn.Module):
                 self._fast_entry_step(layer, torch.zeros_like(error) if skip_fast else error,
                                       learning_rate, update_clamp)
         self.pending_slow_steps += 1
+        if not defer_apply:
+            self.finish_slow_window(learning_rate)
+
+    @torch.no_grad()
+    def finish_slow_window(self, learning_rate):
+        """Applies the window if it is full (windowed_dfa_step's last move, deferred for K >= 2)."""
         if self.pending_slow_steps == self.slow_update_every:
             self.apply_pending_slow_update(learning_rate)
 

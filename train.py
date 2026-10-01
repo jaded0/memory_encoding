@@ -131,10 +131,15 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 # step is accumulated and applied every N steps and at the end of the sequence.
                 rnn.windowed_dfa_step(output_error, config["learning_rate"], config["ephemeral_update_clamp"],
                                       config.get('grad_norm_clip', 0), log_norms=state.get('log_norms_now', False),
-                                      skip_fast=skip_fast)
+                                      skip_fast=skip_fast, defer_apply=rnn.split_step)
             elif skip_fast:
                 rnn.skip_fast_dfa_step(output_error, config["learning_rate"], config["ephemeral_update_clamp"],
                                        config.get('grad_norm_clip', 0), log_norms=state.get('log_norms_now', False))
+            elif isinstance(rnn, EphemeralRNN) and rnn.split_step:
+                # --fast_backward_per_forward K >= 2: pass 1's fast half now, the slow half (from the
+                # saved pass-1 errors and inputs) after the extra passes below.
+                slow_half = rnn.split_dfa_step(output_error, config["learning_rate"], config["ephemeral_update_clamp"],
+                                               config.get('grad_norm_clip', 0), log_norms=state.get('log_norms_now', False))
             elif isinstance(rnn, EphemeralRNN) and rnn.fused_layer_step is not None and not state.get('log_norms_now', False):
                 # --fused_update: the same step as the branch below, one kernel per layer. Steps that
                 # log update norms take the branch below, which materializes the update.
@@ -187,12 +192,19 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 # The grads are left in place (the next step's zero_grad clears them) so that
                 # get_all_norms logs them, as it does for the backprop baseline.
 
-            if isinstance(rnn, EphemeralRNN) and rnn.fast_iterations > 1:
+            if isinstance(rnn, EphemeralRNN) and rnn.split_step:
                 # --fast_backward_per_forward K: K - 1 more fast-only steps on this character; the
                 # loss and metrics above are the first pass's, the next hidden state the last's.
-                hidden = rnn.extra_fast_iterations(
+                extra_hidden = rnn.extra_fast_iterations(
                     hot_input_char_tensor, incoming_hidden, final_char, criterion, config["learning_rate"],
                     config["ephemeral_update_clamp"], config.get('grad_norm_clip', 0))
+                if extra_hidden is not None:
+                    hidden = extra_hidden
+                # Then the slow half of pass 1's step, or the deferred window end.
+                if rnn.slow_update_every == 1:
+                    rnn.apply_slow_step(slow_half, config["learning_rate"], config["ephemeral_update_clamp"])
+                else:
+                    rnn.finish_slow_window(config["learning_rate"])
 
             state['training_instance'] += 1
             loss_total += loss.detach().mean().double()

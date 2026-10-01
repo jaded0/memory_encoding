@@ -69,6 +69,13 @@ def fast_state(model):
             for layer in model.trained_layers() if not layer.is_last_layer]
 
 
+def slow_state_of(weights_list, biases_list, model):
+    state = []
+    for layer, w, b in zip(model.trained_layers(), weights_list, biases_list):
+        state += [w[:, ~layer.ephemeral_mask].clone(), b.clone()]
+    return state
+
+
 def same(a, b):
     return all(torch.equal(x, y) for x, y in zip(a, b))
 
@@ -93,7 +100,9 @@ def default_step(model, error):
 def reference(model, batches, iterations=1, subsample=1, wipe_every=1):
     """train_batch written out by hand for slow_update_every 1: the default step on pass 1 (on a
     skipped character the same step with the fast entries put back to their forgotten old value),
-    then iterations - 1 re-forwards, each with a fast-only step and no forgetting."""
+    then iterations - 1 re-forwards, each with a fast-only step and no forgetting. The extra
+    passes see the slow weights from before pass 1's step: the step's slow entries and biases are
+    set aside, the old ones put back for the passes, and the step's ones restored after them."""
     count, losses = 0, []
     for batch in batches:
         model.start_sequence_wipe(wipe_fast=count % wipe_every == 0)
@@ -105,8 +114,14 @@ def reference(model, batches, iterations=1, subsample=1, wipe_every=1):
             output, hidden = model(x, incoming)
             loss, error = dfa_output_error(output, target, CRITERION)
             losses.append(loss.detach())
-            before = weights(model)
+            before, before_bias = weights(model), biases(model)
             default_step(model, error)
+            stepped = weights(model), biases(model)
+            for layer, old in zip(model.trained_layers(), before):  # pre-step slow weights for the passes
+                slow = ~layer.ephemeral_mask
+                layer.per_sample_weights.data[:, slow] = old[:, slow]
+            for layer, bias in zip(model.trained_layers(), before_bias):
+                layer.bias.data.copy_(bias)
             if i % subsample != 0:
                 for layer, old in zip(model.trained_layers(), before):
                     layer.per_sample_weights.data[:, layer.ephemeral_mask] = \
@@ -122,6 +137,10 @@ def reference(model, batches, iterations=1, subsample=1, wipe_every=1):
                                            layer.fused_plasticity(), layer.ephemeral_mask, 0.0,
                                            LEARNING_RATE, 0, layer.weight_clamp, False, 0.0,
                                            layer.fast_weight_clamp, True)
+            for layer, new, new_bias in zip(model.trained_layers(), *stepped):
+                slow = ~layer.ephemeral_mask
+                layer.per_sample_weights.data[:, slow] = new[:, slow]
+                layer.bias.data.copy_(new_bias)
     return torch.stack(losses).mean().item()
 
 
@@ -240,9 +259,7 @@ class IterationsTest(unittest.TestCase):
             base = build(1, slow, plasticity=0.0)
             for batch in SEQUENCES:
                 run(base, batch)
-            # With a slow step inside the character (1, or the end of an N window) the re-forward of
-            # K >= 2 already sees that step, so K is exactly pass-1-only only under 'sequence'.
-            for ratio in ((3, "1/3") if slow == "sequence" else ("1/3",)):
+            for ratio in (3, "1/3"):
                 with self.subTest(slow=slow, ratio=ratio):
                     model = build(ratio, slow, plasticity=0.0)
                     for batch in SEQUENCES:
@@ -292,6 +309,124 @@ class SubsampleTest(unittest.TestCase):
         run(model, SEQUENCES[0])  # 4 characters: 0 updated, 1 and 2 skipped, 3 updated
         run(model, SEQUENCES[1])
         self.assertEqual(len(fired), 4)
+
+
+class SplitStepTest(unittest.TestCase):
+    """K >= 2 splits a character's step: fast half in pass 1, slow half after the extra passes."""
+
+    def forced(self, **options):
+        model = build(**options)
+        model._force_split_step = True
+        return model
+
+    def test_split_equals_fused_step_at_k1(self):
+        cases = [
+            ({}, {}),
+            ({"slow_weight_decay": 0.1}, {}),
+            ({"weight_clamp": 0.3}, {}),
+            ({"fast_weight_clamp": 0.2}, {}),
+            ({}, {"ephemeral_update_clamp": 0.05}),
+            ({}, {"grad_norm_clip": 0.5}),
+            ({"dfa_fprime": True}, {}),
+            ({"layer_norm": True}, {}),
+        ]
+        for model_options, run_options in cases:
+            for fused in (False, True):
+                with self.subTest(model=model_options, run=run_options, fused=fused):
+                    default, split = build(**model_options), self.forced(**model_options)
+                    if fused:
+                        default.enable_fused_update(compile=False)
+                        split.enable_fused_update(compile=False)
+                    for batch in SEQUENCES:
+                        loss_default = run(default, batch, **run_options)
+                        loss_split = run(split, batch, **run_options)
+                        self.assertEqual(loss_default, loss_split)
+                    check = same if (fused or "grad_norm_clip" not in run_options) else close
+                    for a, b in ((weights(default), weights(split)), (biases(default), biases(split))):
+                        check(a, b)
+
+    def test_split_equals_fused_step_with_wipe_every(self):
+        default, split = build(), self.forced()
+        for model in (default, split):
+            state = {"training_instance": 0, "log_norms_now": False}
+            for batch in SEQUENCES:
+                run(model, batch, state, wipe_every=4)
+        self.assertTrue(same(weights(default), weights(split)))
+        self.assertTrue(same(biases(default), biases(split)))
+
+    def test_split_windowed_equals_windowed_at_k1(self):
+        for slow in (2, "sequence"):
+            with self.subTest(slow=slow):
+                default, split = build(slow_update_every=slow), self.forced(slow_update_every=slow)
+                for batch in SEQUENCES:
+                    run(default, batch), run(split, batch)
+                self.assertTrue(same(weights(default), weights(split)))
+                self.assertTrue(same(biases(default), biases(split)))
+
+    def instrument(self, model):
+        """Records each forward's slow state, and each slow step's pre-state and saved pass-1 inputs."""
+        log = {"forwards": [], "steps": []}
+        original_forward, original_split, original_apply = model.forward, model.split_dfa_step, model.apply_slow_step
+        pending = {}
+
+        def forward(x, h):
+            log["forwards"].append(slow_state(model))
+            return original_forward(x, h)
+
+        def split(*args, **kwargs):
+            saved = original_split(*args, **kwargs)
+            pending["pre"] = (weights(model), biases(model), saved)
+            return saved
+
+        def apply(saved, lr, clamp):
+            original_apply(saved, lr, clamp)
+            log["steps"].append((*pending["pre"], weights(model), biases(model)))
+        model.forward, model.split_dfa_step, model.apply_slow_step = forward, split, apply
+        return log
+
+    def test_per_step_slow_step_is_pass_ones_and_all_passes_see_pre_step_weights(self):
+        options = dict(slow_weight_decay=0.05, weight_clamp=0.9)
+        model = build(3, **options)
+        log = self.instrument(model)
+        run(model, SEQUENCES[0], grad_norm_clip=0.5)
+        self.assertEqual(len(log["forwards"]), 12)
+        for c in range(4):  # the three passes of a character read identical slow weights
+            self.assertTrue(same(log["forwards"][3 * c], log["forwards"][3 * c + 1]))
+            self.assertTrue(same(log["forwards"][3 * c], log["forwards"][3 * c + 2]))
+        self.assertEqual(len(log["steps"]), 4)
+        for c, (w0, b0, saved, w1, b1) in enumerate(log["steps"]):
+            self.assertTrue(same(slow_state_of(w0, b0, model), log["forwards"][3 * c]))
+            oracle = build(**options)  # a K = 1 step from the same pass-1 errors and inputs
+            for layer, w, b, (error, inputs) in zip(oracle.trained_layers(), w0, b0, saved):
+                layer.per_sample_weights.data.copy_(w)
+                layer.bias.data.copy_(b)
+                dfa_layer_step(layer.per_sample_weights.data, layer.bias.data, error, inputs,
+                               layer.fused_plasticity(), layer.ephemeral_mask, layer.forget_rate,
+                               LEARNING_RATE, 0, layer.weight_clamp, layer.is_last_layer,
+                               layer.slow_weight_decay, layer.fast_weight_clamp)
+            self.assertTrue(same(slow_state_of(w1, b1, model), slow_state(oracle)))
+
+    def test_window_slow_weights_change_only_between_characters(self):
+        for slow in (2, 3):
+            with self.subTest(slow=slow):
+                model = build(3, slow_update_every=slow, slow_weight_decay=0.05)
+                forwards = []
+                original = model.forward
+                model.forward = lambda x, h: (forwards.append(slow_state(model)), original(x, h))[1]
+                accumulated = []
+                for layer in model.trained_layers():
+                    def counting(*args, _f=layer.accumulate_slow_gradient):
+                        accumulated.append(1)
+                        return _f(*args)
+                    layer.accumulate_slow_gradient = counting
+                run(model, SEQUENCES[0])
+                for c in range(4):
+                    self.assertTrue(same(forwards[3 * c], forwards[3 * c + 1]))
+                    self.assertTrue(same(forwards[3 * c], forwards[3 * c + 2]))
+                self.assertEqual(len(accumulated), 4 * len(model.trained_layers()))
+                # the window closing at character slow - 1 is applied after that character's passes
+                close = slow - 1
+                self.assertFalse(same(forwards[3 * close], forwards[3 * (close + 1)]))
 
 
 class CombinationsTest(unittest.TestCase):
