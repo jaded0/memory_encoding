@@ -62,7 +62,6 @@ PLAST_PROPORTION=0.2         # Proportion of weights that are plastic in ephemer
 ENABLE_RECURRENCE=true       # Whether to enable recurrent hidden state connections
 
 # --- Regularization & Stability ---
-NORMALIZE=false              # Normalize weights post-update (true/false)
 CLIP_WEIGHTS=1e0               # Max absolute weight value
 
 # ======================== Model Architecture ==================================
@@ -103,7 +102,6 @@ python -u train.py \
     --ephemeral_update_clamp $GRAD_CLIP \
     --grad_norm_clip $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
-    --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \
     --num_layers $NUM_LAYERS \

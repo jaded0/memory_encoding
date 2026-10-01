@@ -131,22 +131,26 @@ and does not change how many backward passes there are). `--fast_backward_per_fo
 integer K or `1/N` for an integer N >= 2. The default is today's one DFA step per character, bit
 for bit: the golden traces are unchanged and no checkpoint key is added.
 
-- **`K >= 2`**: the first pass is the ordinary forward and DFA step. Then K - 1 more times the
-  forward pass is re-run on the same character, from the same incoming hidden state, with the
-  current (already updated) fast weights; the output error is recomputed from that fresh output and
-  a fast-only DFA step is applied (slow entries, i2o and biases frozen, `--grad_norm_clip`,
-  clamps and alpha as usual). Forgetting happens once per character, in the first pass. The slow
-  gradient, the loss and metrics, and the `--grad_norm_clip` statistics come from the first pass;
-  the hidden state passed to the next character is the last pass's. Under `--slow_update_every
-  sequence` the slow entries are frozen within a sequence, so the slow stream is the first pass's
-  alone. Under the per-step update (or an N window), the slow step of the first pass is already
-  applied when the extra passes re-forward, so they and the next character see it.
+- **`K >= 2`**: the character's step is split in two. Pass 1 is the ordinary forward, and its DFA
+  step is applied to the fast entries only (with the character's one forgetting step); its
+  projected errors and layer inputs are saved. Then K - 1 more times the forward pass is re-run on
+  the same character, from the same incoming hidden state, with the updated fast weights; the
+  output error is recomputed from that fresh output and a fast-only DFA step is applied, without
+  forgetting (`--grad_norm_clip`, clamps and alpha as usual). After the last pass the slow half of
+  pass 1's step is applied from the saved errors and inputs: the slow entries, i2o and biases,
+  `--weight_clamp` and `--slow_weight_decay` (which rides on the forget step in the single-kernel
+  step, so it moves into this half), per step, or accumulated as `--slow_update_every` says (an N
+  window that fills up is applied after the extra passes). So every pass sees the same slow
+  weights, and the slow stream, loss, metrics and `--grad_norm_clip` statistics are pass 1's alone,
+  in every `--slow_update_every` mode. The hidden state passed to the next character is the last
+  pass's. With K = 1 the single fused step is used, unchanged.
 - **`1/N`**: only every N-th character of a sequence (the first, N + 1-th, ...) gets a fast update.
   The other characters run the forward pass, and the fast entries only forget (forgetting is
   time-based and applies every character). The slow stream is unchanged: every character
   contributes its gradient as `--slow_update_every` says.
-- **Cost.** K >= 2 costs about K forwards per character (plus the fast-only steps), so expect
-  roughly K times fewer iterations per second; 1/N costs no more than 1.
+- **Cost.** K >= 2 costs about K forwards per character plus two update kernels per layer (the
+  fast half and the slow half) instead of one, so expect more than K times fewer iterations per
+  second; 1/N costs no more than 1.
 - **Together with other flags.** `--fused_update` (the extra passes use the same compiled fast-only
   step, with forgetting turned off), `--slow_update_every`, `--dfa_fprime`, `--layer_norm`,
   `--wipe_every` and the clamps work. Resuming with a different value is refused (a checkpoint

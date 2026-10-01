@@ -89,7 +89,6 @@ LEARNING_RATE=1e-3           # From whole_run.sh
 PLAST_CLIP=1e4               # From whole_run.sh (5e3 instead of 1e4)
 GRAD_CLIP=0                  # From whole_run.sh
 FORGET_RATE=0.01             # From whole_run.sh (0.01 instead of variable)
-NORMALIZE=false              # From whole_run.sh
 CLIP_WEIGHTS=0               # From whole_run.sh
 HIDDEN_SIZE=512              # From whole_run.sh
 NUM_LAYERS=3                 # From whole_run.sh
@@ -129,7 +128,6 @@ forward_signals python -u train.py \
     --plasticity $PLAST_CLIP \
     $GRAD_CLIP_FLAG $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
-    --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \
     --num_layers $NUM_LAYERS \

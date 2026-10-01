@@ -125,7 +125,6 @@ TAGS=(bench_sweep comprehensive_sweep sweep_longer sweep_weight_clips)
 # ======================== Fixed Parameters (Not Swept) ========================
 INPUT_MODE='last_one'
 FORGET_RATE=0.01
-NORMALIZE=false
 NUM_LAYERS=3
 POS_ENCODING=0
 BATCH_SIZE=16
@@ -164,7 +163,6 @@ forward_signals python -u train.py \
     --plasticity $PLAST_CLIP \
     $GRAD_CLIP_FLAG $GRAD_CLIP \
     --forget_rate $FORGET_RATE \
-    --unit_norm_weights $NORMALIZE \
     --weight_clamp $CLIP_WEIGHTS \
     --hidden_size $HIDDEN_SIZE \
     --num_layers $NUM_LAYERS \
