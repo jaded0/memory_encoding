@@ -39,14 +39,16 @@ def dfa_activation_derivative(pre_activation, activation):
     raise ValueError(f"No DFA activation derivative for activation {activation!r}")
 
 
-def dfa_projected_error(error_signal, feedback_weights, is_last_layer, activation_derivative=None):
+def dfa_projected_error(error_signal, feedback_weights, is_last_layer, activation_derivative=None, lr_scale=1.0):
     """The error a layer's DFA update uses, [B, out]: the output error itself for a last layer
     (i2o), else error_signal @ feedback_weights, multiplied element-wise by
     activation_derivative (f'(a) at the layer's pre-activation, [B, out]) when it is given
     (--dfa_fprime; Nøkland 2016: delta_l = (B_l e) * f'(a_l)). error_signal is train.py's
     output_error, [B, vocab]; it is never modified, and a last layer gets that same object."""
     if is_last_layer:
-        return error_signal
+        # --readout_lr_scale s: i2o's step is lr * (error x input), so scaling its error scales its
+        # learning rate (weights and bias) and nothing else. 1 returns the shared object itself.
+        return error_signal if lr_scale == 1.0 else error_signal * lr_scale
     projected = error_signal @ feedback_weights
     if activation_derivative is not None:
         projected = projected * activation_derivative
@@ -143,14 +145,32 @@ def clamp_fast_entries(weights, ephemeral_mask, fast_weight_clamp):
     return weights
 
 
-def dfa_output_error(output, target, criterion):
+def dfa_output_error(output, target, criterion, label_smoothing=0.0, entropy_penalty=0.0, rows=None):
     """The DFA output error dL/d(output), [B, vocab], and the per-sequence loss [B], for the
     logits of one step. criterion is train.py's CrossEntropyLoss(reduction='none'). An all-zero
     (padding) target row gives zero error, so that step writes nothing. The error is a new
-    tensor, not a view of output."""
+    tensor, not a view of output.
+
+    Opt-in margin levers (both default 0 = the original computation, unchanged):
+    label_smoothing eps trains toward target*(1-eps) + eps/V instead of the one-hot target (the error
+    is softmax - smoothed target; a padding row stays at zero error), entropy_penalty beta adds
+    -beta * H(softmax) to the loss (a confidence penalty), on the rows of the boolean mask `rows`
+    [B] only (None = every row). The returned loss then includes those terms."""
     with torch.enable_grad():
         output.requires_grad_(True)
-        loss = criterion(output, target)
+        if label_smoothing or entropy_penalty:
+            valid = (target.sum(1) > 0).to(output.dtype)
+            if rows is not None:
+                valid = valid * rows.to(output.dtype)
+            eps = label_smoothing * valid.unsqueeze(1)
+            smoothed = target * (1 - eps) + eps / target.shape[1] * target.sum(1, keepdim=True)
+            loss = criterion(output, smoothed)
+            if entropy_penalty:
+                logp = torch.log_softmax(output, dim=1)
+                entropy = -(logp.exp() * logp).sum(1)
+                loss = loss - entropy_penalty * valid * entropy
+        else:
+            loss = criterion(output, target)
         error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
     return loss, error
 
@@ -319,6 +339,7 @@ class EphemeralLinear(nn.Linear):
         self.weight_clamp = weight_clamp
         self.updater = updater
         self.is_last_layer = is_last_layer
+        self.lr_scale = 1.0  # --readout_lr_scale on i2o (see dfa_projected_error)
         # --dfa_fprime (set by EphemeralRNN): scale the projected DFA error by f'(pre-activation),
         # where activation names the nonlinearity the model applies to this layer's output.
         self.dfa_fprime = False
@@ -531,7 +552,7 @@ class EphemeralLinear(nn.Linear):
         # Project error signal using feedback weights (DFA-specific); last layers use it as is.
         # error_signal: [batch_size, vocab_size] -> projected_error: [batch_size, out_features]
         projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer,
-                                              dfa_layer_activation_derivative(self))
+                                              dfa_layer_activation_derivative(self), self.lr_scale)
 
         # Store projected error for bias updates
         self._last_projected_error = projected_error
@@ -875,7 +896,7 @@ class EphemeralRNN(torch.nn.Module):
         gradient, |p_b x_b^T| = |p_b| |x_b|, and scales the projected errors."""
         layers = self.trained_layers()
         projected = [dfa_projected_error(output_error, layer.feedback_weights, layer.is_last_layer,
-                                         dfa_layer_activation_derivative(layer))
+                                         dfa_layer_activation_derivative(layer), layer.lr_scale)
                      for layer in layers]
         if grad_norm_clip <= 0:
             return projected, None

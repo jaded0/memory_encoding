@@ -427,6 +427,11 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     for key, default in (('feedback_init', 'random'), ('feedback_scale', 1.0)):
         if key in config and config[key] != loaded_config.get(key, default):
             mismatches.append((key, config[key], loaded_config.get(key, default)))
+    # The margin levers change the error or the i2o step, so a resume may not switch them.
+    for key, default in (('label_smoothing', 0.0), ('entropy_penalty', 0.0), ('shaping_scope', 'all'),
+                         ('readout_lr_scale', 1.0)):
+        if key in config and config[key] != loaded_config.get(key, default):
+            mismatches.append((key, config[key], loaded_config.get(key, default)))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")

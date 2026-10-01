@@ -9,7 +9,7 @@ from reproducibility import DataStream, capture_rng_state, record_seed_in_slurm,
 from metrics import IntervalMetrics, recall_chance
 from heldout import evaluate_protocols, load_heldout_batches
 from loop_trace import NULL_TRACER, LoopTracer, summarize as summarize_traces
-from utils import model_input, randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint, check_checkpoint_code_version, CHECKPOINT_CODE_VERSION, keep_numbered_checkpoint
+from utils import get_charset, model_input, randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint, check_checkpoint_code_version, CHECKPOINT_CODE_VERSION, keep_numbered_checkpoint
 import json
 import time
 import math
@@ -73,6 +73,43 @@ def wb_mark_end(reason: str, tags=None, exit_code: int | None = None):
         current = set(getattr(run, "tags", []))
         run.tags = list(current.union(set(tags)))
 
+ANSWER_MARKER_INDEX = get_charset('long_range_memory_dataset').index('!')  # the input at the answer step
+
+
+class MarginStats:
+    """--log_margin: at the answer step (the step whose input is the query marker '!'), the margin of
+    the logits (correct minus the best other), the softmax probability of the correct class and of the
+    most likely class, accumulated on the device and read at each print_freq."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.sums = None
+        self.count = None
+
+    def add(self, logits, target, rows):
+        if rows is None:
+            raise ValueError("--log_margin needs --dataset long_range_memory_dataset")
+        correct = logits.gather(1, target.argmax(1, keepdim=True)).squeeze(1)
+        other = logits.masked_fill(target > 0, float('-inf')).max(1).values
+        prob = torch.softmax(logits, 1)
+        values = torch.stack([correct - other, prob.gather(1, target.argmax(1, keepdim=True)).squeeze(1),
+                              prob.max(1).values]) * rows.to(logits.dtype)
+        total, count = values.double().sum(1), rows.double().sum()
+        self.sums = total if self.sums is None else self.sums + total
+        self.count = count if self.count is None else self.count + count
+
+    def summary(self):
+        if self.count is None or self.count.item() == 0:
+            return {}
+        margin, p_correct, p_max = (self.sums / self.count).tolist()
+        return {"answer_margin": margin, "answer_p_correct": p_correct, "answer_p_max": p_max}
+
+
+MARGIN_STATS = MarginStats()
+
+
 def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False,
                 tracer=None):
     """Trains on one batch of sequences with DFA, backprop or BPTT. tracer (a loop_trace.LoopTracer,
@@ -130,7 +167,15 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             # Per-sequence output error dL/d(output), [B, vocab]: a new tensor (not a view of
             # output or of grad_outputs) that needs no grad. It was two names, global_error and
             # reward_update, bound to this one object; there was never a second tensor.
-            loss, output_error = dfa_output_error(output, final_char, criterion)
+            shaping_rows = None
+            if config.get('label_smoothing', 0.0) or config.get('entropy_penalty', 0.0) or config.get('log_margin', False):
+                answer_rows = onehot_line_tensor[:, i, ANSWER_MARKER_INDEX] > 0 if config.get('dataset') == 'long_range_memory_dataset' else None
+                if config.get('shaping_scope', 'all') == 'answer':
+                    shaping_rows = answer_rows
+                if config.get('log_margin', False):
+                    MARGIN_STATS.add(output.detach(), final_char, answer_rows)
+            loss, output_error = dfa_output_error(output, final_char, criterion, config.get('label_smoothing', 0.0),
+                                                  config.get('entropy_penalty', 0.0), shaping_rows)
             losses.append(loss.detach())
 
             # --fast_backward_per_forward 1/N: only every N-th character (the first, N+1-th, ...)
@@ -463,6 +508,7 @@ def build_model(config, charset, n_characters):
             model.set_feedback(config.get('feedback_init', 'random'), config.get('feedback_scale', 1.0))
         if config.get('readout_init_scale', 1.0) != 1.0:
             model.scale_readout(config['readout_init_scale'])
+        model.i2o.lr_scale = config.get('readout_lr_scale', 1.0)
         return model
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
@@ -611,6 +657,22 @@ def build_parser():
     parser.add_argument('--readout_init_scale', type=float, default=1.0,
                         help='Ephemeral only: multiply the initial weights of the emission head i2o by this. '
                              'Default 1 (unchanged).')
+    parser.add_argument('--label_smoothing', type=float, default=0.0,
+                        help='Ephemeral + DFA: train toward target*(1-eps) + eps/V; the DFA error that feeds every '
+                             'layer (fast writes included) is softmax - smoothed target. Default 0 (unchanged). '
+                             'It also changes the gain of the error signal.')
+    parser.add_argument('--entropy_penalty', type=float, default=0.0,
+                        help='Ephemeral + DFA: add -beta * entropy(softmax) to the loss (a confidence penalty); '
+                             'its gradient is part of the DFA error. Default 0 (unchanged).')
+    parser.add_argument('--shaping_scope', choices=['all', 'answer'], default='all',
+                        help='Where --label_smoothing and --entropy_penalty act: every step (default) or only the '
+                             'answer step (input = query marker; long_range_memory_dataset only).')
+    parser.add_argument('--readout_lr_scale', type=float, default=1.0,
+                        help='Ephemeral + DFA: multiply the learning rate of the emission head i2o (weights and '
+                             'bias) by this; every other layer is unchanged. Default 1.')
+    parser.add_argument('--log_margin', type=str2bool, nargs='?', const=True, default=False,
+                        help='long_range_memory_dataset: log the answer-step logit margin (correct minus best '
+                             'other), p(correct) and max p, averaged per print_freq interval. No effect on training.')
     parser.add_argument('--alignment_log_every', type=int, default=0,
                         help='Ephemeral + DFA: every N iterations (and at the start) print the cosine between the '
                              'DFA projected error and the true backprop gradient per hidden layer (replayed on a '
@@ -715,6 +777,22 @@ def check_argument_combinations(args, parser):
                      "--model_type ephemeral --updater dfa.")
     if args.readout_init_scale != 1.0 and args.model_type != 'ephemeral':
         parser.error("--readout_init_scale supports only --model_type ephemeral.")
+    shaping = args.label_smoothing != 0.0 or args.entropy_penalty != 0.0
+    if (shaping or args.readout_lr_scale != 1.0 or args.log_margin) and (
+            args.model_type != 'ephemeral' or args.updater != 'dfa'):
+        parser.error("--label_smoothing, --entropy_penalty, --readout_lr_scale and --log_margin support only "
+                     "--model_type ephemeral --updater dfa.")
+    if not 0.0 <= args.label_smoothing < 1.0:
+        parser.error("--label_smoothing must be in [0, 1).")
+    if args.entropy_penalty < 0.0 or args.readout_lr_scale < 0.0:
+        parser.error("--entropy_penalty and --readout_lr_scale must be >= 0.")
+    if (args.shaping_scope == 'answer' or args.log_margin) and args.dataset != 'long_range_memory_dataset':
+        parser.error("--shaping_scope answer and --log_margin support only --dataset long_range_memory_dataset.")
+    if args.shaping_scope == 'answer' and not shaping:
+        parser.error("--shaping_scope answer needs --label_smoothing or --entropy_penalty.")
+    if shaping and (args.fast_backward_per_forward != 1 or args.heldout_eval_every > 0):
+        parser.error("--label_smoothing and --entropy_penalty do not support --fast_backward_per_forward other "
+                     "than 1 or --heldout_eval_every (their extra passes and evaluator use the plain error).")
     if args.feedback_init == 'random' and args.feedback_scale != 1.0:
         parser.error("--feedback_scale applies only to --feedback_init scaled or aligned.")
     if args.feedback_init == 'aligned' and args.dfa_fprime:
@@ -1184,6 +1262,9 @@ def main():
                 metrics.update(rnn.grad_clip_stats.summary())
                 metrics.update(heldout_metrics)
                 metrics.update(trace_metrics)
+                if args.log_margin:
+                    metrics.update(MARGIN_STATS.summary())
+                    MARGIN_STATS.reset()
                 heldout_metrics, trace_metrics = {}, {}
                 metrics["iters_per_sec"] = interval.iterations / (time.time() - interval_start)
                 avg_loss_plot = metrics.get("loss", float("nan"))
