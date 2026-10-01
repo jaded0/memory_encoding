@@ -56,6 +56,18 @@ replaces each sequence's copy with the batch mean and zeroes the ephemeral entri
 Forgetting multiplies the ephemeral entries by `1 - forget_rate`. Layers without ephemeral
 entries log no ephemeral norms.
 
+### Fast weights on top of slow ones (`--fast_structure`)
+
+`--fast_structure exclusive` (default) is everything above: a fast connection holds only its fast
+value. `additive_masked` gives every connection a slow weight S and keeps the fast part F on the
+fixed `--ephemeral_fraction` mask, `W = S + F*m`; `additive_dense` puts F on every connection,
+`W = S + F`. Updates (DFA, `g = p x^T` per sequence): `S <- (1-slow_weight_decay)(S - lr g)`
+everywhere, `F <- (1-forget_rate)(F - lr*alpha*g*m)` (m = all ones for dense). F is the extra saved
+parameter `fast_state`; the wipe zeroes F and averages S. i2o stays slow-only. Experimental, DFA
+only: no `--ephemeral_update_clamp`, `--fast_weight_clamp` or `--slow_update_every N`; `--fused_update`
+and held-out evaluation work (the fast-only step writes F only). The default path and the golden
+traces are unchanged. `tests/test_fast_structure.py`.
+
 ### Keeping fast weights across sequences (`--wipe_every N`)
 
 `--wipe_every N` (default 1, every sequence) zeroes the fast entries only at the start of every

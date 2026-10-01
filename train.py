@@ -1,6 +1,7 @@
 # train.py
 import torch
-from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every
+from ephemeral_model import (EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every,
+                             parse_fast_structure, FAST_STRUCTURES)
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
@@ -394,7 +395,8 @@ def build_model(config, charset, n_characters):
             slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
             fast_weight_clamp=config['fast_weight_clamp'], layer_norm=config['layer_norm'],
             dfa_fprime=config.get('dfa_fprime', False),
-            slow_update_every=config.get('slow_update_every', 1))
+            slow_update_every=config.get('slow_update_every', 1),
+            fast_structure=config.get('fast_structure', 'exclusive'))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -512,6 +514,16 @@ def build_parser():
                              'into its next sequence, erased only by --forget_rate (and --fast_weight_clamp). '
                              'The hidden state still starts at zero every sequence, and held-out evaluation '
                              'always starts from wiped fast entries.')
+    parser.add_argument('--fast_structure', type=parse_fast_structure, default='exclusive',
+                        choices=FAST_STRUCTURES,
+                        help='Ephemeral + DFA: how the fast weights sit on the slow ones. exclusive (default): '
+                             'a fast connection holds only its fast value, the slow weight under it is absent. '
+                             'additive_masked: every connection has a slow weight S, and the fast part F lives on '
+                             'the fixed --ephemeral_fraction mask, W = S + F*m. additive_dense: F on every '
+                             'connection, W = S + F (--ephemeral_fraction then sets only the mask the other arms '
+                             'use). F takes (1-f)(F - lr*alpha*g) on its support, S the plain step everywhere. '
+                             'No update or fast-weight clamp and no --slow_update_every N. Held-out evaluation '
+                             'works (its fast-only step writes F only).')
     parser.add_argument('--output_tanh', type=str2bool, nargs='?', const=True, default=False,
                         help='Both models: the output head i2o reads tanh of the shared trunk instead of '
                              'the trunk (removed from the default on 2026-09-24; see '
@@ -611,6 +623,14 @@ def check_argument_combinations(args, parser):
     if args.optimizer != 'sgd' and (args.model_type != 'rnn' or args.updater == 'dfa'):
         parser.error(f"--optimizer {args.optimizer} supports only --model_type rnn with --updater backprop "
                      "or bptt: the ephemeral model and DFA update their weights by hand, per sequence.")
+    if args.fast_structure != 'exclusive':
+        if args.model_type != 'ephemeral' or args.updater != 'dfa':
+            parser.error(f"--fast_structure {args.fast_structure} supports only --model_type ephemeral --updater dfa.")
+        if args.slow_update_every != 1:
+            parser.error(f"--fast_structure {args.fast_structure} does not support --slow_update_every {args.slow_update_every}.")
+        if args.ephemeral_update_clamp or args.fast_weight_clamp:
+            parser.error(f"--fast_structure {args.fast_structure} does not support --ephemeral_update_clamp "
+                         "or --fast_weight_clamp.")
     if args.wipe_every < 1:
         parser.error("--wipe_every must be at least 1.")
     if args.wipe_every > 1 and args.model_type != 'ephemeral':

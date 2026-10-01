@@ -407,6 +407,10 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     if 'slow_update_every' in config and config['slow_update_every'] != loaded_config.get('slow_update_every', 1):
         mismatches.append(('slow_update_every', config['slow_update_every'],
                            loaded_config.get('slow_update_every', 1)))
+    # --fast_structure changes what the layers are (and their saved state); absent in older checkpoints (exclusive).
+    if config.get('fast_structure', 'exclusive') != loaded_config.get('fast_structure', 'exclusive'):
+        mismatches.append(('fast_structure', config.get('fast_structure', 'exclusive'),
+                           loaded_config.get('fast_structure', 'exclusive')))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")
