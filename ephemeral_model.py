@@ -14,6 +14,9 @@ import torch.nn.utils.parametrize as parametrize
 # the projected error by the layer's activation derivative; --dfa_fprime does, in both (Nøkland
 # 2016); see README "Known issues".
 
+FEEDBACK_INITS = ('random', 'aligned', 'scaled')  # --feedback_init
+
+
 def init_feedback_weights(vocab_size, out_features):
     """A layer's fixed random DFA feedback matrix B, [vocab, out]: xavier_normal_."""
     return torch.nn.init.xavier_normal_(torch.empty(vocab_size, out_features))
@@ -1052,6 +1055,111 @@ class EphemeralRNN(torch.nn.Module):
     def trained_layers(self):
         """Every EphemeralLinear, in update order: the hidden layers, i2h, then i2o."""
         return [*self.linear_layers, self.i2h, self.i2o]
+
+    def _calibration_inputs(self, n_rows):
+        """Deterministic calibration inputs for the aligned feedback matrices: a list of
+        [batch_size, input_size] one-hot batches cycling through the charset (no random numbers)."""
+        vocab = self.linear_layers[0].feedback_weights.shape[0]
+        char_dim = self.linear_layers[0].in_features - self.hidden_size
+        if char_dim != vocab:
+            raise ValueError("--feedback_init aligned needs one-hot character inputs of the charset's "
+                             f"size (--input_mode last_one, no positional encoding); got input width {char_dim} "
+                             f"for a charset of {vocab}")
+        device = self.linear_layers[0].per_sample_weights.device
+        batches, count = [], 0
+        while count < n_rows:
+            chars = (torch.arange(self.batch_size) + count) % char_dim
+            batches.append(F.one_hot(chars, char_dim).float().to(device))
+            count += self.batch_size
+        return batches
+
+    def jacobian_feedback_matrices(self, n_rows=256):
+        """The fixed matrix J_l ([vocab, out]) that makes DFA's projected error e @ J_l the true
+        backpropagated signal as closely as one fixed matrix can, for the hidden layers and i2h:
+        J_l = the mean over calibration inputs of d logits / d a_l, where a_l is the layer's
+        pre-activation output. That is the tensor the DFA update is defined on: dW_l = -lr p_l x^T
+        with p_l = e @ B_l, and backprop's p_l is dL/da_l = e @ d logits/d a_l. The mean over inputs
+        is the Frobenius-least-squares fixed matrix for the input-dependent Jacobian.
+
+        Evaluated at the current (initial) weights, fast entries as they are (zero at init),
+        hidden state zero, on one-hot inputs cycling through the charset.
+        Trunk layers: the exact one-step Jacobian through the later trunk layers (GELU, and
+        LayerNorm if on) and i2o. i2h feeds only the next step's hidden state, so this step's
+        logits do not depend on it (true gradient zero without BPTT); its matrix is the one-step-
+        ahead Jacobian d logits(t+1) / d a_i2h(t), through tanh, the next step's trunk and i2o,
+        computed with recurrence switched on. Not supported with --dfa_fprime (f' is applied at run
+        time, so B would have to be the Jacobian with respect to the post-activation output)."""
+        if any(layer.dfa_fprime for layer in self.trained_layers()):
+            raise ValueError("--feedback_init aligned is not supported with --dfa_fprime")
+        layers = [*self.linear_layers, self.i2h]
+        sums = [None] * len(layers)
+        n = 0
+        recurrence = self.enable_recurrence
+        batches = self._calibration_inputs(n_rows)
+        snapshot = {key: value.clone() for key, value in self.state_dict().items()}  # forward writes the traces
+        try:
+            self.enable_recurrence = True
+            with torch.enable_grad():
+                for k, batch in enumerate(batches):
+                    outs = []
+                    hooks = [layer.register_forward_hook(
+                        lambda m, i, o, outs=outs: outs.append(o.requires_grad_(True))) for layer in layers]
+                    try:
+                        logits, hidden = self(batch, self.initHidden(batch.shape[0]))
+                        step1_outs = list(outs)  # the hooks fire again on the second step
+                        batch2 = batches[(k + 1) % len(batches)].roll(1, dims=0)
+                        logits2, _ = self(batch2, hidden)
+                    finally:
+                        for hook in hooks:
+                            hook.remove()
+                    for v in range(logits.shape[1]):
+                        trunk = torch.autograd.grad(logits[:, v].sum(), step1_outs[:-1], retain_graph=True)
+                        ahead = torch.autograd.grad(logits2[:, v].sum(), step1_outs[-1], retain_graph=True)
+                        for j, grad in enumerate([*trunk, *ahead]):
+                            if sums[j] is None:
+                                sums[j] = torch.zeros(logits.shape[1], grad.shape[1], device=grad.device)
+                            sums[j][v] += grad.sum(0)
+                    n += batch.shape[0]
+        finally:
+            self.enable_recurrence = recurrence
+            self.load_state_dict(snapshot)
+        return [total / n for total in sums]
+
+    @torch.no_grad()
+    def scale_readout(self, scale):
+        """--readout_init_scale: multiplies the emission head i2o's initial weights (the base weight
+        and every per-sequence copy) by scale, after construction (no random numbers drawn).
+        A smaller initial readout starts the logits nearer uniform."""
+        self.i2o.weight.mul_(scale)
+        self.i2o.per_sample_weights.mul_(scale)
+
+    @torch.no_grad()
+    def set_feedback(self, init, scale=1.0):
+        """--feedback_init / --feedback_scale: rewrites the DFA feedback matrices of the hidden
+        layers and i2h after construction (the random matrices were drawn first, so the random
+        stream, and everything built after it, is unchanged).
+          random : nothing changes (scale must be 1).
+          scaled : B_l <- scale * B_l, the random matrix.
+          aligned: B_l <- scale * ||B_l||_F * J_l / ||J_l||_F, J_l from jacobian_feedback_matrices:
+                   the direction of the true backprop signal at the Frobenius norm of the random
+                   matrix it replaces (scale 1 is the matched-scale version; scale -1 is the
+                   anti-aligned control).
+        B stays fixed afterwards: DFA never updates it."""
+        if init not in FEEDBACK_INITS:
+            raise ValueError(f"feedback_init must be one of {FEEDBACK_INITS}, not {init!r}")
+        if init == 'random':
+            if scale != 1.0:
+                raise ValueError("--feedback_scale applies only to --feedback_init scaled or aligned")
+            return
+        layers = [*self.linear_layers, self.i2h]
+        if init == 'scaled':
+            for layer in layers:
+                layer.feedback_weights.mul_(scale)
+            return
+        jacobians = self.jacobian_feedback_matrices()
+        for layer, jac in zip(layers, jacobians):
+            norm = layer.feedback_weights.norm()
+            layer.feedback_weights.copy_(jac.to(layer.feedback_weights.device) * (scale * norm / jac.norm()))
 
     def apply_regularization(self):
         """--weight_clamp (and --fast_weight_clamp) on every layer's per_sample_weights. DFA and

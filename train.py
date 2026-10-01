@@ -1,6 +1,7 @@
 # train.py
 import torch
-from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every, parse_fast_backward_per_forward
+from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every, parse_fast_backward_per_forward, FEEDBACK_INITS
+from feedback_alignment import measure_alignment
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
@@ -9,6 +10,7 @@ from metrics import IntervalMetrics, recall_chance
 from heldout import evaluate_protocols, load_heldout_batches
 from loop_trace import NULL_TRACER, LoopTracer, summarize as summarize_traces
 from utils import model_input, randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint, check_checkpoint_code_version, CHECKPOINT_CODE_VERSION, keep_numbered_checkpoint
+import json
 import time
 import math
 import argparse
@@ -407,6 +409,24 @@ def build_optimizer(model, config):
     return torch.optim.SGD(model.parameters(), lr=config['learning_rate'])
 
 
+def log_alignment(rnn, config, line_tensor, onehot_line_tensor, sequence, done_iters):
+    """--alignment_log_every: one 'ALIGN' line (and its JSON) for the model after done_iters updates, on
+    this batch. The model state is restored afterwards."""
+    steps = onehot_line_tensor.size(1) - 1
+    inputs = [model_input(onehot_line_tensor, i, config['input_mode'], config["pe_matrix"]) for i in range(steps)]
+    targets = [onehot_line_tensor[:, i + 1, :] for i in range(steps)]
+    answers = None
+    if 'long_range_memory' in config['dataset']:
+        answers = torch.tensor([text.index('!') for text in sequence])
+    result = measure_alignment(rnn, inputs, targets, config["learning_rate"], config["ephemeral_update_clamp"], answers)
+    parts = []
+    for k, r in result.items():
+        ans = 'n/a' if r['cos_answer'] is None else f"{r['cos_answer']:.4f}"
+        parts.append(f"L{k} cos {r['cos']:.4f} ans {ans}")
+    print(f"ALIGN iter {done_iters} " + " | ".join(parts))
+    print("ALIGNJSON " + json.dumps({"iter": done_iters, "layers": result}))
+
+
 def build_model(config, charset, n_characters):
     """The model a run's config describes (train.py's own config, or a checkpoint's)."""
     if config['input_mode'] not in ('last_one', 'last_two'):
@@ -426,7 +446,7 @@ def build_model(config, charset, n_characters):
                          layer_norm=config['layer_norm'], dfa_fprime=config.get('dfa_fprime', False))
     if config['model_type'] == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{updater}' updater.")
-        return EphemeralRNN(
+        model = EphemeralRNN(
             input_size, config["n_hidden"], output_size, config["n_layers"], charset,
             residual_connection=config['residual_connection'],
             weight_clamp=config['weight_clamp'], updater=updater,
@@ -439,6 +459,11 @@ def build_model(config, charset, n_characters):
             dfa_fprime=config.get('dfa_fprime', False),
             slow_update_every=config.get('slow_update_every', 1),
             fast_backward_per_forward=config.get('fast_backward_per_forward', 1))
+        if config.get('feedback_init', 'random') != 'random' or config.get('feedback_scale', 1.0) != 1.0:
+            model.set_feedback(config.get('feedback_init', 'random'), config.get('feedback_scale', 1.0))
+        if config.get('readout_init_scale', 1.0) != 1.0:
+            model.scale_readout(config['readout_init_scale'])
+        return model
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -574,6 +599,22 @@ def build_parser():
                              'into one kernel (torch.compile). The same math with different rounding, about '
                              '1e-7 relative per step. Needs compute capability 7.0+; a P100 falls back '
                              'to the unfused step. Norm-logging steps always run unfused.')
+    parser.add_argument('--feedback_init', choices=FEEDBACK_INITS, default='random',
+                        help='Ephemeral + DFA: how the fixed feedback matrices of the hidden layers and i2h are set. '
+                             'random (default, unchanged): xavier normal. aligned: the mean Jacobian of the logits '
+                             'with respect to the layer output at the initial weights (the best fixed matrix for '
+                             'the true backprop signal), at the random matrix\'s Frobenius norm times '
+                             '--feedback_scale (-1 = anti-aligned control). scaled: the random matrix times '
+                             '--feedback_scale. B stays fixed afterwards.')
+    parser.add_argument('--feedback_scale', type=float, default=1.0,
+                        help='Multiplier for --feedback_init scaled or aligned (negative flips B). Default 1.')
+    parser.add_argument('--readout_init_scale', type=float, default=1.0,
+                        help='Ephemeral only: multiply the initial weights of the emission head i2o by this. '
+                             'Default 1 (unchanged).')
+    parser.add_argument('--alignment_log_every', type=int, default=0,
+                        help='Ephemeral + DFA: every N iterations (and at the start) print the cosine between the '
+                             'DFA projected error and the true backprop gradient per hidden layer (replayed on a '
+                             'copy of the model state; the run is unaffected). 0 = off.')
     parser.add_argument('--fast_backward_per_forward', type=parse_fast_backward_per_forward, default=1,
                         help='Ephemeral + DFA: backward (DFA) passes per forward pass for the FAST entries. '
                              '1 = one per character (unchanged). K >= 2: after the usual step, K-1 more '
@@ -668,6 +709,18 @@ def resolve_deprecated_args(args, parser):
 
 
 def check_argument_combinations(args, parser):
+    if (args.feedback_init != 'random' or args.feedback_scale != 1.0 or args.alignment_log_every) and (
+            args.model_type != 'ephemeral' or args.updater != 'dfa'):
+        parser.error("--feedback_init, --feedback_scale and --alignment_log_every support only "
+                     "--model_type ephemeral --updater dfa.")
+    if args.readout_init_scale != 1.0 and args.model_type != 'ephemeral':
+        parser.error("--readout_init_scale supports only --model_type ephemeral.")
+    if args.feedback_init == 'random' and args.feedback_scale != 1.0:
+        parser.error("--feedback_scale applies only to --feedback_init scaled or aligned.")
+    if args.feedback_init == 'aligned' and args.dfa_fprime:
+        parser.error("--feedback_init aligned is not supported with --dfa_fprime.")
+    if args.alignment_log_every and (args.slow_update_every != 1 or args.fast_backward_per_forward != 1):
+        parser.error("--alignment_log_every needs --slow_update_every 1 and --fast_backward_per_forward 1.")
     if args.fast_backward_per_forward != 1 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--fast_backward_per_forward other than 1 supports only --model_type ephemeral --updater dfa.")
     if args.slow_update_every != 1 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
@@ -994,6 +1047,9 @@ def main():
             if args.updater != "backprop" and hasattr(rnn, 'batch_size') and onehot_line_tensor.shape[0] != rnn.batch_size:
                  print(f"Warning: Batch size mismatch ({onehot_line_tensor.shape[0]} vs {rnn.batch_size}). Skipping batch.")
                  continue # Skip this batch
+
+            if args.alignment_log_every and (iter - 1) % args.alignment_log_every == 0:
+                log_alignment(rnn, config, line_tensor, onehot_line_tensor, sequence, iter - 1)
 
             # Determine if detailed outputs are needed (for the frequent PRINT interval)
             log_outputs_for_train = (iter % args.print_freq == 0)
