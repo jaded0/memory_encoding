@@ -204,5 +204,17 @@ class TrainingFlowTest(unittest.TestCase):
             self.assertIn("resumed, starting from iter: 5", log)
 
 
+
+
+class ReadoutScaleTest(unittest.TestCase):
+    def test_scale_readout_scales_only_i2o(self):
+        base, scaled = build("random"), build("random")
+        scaled.scale_readout(0.25)
+        for name, value in base.state_dict().items():
+            expected = value * 0.25 if name in ("i2o.weight", "i2o.per_sample_weights") else value
+            torch.testing.assert_close(scaled.state_dict()[name], expected, rtol=0, atol=0)
+        self.assertEqual(train_module.parse_args([]).readout_init_scale, 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()

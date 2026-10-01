@@ -1070,6 +1070,14 @@ class EphemeralRNN(torch.nn.Module):
         return [total / n for total in sums]
 
     @torch.no_grad()
+    def scale_readout(self, scale):
+        """--readout_init_scale: multiplies the emission head i2o's initial weights (the base weight
+        and every per-sequence copy) by scale, after construction (no random numbers drawn).
+        A smaller initial readout starts the logits nearer uniform."""
+        self.i2o.weight.mul_(scale)
+        self.i2o.per_sample_weights.mul_(scale)
+
+    @torch.no_grad()
     def set_feedback(self, init, scale=1.0):
         """--feedback_init / --feedback_scale: rewrites the DFA feedback matrices of the hidden
         layers and i2h after construction (the random matrices were drawn first, so the random

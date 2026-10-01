@@ -434,6 +434,8 @@ def build_model(config, charset, n_characters):
             fast_backward_per_forward=config.get('fast_backward_per_forward', 1))
         if config.get('feedback_init', 'random') != 'random' or config.get('feedback_scale', 1.0) != 1.0:
             model.set_feedback(config.get('feedback_init', 'random'), config.get('feedback_scale', 1.0))
+        if config.get('readout_init_scale', 1.0) != 1.0:
+            model.scale_readout(config['readout_init_scale'])
         return model
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
@@ -579,6 +581,9 @@ def build_parser():
                              '--feedback_scale. B stays fixed afterwards.')
     parser.add_argument('--feedback_scale', type=float, default=1.0,
                         help='Multiplier for --feedback_init scaled or aligned (negative flips B). Default 1.')
+    parser.add_argument('--readout_init_scale', type=float, default=1.0,
+                        help='Ephemeral only: multiply the initial weights of the emission head i2o by this. '
+                             'Default 1 (unchanged).')
     parser.add_argument('--alignment_log_every', type=int, default=0,
                         help='Ephemeral + DFA: every N iterations (and at the start) print the cosine between the '
                              'DFA projected error and the true backprop gradient per hidden layer (replayed on a '
@@ -669,6 +674,8 @@ def check_argument_combinations(args, parser):
             args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--feedback_init, --feedback_scale and --alignment_log_every support only "
                      "--model_type ephemeral --updater dfa.")
+    if args.readout_init_scale != 1.0 and args.model_type != 'ephemeral':
+        parser.error("--readout_init_scale supports only --model_type ephemeral.")
     if args.feedback_init == 'random' and args.feedback_scale != 1.0:
         parser.error("--feedback_scale applies only to --feedback_init scaled or aligned.")
     if args.feedback_init == 'aligned' and args.dfa_fprime:
