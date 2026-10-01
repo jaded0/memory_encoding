@@ -280,6 +280,130 @@ class ModesTest(unittest.TestCase):
                                tracer=LoopTracer(model, LEARNING_RATE))
 
 
+class PerPassTest(unittest.TestCase):
+    """--fast_backward_per_forward K >= 2: the per-pass traces (fast_write_pass, pass_gain, ...)."""
+
+    @staticmethod
+    def closed_form_write(model, error):
+        """|lr * alpha * mask o (p x^T)|_F per row and fast layer, in float64 numpy, from the layers'
+        current in_traces and the analytic output error (no clamp, no clip, no f')."""
+        fast_layers = [*model.linear_layers, model.i2h]
+        out = []
+        for layer in fast_layers:
+            x = layer.in_traces.data.double().numpy()
+            mask = layer.ephemeral_mask.data.numpy()
+            p = error @ layer.feedback_weights.data.double().numpy()
+            inner = (p ** 2) * (x ** 2 @ mask.T.astype(float))
+            out.append(LEARNING_RATE * ALPHA * np.sqrt(inner.sum(1)))
+        return np.stack(out, axis=1)                                              # [B, L]
+
+    def test_pass_zero_is_the_first_pass_and_k1_has_no_pass_traces(self):
+        _, (once, _) = run(build())
+        self.assertFalse(any(name.endswith("_pass") or name.startswith("pass_") for name in once))
+        _, (traces, _) = run(build(fast_backward_per_forward=3))
+        self.assertEqual(traces["fast_write_pass"].shape, (4, 3, BATCH, 3))
+        self.assertEqual(traces["pass_gain"].shape, (4, 3, BATCH))
+        torch.testing.assert_close(traces["fast_write_pass"][:, 0], traces["fast_write"], rtol=0, atol=0)
+        torch.testing.assert_close(traces["fast_norm_pass"][:, 0], traces["fast_norm"], rtol=0, atol=0)
+        torch.testing.assert_close(traces["max_logit_pass"][:, 0], traces["max_logit"], rtol=0, atol=0)
+        torch.testing.assert_close(traces["loss_pass"][:, 0], traces["loss"], rtol=0, atol=0)
+        self.assertTrue(torch.isnan(traces["pass_gain"][:, 0]).all())
+
+    def test_each_pass_matches_an_independent_closed_form_computed_at_the_write(self):
+        for k in (2, 3):
+            with self.subTest(k=k):
+                model = build(fast_backward_per_forward=k)
+                seen, original = [], model.fast_only_dfa_step
+
+                def spy(output_error, *args, **kwargs):
+                    seen.append((self.closed_form_write(model, output_error.double().numpy()),
+                                 np.stack([np.sqrt(((l.per_sample_weights.data.double().numpy()
+                                                     * l.ephemeral_mask.data.numpy()) ** 2).sum((1, 2)))
+                                           for l in [*model.linear_layers, model.i2h]], axis=1)))
+                    return original(output_error, *args, **kwargs)
+
+                model.fast_only_dfa_step = spy
+                _, (traces,) = run(model, batches=SEQUENCES[:1])
+                steps = traces["fast_write_pass"].shape[0]
+                self.assertEqual(len(seen), steps * (k - 1))
+                for step in range(steps):
+                    for extra in range(1, k):
+                        write, norm = seen[step * (k - 1) + extra - 1]
+                        torch.testing.assert_close(traces["fast_write_pass"][step, extra].double().numpy(), write,
+                                                   rtol=1e-4, atol=1e-6)
+                        torch.testing.assert_close(traces["fast_norm_pass"][step, extra].double().numpy(), norm,
+                                                   rtol=1e-4, atol=1e-6)
+
+    def test_pass_gain_is_the_within_character_ratio_and_the_fast_loop_shows_in_it(self):
+        _, (traces, _) = run(build(fast_backward_per_forward=3))
+        write = traces["pass_write_norm"]
+        gain = traces["pass_gain"]
+        torch.testing.assert_close(gain[:, 1:], write[:, 1:] / write[:, :-1], rtol=1e-5, atol=1e-7)
+        self.assertTrue(torch.isfinite(gain[:, 1:]).all())
+        # pass 1 sees the weights pass 0 wrote and the same input: the passes differ
+        self.assertFalse(torch.equal(traces["fast_norm_pass"][:, 1], traces["fast_norm_pass"][:, 0]))
+        self.assertTrue(torch.equal(traces["fast_norm_pass"][0, 0], torch.zeros_like(traces["fast_norm_pass"][0, 0])))
+        # the derived arrays follow from fast_write_pass
+        recomputed = derived_traces({k: traces[k] for k in ("fast_write", "fast_write_pass")})
+        torch.testing.assert_close(recomputed["pass_gain"], gain, rtol=0, atol=0, equal_nan=True)
+
+    def test_derived_pass_gain_skips_passes_after_a_zero_write(self):
+        writes = torch.tensor([[[[1.0]], [[2.0]], [[0.0]]], [[[0.0]], [[3.0]], [[6.0]]]])   # [T=2, P=3, B=1, L=1]
+        derived = derived_traces({"fast_write": writes[:, 0], "fast_write_pass": writes})
+        gain = derived["pass_gain"]
+        self.assertTrue(torch.isnan(gain[:, 0]).all())
+        self.assertEqual(float(gain[0, 1, 0]), 2.0)
+        self.assertEqual(float(gain[0, 2, 0]), 0.0)
+        self.assertTrue(torch.isnan(gain[1, 1, 0]))        # previous pass wrote nothing
+        self.assertEqual(float(gain[1, 2, 0]), 2.0)
+
+    def test_eager_fused_pass_traces_are_bit_identical_to_unfused_in_every_slow_mode(self):
+        for slow in (1, 2, "sequence"):
+            with self.subTest(slow=slow):
+                _, (plain, _) = run(build(fast_backward_per_forward=2, slow_update_every=slow))
+                _, (fused, _) = run(build(fast_backward_per_forward=2, slow_update_every=slow, fused=True))
+                for name in ("fast_write_pass", "fast_norm_pass", "max_logit_pass", "loss_pass"):
+                    torch.testing.assert_close(fused[name], plain[name], rtol=0, atol=0)
+
+    def test_pass_zero_does_not_depend_on_the_extra_passes_for_the_first_step(self):
+        _, (two, _) = run(build(fast_backward_per_forward=2))
+        _, (three, _) = run(build(fast_backward_per_forward=3))
+        torch.testing.assert_close(two["fast_write_pass"][0, :2], three["fast_write_pass"][0, :2], rtol=0, atol=0)
+        torch.testing.assert_close(two["fast_norm_pass"][0, :2], three["fast_norm_pass"][0, :2], rtol=0, atol=0)
+
+    def test_tracing_k3_changes_nothing_and_clip_scales_the_pass_writes(self):
+        traced, plain = build(fast_backward_per_forward=3), build(fast_backward_per_forward=3)
+        traced_losses, (clipped, _) = run(traced, update_clamp=0.05, grad_norm_clip=0.5)
+        plain_losses, _ = run(plain, trace=False, update_clamp=0.05, grad_norm_clip=0.5)
+        self.assertEqual(traced_losses, plain_losses)
+        for (name, a), b in zip(weights(traced).items(), weights(plain).values()):
+            self.assertTrue(torch.equal(a, b), name)
+        _, (free, _) = run(build(fast_backward_per_forward=3))
+        self.assertLess(float(clipped["fast_write_pass"].sum()), float(free["fast_write_pass"].sum()))
+
+    def test_replay_carries_the_pass_traces_and_restores_the_state(self):
+        model = build(fast_backward_per_forward=2)
+        before = {key: value.clone() for key, value in model.state_dict().items()}
+        onehot = F.one_hot(SEQUENCES[0], len(CHARSET)).float()
+        results = trace_replay.replay_checkpoint(model, config(), {"training_instance": 0}, [(None, onehot)] * 2)
+        self.assertEqual(len(results), 2)
+        for traces in results:
+            self.assertEqual(traces["pass_gain"].shape, (4, 2, BATCH))
+        torch.testing.assert_close(results[0]["pass_gain"], results[1]["pass_gain"], rtol=0, atol=0, equal_nan=True)
+        for key, value in model.state_dict().items():
+            self.assertTrue(torch.equal(value, before[key]), key)
+        self.assertIn("trace/pass_gain_median", trace_replay.mean_summary(results))
+
+    def test_summary_has_pass_scalars_only_with_passes(self):
+        _, (with_passes, _) = run(build(fast_backward_per_forward=2))
+        summary = summarize(with_passes)
+        for key in ("pass_gain_median", "pass_gain_p90", "frac_pass_gain_gt1"):
+            self.assertIn(f"trace/{key}", summary)
+            self.assertTrue(math.isfinite(summary[f"trace/{key}"]))
+        _, (without, _) = run(build())
+        self.assertFalse(any("pass_gain" in key for key in summarize(without)))
+
+
 class CliTest(unittest.TestCase):
     def test_flag_validation(self):
         for extra in (["--trace_loop_every", "3", "--print_freq", "2"], ["--trace_loop_every", "2", "--model_type", "rnn"],
