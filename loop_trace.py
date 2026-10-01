@@ -177,7 +177,7 @@ def summarize(traces, prefix="trace"):
     total_fast = last("fast_norm").square().sum(dim=1).sqrt()
     summary = {
         f"{prefix}/loop_gain_median": float(finite.median()) if finite.numel() else math.nan,
-        f"{prefix}/loop_gain_max": float(finite.max()) if finite.numel() else math.nan,
+        f"{prefix}/loop_gain_p90": float(finite.quantile(0.9)) if finite.numel() else math.nan,
         f"{prefix}/frac_gain_gt1": float((finite > 1).float().mean()) if finite.numel() else math.nan,
         f"{prefix}/longest_run_gt1": float(longest_run_above_one(gain).float().mean()),
         f"{prefix}/trunk_act_norm_last": float(traces["act_norm"][-1, :, -1].mean()),

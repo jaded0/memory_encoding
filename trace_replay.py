@@ -109,7 +109,7 @@ def main(argv=None):
         parser.error("no checkpoints found")
     fused = None if args.fused_update is None else args.fused_update == "true"
     records, batches = [], None
-    print(f"{'iter':>9} {'loss':>7} {'gain_med':>9} {'gain_max':>10} {'frac>1':>7} {'run>1':>6} "
+    print(f"{'iter':>9} {'loss':>7} {'gain_med':>9} {'gain_p90':>10} {'frac>1':>7} {'run>1':>6} "
           f"{'fast|F|':>10} {'trunk|x|':>10} {'max_logit':>10} {'F/S drive':>10}")
     for path in paths:
         model, config, state, iteration = load_model(path, args.device, fused)
@@ -118,7 +118,7 @@ def main(argv=None):
             batches = load_heldout_batches(dataset, config["batch_size"], args.batches, args.device, args.split)
         per_batch = replay_checkpoint(model, config, state, batches)
         s = mean_summary(per_batch)
-        print(f"{iteration:>9} {s['loss']:>7.3f} {s['trace/loop_gain_median']:>9.3f} {s['trace/loop_gain_max']:>10.2f} "
+        print(f"{iteration:>9} {s['loss']:>7.3f} {s['trace/loop_gain_median']:>9.3f} {s['trace/loop_gain_p90']:>10.2f} "
               f"{s['trace/frac_gain_gt1']:>7.3f} {s['trace/longest_run_gt1']:>6.1f} {s['trace/fast_norm_last']:>10.3g} "
               f"{s['trace/trunk_act_norm_max']:>10.3g} {s['trace/max_logit_max']:>10.3g} "
               f"{s['trace/fast_over_slow_drive_last']:>10.3g}")
