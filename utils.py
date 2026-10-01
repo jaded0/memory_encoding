@@ -412,6 +412,11 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
             and config['fast_backward_per_forward'] != loaded_config.get('fast_backward_per_forward', 1)):
         mismatches.append(('fast_backward_per_forward', config['fast_backward_per_forward'],
                            loaded_config.get('fast_backward_per_forward', 1)))
+    # --feedback_init / --feedback_scale: the feedback matrices come from the checkpoint, so a resume may
+    # not claim a different setting (a checkpoint from before the flags had random, scale 1).
+    for key, default in (('feedback_init', 'random'), ('feedback_scale', 1.0)):
+        if key in config and config[key] != loaded_config.get(key, default):
+            mismatches.append((key, config[key], loaded_config.get(key, default)))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")
