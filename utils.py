@@ -407,6 +407,11 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     if 'slow_update_every' in config and config['slow_update_every'] != loaded_config.get('slow_update_every', 1):
         mismatches.append(('slow_update_every', config['slow_update_every'],
                            loaded_config.get('slow_update_every', 1)))
+    # --fast_backward_per_forward likewise (a checkpoint from before the flag was 1:1).
+    if ('fast_backward_per_forward' in config
+            and config['fast_backward_per_forward'] != loaded_config.get('fast_backward_per_forward', 1)):
+        mismatches.append(('fast_backward_per_forward', config['fast_backward_per_forward'],
+                           loaded_config.get('fast_backward_per_forward', 1)))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")

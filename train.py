@@ -1,6 +1,6 @@
 # train.py
 import torch
-from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every
+from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every, parse_fast_backward_per_forward
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
@@ -108,6 +108,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
         hot_input_char_tensor = model_input(onehot_line_tensor, i, config['input_mode'], config["pe_matrix"])
 
         # Forward pass
+        incoming_hidden = hidden
         output, hidden = rnn(hot_input_char_tensor, hidden)
         final_char = onehot_line_tensor[:, i+1, :]
         
@@ -120,12 +121,20 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             loss, output_error = dfa_output_error(output, final_char, criterion)
             losses.append(loss.detach())
 
+            # --fast_backward_per_forward 1/N: only every N-th character (the first, N+1-th, ...)
+            # gets a fast update. The slow stream and the forgetting are unchanged.
+            skip_fast = isinstance(rnn, EphemeralRNN) and i % rnn.fast_subsample != 0
+
             # Apply DFA updates
             if isinstance(rnn, EphemeralRNN) and rnn.slow_update_every != 1:
                 # --slow_update_every N or sequence: this step writes the fast entries; the slow
                 # step is accumulated and applied every N steps and at the end of the sequence.
                 rnn.windowed_dfa_step(output_error, config["learning_rate"], config["ephemeral_update_clamp"],
-                                      config.get('grad_norm_clip', 0), log_norms=state.get('log_norms_now', False))
+                                      config.get('grad_norm_clip', 0), log_norms=state.get('log_norms_now', False),
+                                      skip_fast=skip_fast)
+            elif skip_fast:
+                rnn.skip_fast_dfa_step(output_error, config["learning_rate"], config["ephemeral_update_clamp"],
+                                       config.get('grad_norm_clip', 0), log_norms=state.get('log_norms_now', False))
             elif isinstance(rnn, EphemeralRNN) and rnn.fused_layer_step is not None and not state.get('log_norms_now', False):
                 # --fused_update: the same step as the branch below, one kernel per layer. Steps that
                 # log update norms take the branch below, which materializes the update.
@@ -177,6 +186,13 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     layer.apply_dfa_update(config["learning_rate"])
                 # The grads are left in place (the next step's zero_grad clears them) so that
                 # get_all_norms logs them, as it does for the backprop baseline.
+
+            if isinstance(rnn, EphemeralRNN) and rnn.fast_iterations > 1:
+                # --fast_backward_per_forward K: K - 1 more fast-only steps on this character; the
+                # loss and metrics above are the first pass's, the next hidden state the last's.
+                hidden = rnn.extra_fast_iterations(
+                    hot_input_char_tensor, incoming_hidden, final_char, criterion, config["learning_rate"],
+                    config["ephemeral_update_clamp"], config.get('grad_norm_clip', 0))
 
             state['training_instance'] += 1
             loss_total += loss.detach().mean().double()
@@ -394,7 +410,8 @@ def build_model(config, charset, n_characters):
             slow_weight_decay=config['slow_weight_decay'], output_tanh=config['output_tanh'],
             fast_weight_clamp=config['fast_weight_clamp'], layer_norm=config['layer_norm'],
             dfa_fprime=config.get('dfa_fprime', False),
-            slow_update_every=config.get('slow_update_every', 1))
+            slow_update_every=config.get('slow_update_every', 1),
+            fast_backward_per_forward=config.get('fast_backward_per_forward', 1))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -530,6 +547,14 @@ def build_parser():
                              'into one kernel (torch.compile). The same math with different rounding, about '
                              '1e-7 relative per step. Needs compute capability 7.0+; a P100 falls back '
                              'to the unfused step. Norm-logging steps always run unfused.')
+    parser.add_argument('--fast_backward_per_forward', type=parse_fast_backward_per_forward, default=1,
+                        help='Ephemeral + DFA: backward (DFA) passes per forward pass for the FAST entries. '
+                             '1 = one per character (unchanged). K >= 2: after the usual step, K-1 more '
+                             'times re-run the forward pass on the same character with the updated fast '
+                             'weights and take a fast-only DFA step (forgetting still once per character; '
+                             'the slow stream, loss and metrics are those of the first pass). 1/N: only '
+                             'every N-th character gets a fast update (forgetting every character). '
+                             'Held-out evaluation stays 1:1. See README "Backward passes per forward".')
     parser.add_argument('--slow_update_every', type=parse_slow_update_every, default=1,
                         help='Ephemeral + DFA: how often the slow parameters (slow entries, i2o, biases) '
                              'take their DFA step, in steps (characters), or "sequence". 1 = every step '
@@ -604,6 +629,8 @@ def resolve_deprecated_args(args, parser):
 
 
 def check_argument_combinations(args, parser):
+    if args.fast_backward_per_forward != 1 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
+        parser.error("--fast_backward_per_forward other than 1 supports only --model_type ephemeral --updater dfa.")
     if args.slow_update_every != 1 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--slow_update_every other than 1 supports only --model_type ephemeral --updater dfa.")
     if args.fused_update and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
@@ -805,6 +832,7 @@ def main():
             "grad_norm_clip": args.grad_norm_clip,
             "fused_update": args.fused_update,
             "slow_update_every": args.slow_update_every,
+            "fast_backward_per_forward": args.fast_backward_per_forward,
             "dfa_fprime": args.dfa_fprime,
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
