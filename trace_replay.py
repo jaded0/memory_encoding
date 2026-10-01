@@ -110,7 +110,7 @@ def main(argv=None):
     fused = None if args.fused_update is None else args.fused_update == "true"
     records, batches = [], None
     print(f"{'iter':>9} {'loss':>7} {'gain_med':>9} {'gain_p90':>10} {'frac>1':>7} {'run>1':>6} "
-          f"{'fast|F|':>10} {'trunk|x|':>10} {'max_logit':>10} {'F/S drive':>10}")
+          f"{'fast|F|':>10} {'trunk|x|':>10} {'max_logit':>10} {'F/S drive':>10} {'h_sat':>6} {'i2h_pre':>8}")
     for path in paths:
         model, config, state, iteration = load_model(path, args.device, fused)
         if batches is None:
@@ -121,7 +121,8 @@ def main(argv=None):
         print(f"{iteration:>9} {s['loss']:>7.3f} {s['trace/loop_gain_median']:>9.3f} {s['trace/loop_gain_p90']:>10.2f} "
               f"{s['trace/frac_gain_gt1']:>7.3f} {s['trace/longest_run_gt1']:>6.1f} {s['trace/fast_norm_last']:>10.3g} "
               f"{s['trace/trunk_act_norm_max']:>10.3g} {s['trace/max_logit_max']:>10.3g} "
-              f"{s['trace/fast_over_slow_drive_last']:>10.3g}")
+              f"{s['trace/fast_over_slow_drive_last']:>10.3g} {s['trace/h_sat_mean']:>6.3f} "
+              f"{s['trace/i2h_pre_norm_last']:>8.3g}")
         records.append({"path": path, "iter": iteration, "texts": [t for t, _ in batches],
                         "batches": per_batch, "summary": s})
     meta = {"dataset": dataset, "split": args.split, "batches": len(batches), "fused_update": args.fused_update,

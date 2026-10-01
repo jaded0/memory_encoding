@@ -42,6 +42,10 @@ entries); l indexes them:
                       comes after the last step; see slow_total_delta). Do not read those zeros as
                       'no slow learning'.
   max_logit, logit_norm, loss, hidden_norm   [T,B]
+  h_sat[T,B]          fraction of the hidden-state units with |tanh(i2h pre-activation)| > 0.99 (the
+                      state the model computes for the next step; with --enable_recurrence false it is
+                      computed but not fed back, which is why hidden_norm is 0 there)
+  i2h_pre_norm[T,B]   |i2h pre-activation| (bias included), the input of that tanh
   slow_total_delta[B,L+1]   |S at the end of the sequence - S at its start| (includes the last window)
 and the derived write_norm[T,B] = sqrt(sum_l fast_write^2) and
 loop_gain[T,B] = write_norm[t] / write_norm[t-1] (NaN where the previous write is zero).
@@ -52,6 +56,7 @@ import torch
 
 from ephemeral_model import dfa_per_sample_gradient, ephemeral_update
 
+H_SAT_THRESHOLD = 0.99
 PER_STEP_LAYER = ("act_norm", "fast_norm", "fast_write", "fast_drive", "slow_drive", "fast_delta")
 
 
@@ -101,7 +106,7 @@ class LoopTracer:
         n_fast = len(self.fast_layers)
         shapes = {name: (num_steps, batch, n_fast) for name in PER_STEP_LAYER}
         shapes["slow_delta"] = (num_steps, batch, n_fast + 1)
-        for name in ("max_logit", "logit_norm", "loss", "hidden_norm"):
+        for name in ("max_logit", "logit_norm", "loss", "hidden_norm", "h_sat", "i2h_pre_norm"):
             shapes[name] = (num_steps, batch)
         self.buffers = {name: torch.zeros(shape, device=device) for name, shape in shapes.items()}
         self.snapshot = None
@@ -115,6 +120,9 @@ class LoopTracer:
         buffers["logit_norm"][step] = row_norm(output)
         buffers["loss"][step] = loss.detach().float()
         buffers["hidden_norm"][step] = row_norm(hidden)
+        pre = model.i2h.pre_activation().detach().float()
+        buffers["i2h_pre_norm"][step] = row_norm(pre)
+        buffers["h_sat"][step] = (torch.tanh(pre).abs() > H_SAT_THRESHOLD).float().mean(dim=1)
         if fast_write:
             projected, _ = model.dfa_step_errors(output_error, self.grad_norm_clip)
         for l, layer in enumerate(self.fast_layers):
@@ -190,6 +198,9 @@ def summarize(traces, prefix="trace"):
         f"{prefix}/trunk_act_norm_last": float(traces["act_norm"][-1, :, -1].mean()),
         f"{prefix}/trunk_act_norm_max": float(traces["act_norm"][:, :, -1].max()),
         f"{prefix}/fast_norm_last": float(total_fast.mean()),
+        f"{prefix}/h_sat_mean": float(traces["h_sat"].mean()),
+        f"{prefix}/h_sat_last": float(traces["h_sat"][-1].mean()),
+        f"{prefix}/i2h_pre_norm_last": float(traces["i2h_pre_norm"][-1].mean()),
         f"{prefix}/max_logit_max": float(traces["max_logit"].max()),
         f"{prefix}/fast_over_slow_drive_last": float(
             (last("fast_drive") / last("slow_drive").clamp_min(1e-30)).mean()),

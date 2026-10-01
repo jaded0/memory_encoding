@@ -71,6 +71,35 @@ def wb_mark_end(reason: str, tags=None, exit_code: int | None = None):
         current = set(getattr(run, "tags", []))
         run.tags = list(current.union(set(tags)))
 
+def parse_plasticity_schedule(text):
+    """--plasticity_schedule "ITER:VALUE,ITER:VALUE,...": [(iteration, alpha), ...] sorted by iteration
+    ('' = no schedule). alpha is VALUE from iteration ITER on, until the next entry."""
+    entries = []
+    for item in text.split(","):
+        if item.strip():
+            iteration, _, value = item.partition(":")
+            entries.append((int(iteration), float(value)))
+    if len({iteration for iteration, _ in entries}) != len(entries) or any(i < 0 or v < 0 for i, v in entries):
+        raise ValueError(f"--plasticity_schedule {text!r}: iterations must be distinct and non-negative, values >= 0")
+    return sorted(entries)
+
+
+def plasticity_at(schedule, iteration, default):
+    """The scheduled alpha at an iteration: the last entry at or before it, else default (--plasticity)."""
+    value = default
+    for start, alpha in schedule:
+        if start <= iteration:
+            value = alpha
+    return value
+
+
+def high_loss_stop(count, loss, window, threshold=5.0):
+    """--early_stop_window: (new count of consecutive intervals with loss > threshold, stop?).
+    window 0 never stops."""
+    count = count + 1 if loss > threshold else 0
+    return count, window > 0 and count >= window
+
+
 def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=None, log_outputs=False,
                 tracer=None):
     """Trains on one batch of sequences with DFA, backprop or BPTT. tracer (a loop_trace.LoopTracer,
@@ -590,6 +619,16 @@ def build_parser():
                              'together (and at the end of each sequence). sequence: slow parameters are '
                              'frozen within a sequence, and the batch mean of the per-sequence sums is '
                              'applied at its end. See README "Update rate of the slow weights".')
+    parser.add_argument('--early_stop_window', type=int, default=10,
+                        help='Stop when the interval loss has been > 5 for this many consecutive print_freq '
+                             'intervals (default 10; 0 = never stop on loss; a NaN or inf loss always stops).')
+    parser.add_argument('--plasticity_schedule', type=str, default='',
+                        help='Ephemeral: "ITER:VALUE,ITER:VALUE,..." sets the plasticity alpha to VALUE from '
+                             'iteration ITER on (piecewise constant, applied at iteration boundaries); '
+                             '--plasticity holds before the first entry (use 0:VALUE to replace it). On resume '
+                             'the value in force at the resumed iteration is applied, and a different schedule '
+                             'than the checkpoint\'s is allowed. The active alpha is logged each interval. '
+                             'Default empty = off.')
     parser.add_argument('--trace_loop_every', type=int, default=0,
                         help='Ephemeral + DFA: every N iterations (a multiple of --print_freq; 0 = off) record '
                              'the per-step, within-sequence feedback-loop traces of that iteration\'s batch '
@@ -677,6 +716,14 @@ def check_argument_combinations(args, parser):
     if args.optimizer != 'sgd' and (args.model_type != 'rnn' or args.updater == 'dfa'):
         parser.error(f"--optimizer {args.optimizer} supports only --model_type rnn with --updater backprop "
                      "or bptt: the ephemeral model and DFA update their weights by hand, per sequence.")
+    if args.early_stop_window < 0:
+        parser.error("--early_stop_window must not be negative.")
+    try:
+        parse_plasticity_schedule(args.plasticity_schedule)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.plasticity_schedule and args.model_type != "ephemeral":
+        parser.error("--plasticity_schedule needs --model_type ephemeral.")
     if args.trace_loop_every < 0 or args.checkpoint_keep_every < 0 or args.checkpoint_keep_max < 0:
         parser.error("--trace_loop_every, --checkpoint_keep_every and --checkpoint_keep_max must not be negative.")
     if args.trace_loop_every > 0:
@@ -935,7 +982,12 @@ def main():
     
     # Early stopping for high loss values - sliding window tracking
     EARLY_STOP_LOSS_THRESHOLD = 5.0
-    EARLY_STOP_WINDOW_SIZE = 10
+    EARLY_STOP_WINDOW_SIZE = args.early_stop_window
+    plasticity_schedule = parse_plasticity_schedule(args.plasticity_schedule)
+    if plasticity_schedule and args.fused_update:
+        # Each alpha is a new constant for the compiled step (per layer shape); the default cache limit of 8
+        # would silently fall back to the eager step after a few changes.
+        torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 64)
     loss_window = []  # Sliding window of average losses from print_freq intervals
     high_loss_count = 0  # Count of consecutive intervals with loss > threshold
     early_stopped = False
@@ -983,6 +1035,13 @@ def main():
                 else:
                     wb_mark_end("terminated", tags=["end:terminated"], exit_code=143)
                 break
+
+            if plasticity_schedule:
+                scheduled = plasticity_at(plasticity_schedule, iter, args.plasticity)
+                if scheduled != config["plasticity"]:
+                    print(f"Plasticity schedule: alpha {config['plasticity']} -> {scheduled} at iter {iter}")
+                    rnn.set_plasticity(scheduled)
+                    config["plasticity"] = scheduled  # checkpoints record the alpha in force
 
             # Fetch next batch (the stream is endless and tracks its own position)
             sequence, line_tensor, onehot_line_tensor = next(data_stream)
@@ -1130,6 +1189,8 @@ def main():
                 metrics.update(trace_metrics)
                 heldout_metrics, trace_metrics = {}, {}
                 metrics["iters_per_sec"] = interval.iterations / (time.time() - interval_start)
+                if plasticity_schedule:
+                    metrics["plasticity"] = config["plasticity"]
                 avg_loss_plot = metrics.get("loss", float("nan"))
 
                 print(f'--- Interval metrics (ending @ iter {iter}, whole batch) ---')
@@ -1193,14 +1254,13 @@ def main():
                     loss_window.pop(0)  # Keep only the last EARLY_STOP_WINDOW_SIZE values
                 
                 # Check if current loss exceeds threshold
-                if avg_loss_plot > EARLY_STOP_LOSS_THRESHOLD:
-                    high_loss_count += 1
+                high_loss_count, early_stop_now = high_loss_stop(high_loss_count, avg_loss_plot,
+                                                                 EARLY_STOP_WINDOW_SIZE, EARLY_STOP_LOSS_THRESHOLD)
+                if EARLY_STOP_WINDOW_SIZE > 0 and avg_loss_plot > EARLY_STOP_LOSS_THRESHOLD:
                     print(f"  High loss detected ({avg_loss_plot:.4f} > {EARLY_STOP_LOSS_THRESHOLD}). Count: {high_loss_count}/{EARLY_STOP_WINDOW_SIZE}")
-                else:
-                    high_loss_count = 0  # Reset counter if loss drops below threshold
-                
+
                 # Early stop if we've had high loss for the required number of intervals
-                if high_loss_count >= EARLY_STOP_WINDOW_SIZE:
+                if early_stop_now:
                     print(f"Early stopping: Loss has been > {EARLY_STOP_LOSS_THRESHOLD} for {EARLY_STOP_WINDOW_SIZE} consecutive intervals.")
                     early_stopped = True
                     wb_mark_end("high_loss_early_stop", tags=["end:high_loss", "early_stop"], exit_code=1)
