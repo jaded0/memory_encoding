@@ -709,7 +709,7 @@ python plots/loop_figures.py replay.pt --out figures/loop   # see the script's -
 ```
 
 It works with `--fused_update`, every `--slow_update_every` and `--fast_backward_per_forward` (the
-extra fast passes are not traced; the first pass is). The collection interface and what the traces mean
+fast write is pass 1 only; fast_delta spans all passes; slow_delta is zero between window ends). The collection interface and what the traces mean
 are in the vault design note "ephemeral weights feedback-loop instrumentation design 2026-09-30".
 
 ### Key-value memory tasks (`kv_tasks.py`)

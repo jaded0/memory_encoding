@@ -12,8 +12,8 @@ character (the only place that knows about tracing):
                                               after the forward and the loss, before any weight
                                               changes: activations, the weights that produced
                                               this output, the write this step is about to make
-    tracer.after_update(step)                 right after the main update (before the extra
-                                              --fast_backward_per_forward passes): what changed
+    tracer.after_update(step)                 after the whole character step (all fast passes, the
+                                              slow half or window end): what changed
     tracer.finish()                           after the sequence (and its last slow window):
                                               the only device-to-host read; returns the arrays
 
@@ -31,9 +31,16 @@ entries); l indexes them:
                       (with --grad_norm_clip, the clipped one; 0 on a step with no fast update)
   fast_drive[T,B,L]   |(F_l) x_l|, slow_drive[T,B,L] |(S_l) x_l|: each part's share of the
                       layer's pre-activation (bias excluded)
-  fast_delta[T,B,L]   |F after - F before| over the step (forgetting included)
-  slow_delta[T,B,L+1] |S after - S before| over the step (i2o last); what was applied, so zero
-                      between window ends under --slow_update_every N / sequence
+  fast_delta[T,B,L]   |F after - F before| over the whole character step (forgetting included; with
+                      --fast_backward_per_forward K >= 2 it includes the extra passes' writes, while
+                      fast_write is pass 1 only; a 1/N-subsampled character has fast_write 0 and a
+                      fast_delta that is forgetting only)
+  slow_delta[T,B,L+1] |S after - S before| over the whole character step (i2o last), read after the
+                      slow half (K >= 2) or window end has been applied. It is what was APPLIED, so
+                      under --slow_update_every N it is ZERO between window ends with one jump at each
+                      window end, and under 'sequence' it is zero at every step (the one application
+                      comes after the last step; see slow_total_delta). Do not read those zeros as
+                      'no slow learning'.
   max_logit, logit_norm, loss, hidden_norm   [T,B]
   slow_total_delta[B,L+1]   |S at the end of the sequence - S at its start| (includes the last window)
 and the derived write_norm[T,B] = sqrt(sum_l fast_write^2) and

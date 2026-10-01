@@ -220,6 +220,43 @@ class ModesTest(unittest.TestCase):
         # step 1 sees the extra pass's fast weights
         self.assertFalse(torch.equal(twice["fast_norm"][1], once["fast_norm"][1]))
 
+    def test_extra_passes_with_per_step_slow_updates_trace_the_slow_half_on_its_own_step(self):
+        # K=2 splits each step: the slow half of pass 1 is applied after the extra passes, and the
+        # tracer reads after that, so every step shows its own slow change.
+        _, (twice, _) = run(build(fast_backward_per_forward=2))
+        _, (once, _) = run(build())
+        self.assertTrue((twice["slow_delta"] > 0).all())
+        torch.testing.assert_close(twice["slow_delta"][0], once["slow_delta"][0], rtol=1e-5, atol=1e-7)  # same pass-1 error
+        applied = twice["slow_delta"].sum(0)   # triangle inequality: the net change is at most the sum of steps
+        self.assertTrue((twice["slow_total_delta"] > 0).all())
+        self.assertTrue((twice["slow_total_delta"] <= applied + 1e-6).all())
+
+    def test_extra_passes_with_slow_windows_jump_only_when_the_window_applies(self):
+        _, (windowed, _) = run(build(fast_backward_per_forward=2, slow_update_every=2))  # windows end after steps 1 and 3
+        self.assertTrue((windowed["slow_delta"][[0, 2]] == 0).all())
+        self.assertTrue((windowed["slow_delta"][[1, 3]] > 0).all())
+        _, (sequence, _) = run(build(fast_backward_per_forward=2, slow_update_every="sequence"))
+        self.assertTrue((sequence["slow_delta"] == 0).all())      # applied after the last step, outside the steps
+        self.assertTrue((sequence["slow_total_delta"] > 0).all())
+
+    def test_fast_delta_includes_the_extra_passes_but_fast_write_is_pass_one(self):
+        _, (once, _) = run(build(forget_rate=0.0))
+        _, (twice, _) = run(build(forget_rate=0.0, fast_backward_per_forward=2))
+        torch.testing.assert_close(once["fast_delta"], once["fast_write"], rtol=1e-4, atol=1e-6)
+        torch.testing.assert_close(twice["fast_write"][0], once["fast_write"][0], rtol=0, atol=0)
+        # step 0 starts from zero fast weights: with the second pass's write the change is larger
+        self.assertTrue((twice["fast_delta"][0] != twice["fast_write"][0]).any())
+
+    def test_subsampled_characters_record_no_write_and_only_forgetting_as_fast_change(self):
+        _, (traces, _) = run(build(fast_backward_per_forward="1/2", forget_rate=0.25))
+        skipped = [1, 3]
+        self.assertTrue((traces["fast_write"][skipped] == 0).all())
+        self.assertTrue((traces["fast_delta"][skipped] > 0).all())   # forgetting only
+        # a forget-only step shrinks F by the forget rate: |F' - F| = 0.25 |F|
+        torch.testing.assert_close(traces["fast_delta"][skipped], 0.25 * traces["fast_norm"][skipped],
+                                   rtol=1e-4, atol=1e-6)
+        self.assertTrue((traces["slow_delta"] > 0).all())          # slow stream unchanged by subsampling
+
     def test_tracing_changes_nothing(self):
         for options in (dict(), dict(fused=True), dict(slow_update_every="sequence"), dict(slow_update_every=2),
                         dict(fast_backward_per_forward=2), dict(fast_backward_per_forward="1/2", fused=True),
