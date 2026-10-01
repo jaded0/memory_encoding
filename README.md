@@ -121,6 +121,41 @@ default only as a different arm. Record it with the run, and keep a `1` arm in a
 speed gain is not mistaken for an effect of the update rate. `tests/test_slow_update_every.py`
 pins the behaviour.
 
+### Backward passes per forward pass (`--fast_backward_per_forward`)
+
+Three counters are easy to confuse: **forwards per character** (one, plus the re-forwards below),
+**backward passes per forward** (this flag, for the fast entries), and **apply events** (when a
+gradient is written to a parameter: `--slow_update_every` is an apply period for the slow group,
+and does not change how many backward passes there are). `--fast_backward_per_forward R`
+(ephemeral + DFA only; default `1`) sets the backward ratio of the fast entries. R is a positive
+integer K or `1/N` for an integer N >= 2. The default is today's one DFA step per character, bit
+for bit: the golden traces are unchanged and no checkpoint key is added.
+
+- **`K >= 2`**: the first pass is the ordinary forward and DFA step. Then K - 1 more times the
+  forward pass is re-run on the same character, from the same incoming hidden state, with the
+  current (already updated) fast weights; the output error is recomputed from that fresh output and
+  a fast-only DFA step is applied (slow entries, i2o and biases frozen, `--grad_norm_clip`,
+  clamps and alpha as usual). Forgetting happens once per character, in the first pass. The slow
+  gradient, the loss and metrics, and the `--grad_norm_clip` statistics come from the first pass;
+  the hidden state passed to the next character is the last pass's. Under `--slow_update_every
+  sequence` the slow entries are frozen within a sequence, so the slow stream is the first pass's
+  alone. Under the per-step update (or an N window), the slow step of the first pass is already
+  applied when the extra passes re-forward, so they and the next character see it.
+- **`1/N`**: only every N-th character of a sequence (the first, N + 1-th, ...) gets a fast update.
+  The other characters run the forward pass, and the fast entries only forget (forgetting is
+  time-based and applies every character). The slow stream is unchanged: every character
+  contributes its gradient as `--slow_update_every` says.
+- **Cost.** K >= 2 costs about K forwards per character (plus the fast-only steps), so expect
+  roughly K times fewer iterations per second; 1/N costs no more than 1.
+- **Together with other flags.** `--fused_update` (the extra passes use the same compiled fast-only
+  step, with forgetting turned off), `--slow_update_every`, `--dfa_fprime`, `--layer_norm`,
+  `--wipe_every` and the clamps work. Resuming with a different value is refused (a checkpoint
+  without the setting counts as 1). Backprop, BPTT and `--model_type rnn` are refused for now; support
+  for them would be a later change. Held-out evaluation (`heldout.py`) keeps 1:1.
+
+`tests/test_backward_ratio.py` pins the behaviour. Like `--slow_update_every`, it changes the
+dynamics, so compare it against a `1` arm.
+
 Both models use a forked transition/emission layout. At each step,
 `combined = hidden_layers(cat(x_t, h_{t-1}))` (plus the residual, if on),
 `h_t = tanh(i2h(combined))`, and `y_t = i2o(combined)`. The state and output heads can
