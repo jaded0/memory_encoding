@@ -39,12 +39,12 @@ for d in sorted(glob.glob(f"{runs_dir}/h*_s*")):
         continue
     hidden, arm, seed = int(m[1]), m[2], int(m[3])
     last = rows[-1]["iter"]
-    early = [r.get("recall_acc", 0) for r in rows if r["iter"] <= 25000]
+    early = [r.get("recall_acc", 0) for r in rows if 2000 <= r["iter"] <= 25000]  # 1k interval: chance-level transient
     mt = [(r["iter"], r.get("answer_margin")) for r in rows]
     res[name] = dict(
         hidden=hidden, arm=arm, seed=seed, last_iter=last,
         finished=os.path.exists(f"{d}/EARLYSTOP") or last >= 80000,
-        t_first_nonzero=first(rows, "recall_acc", 1e-4), t05=first(rows, "recall_acc", 0.5),
+        t_first_nonzero=first([r for r in rows if r["iter"] >= 2000], "recall_acc", 1e-4), t05=first(rows, "recall_acc", 0.5),
         t099=first(rows, "recall_acc", 0.99),
         zero_first_25k=all(x == 0 for x in early), max_recall_le25k=max(early or [0]),
         margin_traj=mt, recall_traj=[(r["iter"], r.get("recall_acc")) for r in rows],
