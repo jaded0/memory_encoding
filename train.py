@@ -1,5 +1,7 @@
 # train.py
 import torch
+import torch.nn.functional as F
+import re
 from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every, parse_fast_backward_per_forward, FEEDBACK_INITS
 from feedback_alignment import measure_alignment
 import wandb
@@ -76,10 +78,28 @@ def wb_mark_end(reason: str, tags=None, exit_code: int | None = None):
 ANSWER_MARKER_INDEX = get_charset('long_range_memory_dataset').index('!')  # the input at the answer step
 
 
+PALINDROME_NAME = re.compile(r'^(\d)_(?:small_)?palindrome_dataset_vary_length$')
+
+
+def palindrome_answer_groups(onehot_line_tensor, i, dot_index, n_groups):
+    """3-character-reversal task (N_palindrome_dataset_vary_length: left half of 1..N characters, the middle
+    '.', the reversed half, padding). At step i (input character i, target character i+1) returns [B] ints:
+    j when the target is the j-th character after the '.', 0 elsewhere (the left half, the '.', the padding).
+    Output j reads the left-half character N lags back: 1 -> lag 1, 2 -> lag 3, 3 -> lag 5."""
+    half = onehot_line_tensor[:, :, dot_index].argmax(1)  # index of the '.', which is the half length
+    j = i + 1 - half
+    return torch.where((j >= 1) & (j <= half) & (j <= n_groups), j, torch.zeros_like(j))
+
+
 class MarginStats:
     """--log_margin: at the answer step (the step whose input is the query marker '!'), the margin of
     the logits (correct minus the best other), the softmax probability of the correct class and of the
-    most likely class, accumulated on the device and read at each print_freq."""
+    most likely class, accumulated on the device and read at each print_freq.
+
+    With groups (add's groups argument: 0 = not an answer step, j = the j-th answer of the sequence; the
+    3-character-reversal task), the same three numbers plus argmax accuracy are also kept per answer
+    position (answer_margin_pos1, ...), and answer_seq_acc is the fraction of sequences whose answers are
+    all correct (end_batch closes each batch of sequences)."""
 
     def __init__(self):
         self.reset()
@@ -87,10 +107,15 @@ class MarginStats:
     def reset(self):
         self.sums = None
         self.count = None
+        self.group_sums = None
+        self.group_count = None
+        self.seq_ok = None
+        self.seq_correct = None
+        self.seq_count = None
 
-    def add(self, logits, target, rows):
+    def add(self, logits, target, rows, groups=None, n_groups=0):
         if rows is None:
-            raise ValueError("--log_margin needs --dataset long_range_memory_dataset")
+            raise ValueError("--log_margin needs --dataset long_range_memory_dataset or N_palindrome_dataset_vary_length")
         correct = logits.gather(1, target.argmax(1, keepdim=True)).squeeze(1)
         other = logits.masked_fill(target > 0, float('-inf')).max(1).values
         prob = torch.softmax(logits, 1)
@@ -99,12 +124,39 @@ class MarginStats:
         total, count = values.double().sum(1), rows.double().sum()
         self.sums = total if self.sums is None else self.sums + total
         self.count = count if self.count is None else self.count + count
+        if groups is not None:
+            hit = (logits.argmax(1) == target.argmax(1))
+            by_group = F.one_hot(groups, n_groups + 1)[:, 1:].double()  # [B, n_groups]
+            per_row = torch.cat([values, hit.to(values.dtype).unsqueeze(0) * rows.to(values.dtype)]).double()
+            group_total, group_count = per_row @ by_group, by_group.sum(0)
+            self.group_sums = group_total if self.group_sums is None else self.group_sums + group_total
+            self.group_count = group_count if self.group_count is None else self.group_count + group_count
+            ok = hit | ~rows
+            self.seq_ok = ok if self.seq_ok is None else self.seq_ok & ok
+
+    def end_batch(self):
+        if self.seq_ok is None:
+            return
+        done = self.seq_ok.double().sum()
+        self.seq_correct = done if self.seq_correct is None else self.seq_correct + done
+        size = torch.tensor(float(self.seq_ok.numel()), dtype=torch.float64, device=self.seq_ok.device)
+        self.seq_count = size if self.seq_count is None else self.seq_count + size
+        self.seq_ok = None
 
     def summary(self):
         if self.count is None or self.count.item() == 0:
             return {}
         margin, p_correct, p_max = (self.sums / self.count).tolist()
-        return {"answer_margin": margin, "answer_p_correct": p_correct, "answer_p_max": p_max}
+        out = {"answer_margin": margin, "answer_p_correct": p_correct, "answer_p_max": p_max}
+        if self.group_sums is not None:
+            per = (self.group_sums / self.group_count.clamp(min=1)).tolist()
+            for j in range(len(per[0])):
+                if self.group_count[j].item() > 0:
+                    for name, row in zip(("margin", "p_correct", "p_max", "acc"), per):
+                        out[f"answer_{name}_pos{j + 1}"] = row[j]
+            if self.seq_count is not None and self.seq_count.item() > 0:
+                out["answer_seq_acc"] = (self.seq_correct / self.seq_count).item()
+        return out
 
 
 MARGIN_STATS = MarginStats()
@@ -170,10 +222,17 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             shaping_rows = None
             if config.get('label_smoothing', 0.0) or config.get('entropy_penalty', 0.0) or config.get('log_margin', False):
                 answer_rows = onehot_line_tensor[:, i, ANSWER_MARKER_INDEX] > 0 if config.get('dataset') == 'long_range_memory_dataset' else None
+                answer_groups, n_groups = None, 0
+                palindrome = PALINDROME_NAME.match(config.get('dataset') or '')
+                if palindrome and config.get('log_margin', False):
+                    n_groups = int(palindrome.group(1))
+                    answer_groups = palindrome_answer_groups(
+                        onehot_line_tensor, i, get_charset(config['dataset']).index('.'), n_groups)
+                    answer_rows = answer_groups > 0
                 if config.get('shaping_scope', 'all') == 'answer':
                     shaping_rows = answer_rows
                 if config.get('log_margin', False):
-                    MARGIN_STATS.add(output.detach(), final_char, answer_rows)
+                    MARGIN_STATS.add(output.detach(), final_char, answer_rows, answer_groups, n_groups)
             loss, output_error = dfa_output_error(output, final_char, criterion, config.get('label_smoothing', 0.0),
                                                   config.get('entropy_penalty', 0.0), shaping_rows)
             losses.append(loss.detach())
@@ -407,6 +466,9 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             else:
                 all_outputs.append(output[0])
                 all_labels.append(final_char[0])
+
+    if config.get('log_margin', False):
+        MARGIN_STATS.end_batch()
 
     if updater == 'dfa' and isinstance(rnn, EphemeralRNN) and rnn.slow_update_every != 1:
         # --slow_update_every: the sequence's last (or only) window is applied before it ends.
@@ -671,8 +733,10 @@ def build_parser():
                         help='Ephemeral + DFA: multiply the learning rate of the emission head i2o (weights and '
                              'bias) by this; every other layer is unchanged. Default 1.')
     parser.add_argument('--log_margin', type=str2bool, nargs='?', const=True, default=False,
-                        help='long_range_memory_dataset: log the answer-step logit margin (correct minus best '
-                             'other), p(correct) and max p, averaged per print_freq interval. No effect on training.')
+                        help='long_range_memory_dataset or N_palindrome_dataset_vary_length: log the answer-step logit '
+                             'margin (correct minus best other), p(correct) and max p, averaged per print_freq '
+                             'interval; on the palindrome task also per output position (_pos1..) with argmax '
+                             'accuracy and answer_seq_acc. No effect on training.')
     parser.add_argument('--alignment_log_every', type=int, default=0,
                         help='Ephemeral + DFA: every N iterations (and at the start) print the cosine between the '
                              'DFA projected error and the true backprop gradient per hidden layer (replayed on a '
@@ -786,8 +850,11 @@ def check_argument_combinations(args, parser):
         parser.error("--label_smoothing must be in [0, 1).")
     if args.entropy_penalty < 0.0 or args.readout_lr_scale < 0.0:
         parser.error("--entropy_penalty and --readout_lr_scale must be >= 0.")
-    if (args.shaping_scope == 'answer' or args.log_margin) and args.dataset != 'long_range_memory_dataset':
-        parser.error("--shaping_scope answer and --log_margin support only --dataset long_range_memory_dataset.")
+    if args.shaping_scope == 'answer' and args.dataset != 'long_range_memory_dataset':
+        parser.error("--shaping_scope answer supports only --dataset long_range_memory_dataset.")
+    if args.log_margin and args.dataset != 'long_range_memory_dataset' and not PALINDROME_NAME.match(args.dataset):
+        parser.error("--log_margin supports only --dataset long_range_memory_dataset or "
+                     "N_palindrome_dataset_vary_length (also the small variant).")
     if args.shaping_scope == 'answer' and not shaping:
         parser.error("--shaping_scope answer needs --label_smoothing or --entropy_penalty.")
     if shaping and (args.fast_backward_per_forward != 1 or args.heldout_eval_every > 0):

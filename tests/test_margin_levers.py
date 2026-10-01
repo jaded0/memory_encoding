@@ -126,6 +126,76 @@ class MarginStatsTest(unittest.TestCase):
         self.assertEqual(stats.summary(), {})
 
 
+class PalindromeMarginTest(unittest.TestCase):
+    CHARS = train_module.get_charset("3_palindrome_dataset_vary_length")
+
+    def onehot(self, strings):
+        idx = torch.tensor([[self.CHARS.index(c) for c in text] for text in strings])
+        return F.one_hot(idx, len(self.CHARS)).float()
+
+    def test_answer_groups_mark_the_reversed_half_only(self):
+        seqs = self.onehot(["20!.!02", ",!.!,  ", "1.1    "])
+        dot = self.CHARS.index(".")
+        groups = torch.stack([train_module.palindrome_answer_groups(seqs, i, dot, 3) for i in range(6)], 1)
+        # step i has input char i and target char i+1: the answers are the targets after the '.'
+        self.assertEqual(groups.tolist(), [[0, 0, 0, 1, 2, 3], [0, 0, 1, 2, 0, 0], [0, 1, 0, 0, 0, 0]])
+
+    def test_grouped_stats_are_per_position_and_whole_sequence(self):
+        stats = train_module.MarginStats()
+        V = 4
+        target = F.one_hot(torch.tensor([0, 1]), V).float()
+        # step 1: both rows answer position 1; row 0 right with margin 2, row 1 wrong with margin -1
+        stats.add(torch.tensor([[2.0, 0, 0, 0], [0, 0, 1.0, 0]]), target, torch.tensor([True, True]),
+                  torch.tensor([1, 1]), 2)
+        # step 2: only row 0 answers position 2; wrong with margin -3
+        stats.add(torch.tensor([[0, 3.0, 0, 0], [5.0, 0, 0, 0]]), F.one_hot(torch.tensor([2, 0]), V).float(), torch.tensor([True, False]),
+                  torch.tensor([2, 0]), 2)
+        stats.end_batch()
+        out = stats.summary()
+        self.assertAlmostEqual(out["answer_margin_pos1"], 0.5)
+        self.assertAlmostEqual(out["answer_acc_pos1"], 0.5)
+        self.assertAlmostEqual(out["answer_margin_pos2"], -3.0)
+        self.assertAlmostEqual(out["answer_acc_pos2"], 0.0)
+        self.assertAlmostEqual(out["answer_margin"], (2 - 1 - 3) / 3)
+        self.assertAlmostEqual(out["answer_seq_acc"], 0.0)  # row 0 misses pos 2; row 1 misses pos 1
+        stats.reset()
+        self.assertEqual(stats.summary(), {})
+
+    def test_ungrouped_summary_has_only_the_original_keys(self):
+        stats = train_module.MarginStats()
+        stats.add(torch.eye(3), torch.eye(3), torch.tensor([True, True, False]))
+        stats.end_batch()
+        self.assertEqual(set(stats.summary()), {"answer_margin", "answer_p_correct", "answer_p_max"})
+
+    def test_cli_accepts_the_palindrome_task_only_for_log_margin(self):
+        ok = train_module.parse_args(["--dataset", "3_palindrome_dataset_vary_length", "--log_margin", "true"])
+        self.assertTrue(ok.log_margin)
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            train_module.parse_args(["--dataset", "3_palindrome_dataset_vary_length", "--shaping_scope", "answer",
+                                     "--label_smoothing", "0.1"])
+        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+            train_module.parse_args(["--dataset", "palindrome_dataset_vary_length", "--log_margin", "true"])
+
+    def test_logging_does_not_change_training(self):
+        from tests.test_heldout import TEXTS, build as build_small, config as config_small, episodes
+        outcome = {}
+        for flag in (False, True):
+            model = build_small()
+            train_module.MARGIN_STATS.reset()
+            cfg = config_small(dataset="3_small_palindrome_dataset_vary_length", log_margin=flag)
+            train_module.train_batch(None, episodes(TEXTS), model, cfg, {"training_instance": 0, "log_norms_now": False})
+            outcome[flag] = ({k: v.clone() for k, v in model.state_dict().items()}, train_module.MARGIN_STATS.summary())
+        for name, value in outcome[False][0].items():
+            self.assertTrue(torch.equal(value, outcome[True][0][name]), name)
+        self.assertEqual(outcome[False][1], {})
+        summary = outcome[True][1]
+        # "23.32  " answers 2 characters, "322.223" answers 3: position 3 has one row per step it exists
+        for pos in (1, 2, 3):
+            self.assertIn(f"answer_margin_pos{pos}", summary)
+        self.assertIn("answer_seq_acc", summary)
+        train_module.MARGIN_STATS.reset()
+
+
 class CommandLineTest(unittest.TestCase):
     def refused(self, *argv):
         with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
@@ -141,7 +211,7 @@ class CommandLineTest(unittest.TestCase):
         self.refused("--entropy_penalty", "-1")
         self.refused("--shaping_scope", "answer")
         self.refused("--label_smoothing", "0.1", "--shaping_scope", "answer")  # dataset is not long_range
-        self.refused("--log_margin", "true")
+        self.refused("--dataset", "roneneldan/tinystories", "--log_margin", "true")
         self.refused("--label_smoothing", "0.1", "--fast_backward_per_forward", "2")
         self.refused("--label_smoothing", "0.1", "--heldout_eval_every", "2")
         ok = train_module.parse_args(["--dataset", "long_range_memory_dataset", "--label_smoothing", "0.1",
