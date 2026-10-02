@@ -17,8 +17,9 @@ arm_flags() {
     SHAM2)  ARM_FLAGS=(--sv_cap_file $2/sham2_8.pt) ;;
     SHAM3)  ARM_FLAGS=(--sv_cap_file $2/sham3_8.pt) ;;
     CTRL)   ;;
-    CAP8_D165) ARM_FLAGS=(--sv_cap_file $2/cap8.pt --sv_cap_start 165000) ;;
+    # delayed caps: resumed from CTRL's own checkpoint at the start iteration (START_CKPT), cap active at once
     CAP8_D170) ARM_FLAGS=(--sv_cap_file $2/cap8.pt --sv_cap_start 170000) ;;
+    CAP8_D180) ARM_FLAGS=(--sv_cap_file $2/cap8.pt --sv_cap_start 180000) ;;
     *) return 1 ;;
   esac
 }
