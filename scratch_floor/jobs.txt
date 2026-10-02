@@ -1,0 +1,37 @@
+base_s2718 256 2718 60000 --readout_lr_scale 10 --feedback_init aligned
+base_s3141 256 3141 60000 --readout_lr_scale 10 --feedback_init aligned
+base_s4241 256 4241 60000 --readout_lr_scale 10 --feedback_init aligned
+A1_lr3_alpha3rd_s2718 256 2718 60000 --readout_lr_scale 10 --feedback_init aligned --learning_rate 3e-4 --plasticity 1e4
+A1_lr3_alpha3rd_s3141 256 3141 60000 --readout_lr_scale 10 --feedback_init aligned --learning_rate 3e-4 --plasticity 1e4
+A1_lr3_alpha3rd_s4241 256 4241 60000 --readout_lr_scale 10 --feedback_init aligned --learning_rate 3e-4 --plasticity 1e4
+A2_alpha3x_s2718 256 2718 60000 --readout_lr_scale 10 --feedback_init aligned --plasticity 9e4
+A2_alpha3x_s3141 256 3141 60000 --readout_lr_scale 10 --feedback_init aligned --plasticity 9e4
+A2_alpha3x_s4241 256 4241 60000 --readout_lr_scale 10 --feedback_init aligned --plasticity 9e4
+A2b_alpha2x_s2718 256 2718 60000 --readout_lr_scale 10 --feedback_init aligned --plasticity 6e4
+A2b_alpha2x_s3141 256 3141 60000 --readout_lr_scale 10 --feedback_init aligned --plasticity 6e4
+A2b_alpha2x_s4241 256 4241 60000 --readout_lr_scale 10 --feedback_init aligned --plasticity 6e4
+A2t_alpha3x_ro3.33_s2718 256 2718 60000 --readout_lr_scale 3.3333 --feedback_init aligned --plasticity 9e4
+A2t_alpha3x_ro3.33_s3141 256 3141 60000 --readout_lr_scale 3.3333 --feedback_init aligned --plasticity 9e4
+A2t_alpha3x_ro3.33_s4241 256 4241 60000 --readout_lr_scale 3.3333 --feedback_init aligned --plasticity 9e4
+base_s1618 256 1618 60000 --readout_lr_scale 10 --feedback_init aligned
+base_s8128 256 8128 60000 --readout_lr_scale 10 --feedback_init aligned
+B2_h1024_s2718 1024 2718 60000 --readout_lr_scale 10 --feedback_init aligned
+B2_h1024_s3141 1024 3141 60000 --readout_lr_scale 10 --feedback_init aligned
+A1t_lr3_ro3.33_s2718 256 2718 60000 --readout_lr_scale 3.3333 --feedback_init aligned --learning_rate 3e-4 --plasticity 1e4
+A1t_lr3_ro3.33_s3141 256 3141 60000 --readout_lr_scale 3.3333 --feedback_init aligned --learning_rate 3e-4 --plasticity 1e4
+B1r_pe16_randB_ro10_s2718 256 2718 60000 --readout_lr_scale 10 --positional_encoding_dim 16
+B1r_pe16_randB_ro10_s3141 256 3141 60000 --readout_lr_scale 10 --positional_encoding_dim 16
+B1r_pe16_randB_ro10_s4241 256 4241 60000 --readout_lr_scale 10 --positional_encoding_dim 16
+B0r_randB_ro10_s2718 256 2718 60000 --readout_lr_scale 10
+B0r_randB_ro10_s3141 256 3141 60000 --readout_lr_scale 10
+B0r_randB_ro10_s4241 256 4241 60000 --readout_lr_scale 10
+A1t_lr3_ro3.33_s4241 256 4241 60000 --readout_lr_scale 3.3333 --feedback_init aligned --learning_rate 3e-4 --plasticity 1e4
+B1p_pe16_randB_ro10_s2718 256 2718 60000 --readout_lr_scale 10 --positional_encoding_dim 16 --alignment_log_every 0
+B1p_pe16_randB_ro10_s3141 256 3141 60000 --readout_lr_scale 10 --positional_encoding_dim 16 --alignment_log_every 0
+B1p_pe16_randB_ro10_s4241 256 4241 60000 --readout_lr_scale 10 --positional_encoding_dim 16 --alignment_log_every 0
+A3_lr10_alpha10th_s2718 256 2718 60000 --readout_lr_scale 10 --feedback_init aligned --learning_rate 1e-3 --plasticity 3e3
+A3_lr10_alpha10th_s3141 256 3141 60000 --readout_lr_scale 10 --feedback_init aligned --learning_rate 1e-3 --plasticity 3e3
+A3_lr10_alpha10th_s4241 256 4241 60000 --readout_lr_scale 10 --feedback_init aligned --learning_rate 1e-3 --plasticity 3e3
+A2c_alpha1.5x_s2718 256 2718 60000 --readout_lr_scale 10 --feedback_init aligned --plasticity 4.5e4
+A2c_alpha1.5x_s3141 256 3141 60000 --readout_lr_scale 10 --feedback_init aligned --plasticity 4.5e4
+A2c_alpha1.5x_s4241 256 4241 60000 --readout_lr_scale 10 --feedback_init aligned --plasticity 4.5e4
