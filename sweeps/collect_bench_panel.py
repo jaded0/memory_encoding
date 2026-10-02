@@ -80,6 +80,8 @@ def summarize(info, threshold):
         held = [i for i in sorted(blocks) if key in blocks[i]]
         row[f"heldout_{protocol}"] = blocks[held[-1]][key] if held else None
         row[f"heldout_{protocol}_iter"] = held[-1] if held else None
+    held = [i for i in sorted(blocks) if "heldout_strict/first_answer_acc" in blocks[i]]
+    row["heldout_strict_first_answer"] = blocks[held[-1]]["heldout_strict/first_answer_acc"] if held else None
     for cls in ("correct", "stale", "wrong_key", "other"):
         row[f"kv_{cls}"] = blocks[iters[-1]].get(f"kv_{cls}") if iters else None
     return row
@@ -107,7 +109,7 @@ def main(argv=None):
         print("no logs found")
         return
     cols = ["task", "arm", "seed", "status", "last_iter", "final_recall", "best_recall", "iter_ge_threshold",
-            "heldout_observed", "heldout_strict", "heldout_no_fast", "heldout_free_running"]
+            "heldout_observed", "heldout_strict", "heldout_no_fast", "heldout_free_running", "heldout_strict_first_answer"]
     print("| " + " | ".join(c.replace("iter_ge_threshold", f"iter>={args.threshold}") for c in cols) + " |")
     print("|" + "---|" * len(cols))
     for row in rows:
