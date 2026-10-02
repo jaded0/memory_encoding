@@ -1,7 +1,7 @@
 # train.py
 import torch
 from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every, parse_fast_backward_per_forward, FEEDBACK_INITS
-from feedback_alignment import measure_alignment
+from feedback_alignment import feedback_gain_statistics, measure_alignment
 import wandb
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
@@ -472,6 +472,17 @@ def log_alignment(rnn, config, line_tensor, onehot_line_tensor, sequence, done_i
     print("ALIGNJSON " + json.dumps({"iter": done_iters, "layers": result}))
 
 
+def log_feedback_gain(rnn):
+    """One init-only GAIN line per fixed feedback matrix when alignment logging is enabled."""
+    stats = feedback_gain_statistics(rnn)
+    for k, values in enumerate(stats):
+        layer = str(k) if k < len(rnn.linear_layers) else 'i2h'
+        singular_values = ','.join(f'{value:.6g}' for value in values['b_singular_values'])
+        print(f"GAIN layer={layer} b_fro={values['b_fro']:.6g} b_top5={singular_values} "
+              f"b_stable_rank={values['b_stable_rank']:.6g} "
+              f"j_stable_rank={values['j_stable_rank']:.6g}")
+
+
 def build_model(config, charset, n_characters):
     """The model a run's config describes (train.py's own config, or a checkpoint's)."""
     if config['input_mode'] not in ('last_one', 'last_two'):
@@ -650,10 +661,12 @@ def build_parser():
                              'random (default, unchanged): xavier normal. aligned: the mean Jacobian of the logits '
                              'with respect to the layer output at the initial weights (the best fixed matrix for '
                              'the true backprop signal), at the random matrix\'s Frobenius norm times '
-                             '--feedback_scale (-1 = anti-aligned control). scaled: the random matrix times '
+                             '--feedback_scale (-1 = anti-aligned control). aligned_spectrum_matched uses the '
+                             'Jacobian singular vectors and random-B singular values; random_spectrum_of_J uses '
+                             'random-B singular vectors and the normalized Jacobian spectrum. scaled: random B times '
                              '--feedback_scale. B stays fixed afterwards.')
     parser.add_argument('--feedback_scale', type=float, default=1.0,
-                        help='Multiplier for --feedback_init scaled or aligned (negative flips B). Default 1.')
+                        help='Multiplier for any non-random --feedback_init (negative flips B). Default 1.')
     parser.add_argument('--readout_init_scale', type=float, default=1.0,
                         help='Ephemeral only: multiply the initial weights of the emission head i2o by this. '
                              'Default 1 (unchanged).')
@@ -794,9 +807,9 @@ def check_argument_combinations(args, parser):
         parser.error("--label_smoothing and --entropy_penalty do not support --fast_backward_per_forward other "
                      "than 1 or --heldout_eval_every (their extra passes and evaluator use the plain error).")
     if args.feedback_init == 'random' and args.feedback_scale != 1.0:
-        parser.error("--feedback_scale applies only to --feedback_init scaled or aligned.")
-    if args.feedback_init == 'aligned' and args.dfa_fprime:
-        parser.error("--feedback_init aligned is not supported with --dfa_fprime.")
+        parser.error("--feedback_scale applies only to non-random --feedback_init values.")
+    if args.feedback_init in ('aligned', 'aligned_spectrum_matched', 'random_spectrum_of_J') and args.dfa_fprime:
+        parser.error(f"--feedback_init {args.feedback_init} is not supported with --dfa_fprime.")
     if args.alignment_log_every and (args.slow_update_every != 1 or args.fast_backward_per_forward != 1):
         parser.error("--alignment_log_every needs --slow_update_every 1 and --fast_backward_per_forward 1.")
     if args.fast_backward_per_forward != 1 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
@@ -1127,6 +1140,8 @@ def main():
                  continue # Skip this batch
 
             if args.alignment_log_every and (iter - 1) % args.alignment_log_every == 0:
+                if iter == 1:
+                    log_feedback_gain(rnn)
                 log_alignment(rnn, config, line_tensor, onehot_line_tensor, sequence, iter - 1)
 
             # Determine if detailed outputs are needed (for the frequent PRINT interval)

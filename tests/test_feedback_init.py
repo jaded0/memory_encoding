@@ -175,6 +175,12 @@ class TrainingFlowTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             log = heldout_tests.run_main("--feedback_init", "aligned", "--feedback_scale", "-1",
                                          "--alignment_log_every", "2", checkpoint_dir=directory)
+            self.assertEqual(log.count("GAIN layer=0 "), 1)
+            self.assertEqual(log.count("GAIN layer=i2h "), 1)
+            self.assertIn("b_fro=", log)
+            self.assertIn("b_top5=", log)
+            self.assertIn("b_stable_rank=", log)
+            self.assertIn("j_stable_rank=", log)
             self.assertIn("ALIGN iter 0 ", log)
             self.assertIn("ALIGN iter 2 ", log)
             path = os.path.join(directory, "latest_checkpoint.pth")

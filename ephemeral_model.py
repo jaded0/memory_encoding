@@ -14,7 +14,9 @@ import torch.nn.utils.parametrize as parametrize
 # the projected error by the layer's activation derivative; --dfa_fprime does, in both (Nøkland
 # 2016); see README "Known issues".
 
-FEEDBACK_INITS = ('random', 'aligned', 'scaled')  # --feedback_init
+FEEDBACK_INITS = (
+    'random', 'aligned', 'scaled', 'aligned_spectrum_matched', 'random_spectrum_of_J'
+)  # --feedback_init
 
 
 def init_feedback_weights(vocab_size, out_features):
@@ -1094,7 +1096,7 @@ class EphemeralRNN(torch.nn.Module):
             count += self.batch_size
         return batches
 
-    def jacobian_feedback_matrices(self, n_rows=256):
+    def jacobian_feedback_matrices(self, n_rows=256, allow_dfa_fprime=False):
         """The fixed matrix J_l ([vocab, out]) that makes DFA's projected error e @ J_l the true
         backpropagated signal as closely as one fixed matrix can, for the hidden layers and i2h:
         J_l = the mean over calibration inputs of d logits / d a_l, where a_l is the layer's
@@ -1110,7 +1112,7 @@ class EphemeralRNN(torch.nn.Module):
         ahead Jacobian d logits(t+1) / d a_i2h(t), through tanh, the next step's trunk and i2o,
         computed with recurrence switched on. Not supported with --dfa_fprime (f' is applied at run
         time, so B would have to be the Jacobian with respect to the post-activation output)."""
-        if any(layer.dfa_fprime for layer in self.trained_layers()):
+        if not allow_dfa_fprime and any(layer.dfa_fprime for layer in self.trained_layers()):
             raise ValueError("--feedback_init aligned is not supported with --dfa_fprime")
         layers = [*self.linear_layers, self.i2h]
         sums = [None] * len(layers)
@@ -1165,22 +1167,47 @@ class EphemeralRNN(torch.nn.Module):
                    the direction of the true backprop signal at the Frobenius norm of the random
                    matrix it replaces (scale 1 is the matched-scale version; scale -1 is the
                    anti-aligned control).
+          aligned_spectrum_matched: J_l's left and right singular vectors with the singular values
+                   of the random B_l it replaces, then multiplied by scale.
+          random_spectrum_of_J: the random B_l's singular vectors with J_l's singular values,
+                   rescaled to the random B_l's Frobenius norm, then multiplied by scale.
         B stays fixed afterwards: DFA never updates it."""
         if init not in FEEDBACK_INITS:
             raise ValueError(f"feedback_init must be one of {FEEDBACK_INITS}, not {init!r}")
         if init == 'random':
             if scale != 1.0:
-                raise ValueError("--feedback_scale applies only to --feedback_init scaled or aligned")
+                raise ValueError("--feedback_scale applies only to non-random --feedback_init values")
             return
         layers = [*self.linear_layers, self.i2h]
         if init == 'scaled':
             for layer in layers:
                 layer.feedback_weights.mul_(scale)
             return
+        if any(layer.dfa_fprime for layer in self.trained_layers()):
+            raise ValueError(f"--feedback_init {init} is not supported with --dfa_fprime")
         jacobians = self.jacobian_feedback_matrices()
+        # Plain (non-state-dict) cache: GAIN logging at init can report the same calibration J
+        # without repeating the relatively expensive Jacobian pass. It consumes no randomness.
+        self._feedback_init_jacobians = [jac.detach().clone() for jac in jacobians]
         for layer, jac in zip(layers, jacobians):
-            norm = layer.feedback_weights.norm()
-            layer.feedback_weights.copy_(jac.to(layer.feedback_weights.device) * (scale * norm / jac.norm()))
+            random_b = layer.feedback_weights.detach().clone()
+            jac = jac.to(device=random_b.device, dtype=random_b.dtype)
+            if init == 'aligned':
+                layer.feedback_weights.copy_(jac * (scale * random_b.norm() / jac.norm()))
+                continue
+
+            u_j, s_j, vh_j = torch.linalg.svd(jac, full_matrices=False)
+            u_b, s_b, vh_b = torch.linalg.svd(random_b, full_matrices=False)
+            rank = min(s_j.numel(), s_b.numel())
+            if init == 'aligned_spectrum_matched':
+                matched = (u_j[:, :rank] * s_b[:rank]) @ vh_j[:rank, :]
+            else:  # random_spectrum_of_J
+                matched = (u_b[:, :rank] * s_j[:rank]) @ vh_b[:rank, :]
+                matched_norm = matched.norm()
+                if matched_norm == 0:
+                    raise ValueError("mean feedback Jacobian has zero Frobenius norm")
+                matched = matched * (random_b.norm() / matched_norm)
+            layer.feedback_weights.copy_(matched * scale)
 
     def apply_regularization(self):
         """--weight_clamp (and --fast_weight_clamp) on every layer's per_sample_weights. DFA and

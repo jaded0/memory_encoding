@@ -13,6 +13,43 @@ import torch
 import torch.nn.functional as F
 
 
+@torch.no_grad()
+def feedback_gain_statistics(rnn):
+    """Initial B/J spectrum diagnostics for every fixed feedback matrix (trunk and i2h).
+
+    Returns one dictionary per layer with ||B||_F, B's top five singular values, and the stable
+    ranks ||M||_F^2 / ||M||_2^2 of B and the mean calibration Jacobian J. The aligned initializers
+    cache their J so logging does not repeat calibration; random/scaled initializers compute it
+    here without consuming randomness or changing model state.
+    """
+    if rnn.updater != 'dfa':
+        raise ValueError("feedback_gain_statistics needs the DFA updater")
+    layers = [*rnn.linear_layers, rnn.i2h]
+    jacobians = getattr(rnn, '_feedback_init_jacobians', None)
+    if jacobians is None:
+        jacobians = rnn.jacobian_feedback_matrices(allow_dfa_fprime=True)
+
+    def spectrum(matrix):
+        values = torch.linalg.svdvals(matrix)
+        fro_sq = values.square().sum()
+        stable_rank = (fro_sq / values[0].square()).item() if values.numel() and values[0] > 0 else 0.0
+        return values, stable_rank
+
+    result = []
+    for layer, jac in zip(layers, jacobians):
+        b = layer.feedback_weights.detach()
+        jac = jac.to(device=b.device, dtype=b.dtype)
+        b_values, b_stable_rank = spectrum(b)
+        _, j_stable_rank = spectrum(jac)
+        result.append({
+            'b_fro': b.norm().item(),
+            'b_singular_values': b_values[:5].tolist(),
+            'b_stable_rank': b_stable_rank,
+            'j_stable_rank': j_stable_rank,
+        })
+    return result
+
+
 def measure_alignment(rnn, step_inputs, step_targets, learning_rate, update_clamp, answer_steps=None):
     """step_inputs: list of [B, in] model inputs per step, step_targets: list of [B, V] one-hot targets.
     answer_steps: optional LongTensor [B], the step index of each row's recall answer.
