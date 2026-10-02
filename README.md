@@ -712,6 +712,22 @@ It works with `--fused_update`, every `--slow_update_every` and `--fast_backward
 fast write is pass 1 only; fast_delta spans all passes; slow_delta is zero between window ends). The collection interface and what the traces mean
 are in the vault design note "ephemeral weights feedback-loop instrumentation design 2026-09-30".
 
+### Tools for studying blowups (`--early_stop_window`, `--plasticity_schedule`, trace additions)
+
+- `--early_stop_window N` (default 10): the run stops when the interval loss has been above 5 for N
+  consecutive `--print_freq` intervals (10 intervals at `--print_freq 500` is 5k iterations, which cut
+  off early blowups that recover on their own). `0` turns the loss stop off; a NaN or inf loss always stops.
+- `--plasticity_schedule "ITER:VALUE,ITER:VALUE,..."` (default empty = off; ephemeral only): sets the
+  plasticity alpha to VALUE from iteration ITER on, applied at the start of each iteration;
+  `--plasticity` holds before the first entry (use `0:VALUE` to replace it). On resume the value in
+  force at the resumed iteration is applied, and resuming with a different schedule is allowed. The
+  active alpha is logged each interval as `plasticity`. This one changes training (everything else here
+  is observation only). With `--fused_update` every new alpha recompiles the fused step, so the torch
+  compile cache limit is raised to 64.
+- Two more traces with `--trace_loop_every`: `h_sat` (fraction of the tanh state's units with
+  |h| > 0.99) and `i2h_pre_norm`, computed from the i2h pre-activation (with `--enable_recurrence false`
+  the state is not fed back, which is why `hidden_norm` is 0 there). `trace_replay.py` prints both.
+
 ### Key-value memory tasks (`kv_tasks.py`)
 
 Associative recall as ordinary synthetic datasets (`--dataset kv_unique_4`, ...). An episode is
