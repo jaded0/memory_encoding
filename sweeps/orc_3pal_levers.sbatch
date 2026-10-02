@@ -12,8 +12,9 @@
 #   random      control: random feedback, readout lr x1
 #   ro3         --readout_lr_scale 3 (x10 was worse than random at 625k; x3 is the milder value)
 #   aligned     --feedback_init aligned (best fixed B at init, at random B's Frobenius norm)
-#   aligned_ro2 aligned + --readout_lr_scale 2: the gain-conservative combination (x10 + aligned
-#               was worse than aligned alone at 625k; keeping the readout boost small)
+#   slowlr3     slow lr x3 at constant fast gain: lr 3e-4, plasticity 1e5/3 (lr*plasticity = 10 as in
+#               the other arms). On key recall this set the ~20k floor (floor/report.md: onset 22k ->
+#               8k at lr x3, 3k at x10, every seed within 1k); fast gain could not be raised.
 # Tasks are seed-major, so any prefix of the array holds all four arms for each completed seed.
 # Seeds 2718/3141/4241 are the 2025-recipe reproduction's seeds (random-arm reference, converged at
 # 8.7M / 2.69M / 9.7M); 1618 is new.
@@ -56,10 +57,10 @@ readonly SERIES=3pal_levers_2026-10
 readonly P3=${DATASET:-3_palindrome_dataset_vary_length}
 # arm seed iterations
 readonly -a RUNS=(
-    "random 3141 8000000" "ro3 3141 8000000" "aligned 3141 8000000" "aligned_ro2 3141 8000000"
-    "random 2718 8000000" "ro3 2718 8000000" "aligned 2718 8000000" "aligned_ro2 2718 8000000"
-    "random 4241 8000000" "ro3 4241 8000000" "aligned 4241 8000000" "aligned_ro2 4241 8000000"
-    "random 1618 8000000" "ro3 1618 8000000" "aligned 1618 8000000" "aligned_ro2 1618 8000000"
+    "random 3141 8000000" "ro3 3141 8000000" "aligned 3141 8000000" "slowlr3 3141 8000000"
+    "random 2718 8000000" "ro3 2718 8000000" "aligned 2718 8000000" "slowlr3 2718 8000000"
+    "random 4241 8000000" "ro3 4241 8000000" "aligned 4241 8000000" "slowlr3 4241 8000000"
+    "random 1618 8000000" "ro3 1618 8000000" "aligned 1618 8000000" "slowlr3 1618 8000000"
 )
 
 task_id=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
@@ -81,7 +82,7 @@ case $arm in
     random) ;;
     ro3) extra=(--readout_lr_scale 3) ;;
     aligned) extra=(--feedback_init aligned) ;;
-    aligned_ro2) extra=(--feedback_init aligned --readout_lr_scale 2) ;;
+    slowlr3) lr=3e-4 plasticity=33333 ;;
     *) echo "Unknown arm $arm"; exit 1 ;;
 esac
 extra+=(--log_margin true --heldout_eval_every "$heldout_every" --heldout_batches 4)
