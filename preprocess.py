@@ -32,6 +32,7 @@ from datasets import Features, Sequence, Value, load_dataset, load_from_disk
 from torch.nn.functional import one_hot
 from torch.nn.utils.rnn import pad_sequence
 
+import bench_tasks
 import kv_tasks
 from reproducibility import ResumableRandomSampler, make_torch_generator, seed_data_worker
 from utils import collate_fn, filter_text, get_charset, initialize_charset, text_to_indices
@@ -57,6 +58,7 @@ dataset_keys = {
     "4_small_palindrome_dataset_vary_length": "train",
 }
 dataset_keys.update({name: "train" for name in kv_tasks.registered_names()})
+dataset_keys.update({name: "train" for name in bench_tasks.registered_names()})
 
 # Bump whenever this file changes what a processed dataset contains. The saved name also
 # carries a hash of the charset and of the code of the utils.py preprocessing functions
@@ -82,7 +84,7 @@ class ProcessedDatasetMissing(FileNotFoundError):
 
 
 def is_synthetic(dataset_name):
-    return kv_tasks.is_kv(dataset_name) or any(
+    return kv_tasks.is_kv(dataset_name) or bench_tasks.is_bench(dataset_name) or any(
         tag in dataset_name for tag in ("palindrome_dataset", "long_range_memory_dataset", "resequence"))
 
 

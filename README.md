@@ -747,6 +747,25 @@ metrics classify each answer as `kv_correct`, `kv_stale` (an earlier value of th
 `kv_wrong_key` (a value bound to another key in the episode) or `kv_other`, in training and
 under each held-out protocol.
 
+### Benchmark tasks beyond key-value binding (`bench_tasks.py`)
+
+Same character set as the key-value tasks (vocabulary 23), same pipeline (`--dataset NAME`,
+`heldout.py`, `recall_acc` and per-lag accuracy). Held-out splits hold unseen strings: a hash of the
+text before the first `?` sends 10% of strings to validation, 10% to test and 80% to training.
+
+| Dataset | Example | Answers (recall targets) |
+| --- | --- | --- |
+| `mqar_<K>[_q<Q>]` | `a1b2c3d4?c3?a1?d4?b2` | multi-query associative recall: K distinct keys, then Q (default K) distinct queries; every value after a queried key is scored |
+| `mod3_<L>`, `mod<m>_<L>`, `parity_<L>` | `01101001?1` | L random bits, then the count of ones mod m (parity: m = 2); one answer that depends on every bit (lag L from the first bit) |
+| `selcopy_<N>_<T>` | `..4.7..2.?472` | N distinct digits at random positions among T slots, then the digits in order after `?` (teacher forced) |
+
+Only registered names train (`mqar_2/4/8`, `mod3_4/8/12`, `parity_4/8/12`, `selcopy_3_9`,
+`selcopy_4_12`); the generator accepts others. Generate with `python bench_tasks.py [names] [--seed 0]`
+(default `mqar_4 mod3_8 parity_8 selcopy_3_9`; 1,000,000 / 5,000 / 20,000 rows). Small spaces have
+few distinct held-out strings (`parity_8`: 256 bit strings in total). Under the `strict` protocol
+no write occurs from the step that predicts the first answer; for MQAR and selective copy the
+later answers therefore get no help from earlier ones.
+
 ### Advanced Features
 
 - **Positional Encoding**: Add positional information with `--positional_encoding_dim N`
@@ -778,7 +797,7 @@ regenerate them.
 - `train.py`: Main training script; `train_batch` runs one batch under any of the three updaters
 - `ephemeral_model.py`: Implementation of EphemeralRNN and EphemeralLinear layers
 - `preprocess.py`: Data loading and preprocessing utilities
-- `synth_datasets.py`, `kv_tasks.py`: synthetic dataset generators (`kv_tasks.py`: key-value tasks)
+- `synth_datasets.py`, `kv_tasks.py`, `bench_tasks.py`: synthetic dataset generators (key-value tasks; MQAR, parity/mod-m, selective copy)
 - `reproducibility.py`: Seed resolution, RNG and data-stream checkpoint state
 - `utils.py`: Helper functions and utilities
 - `tests/`: Test suite; `tests/README.md` has the golden-trace contract, pinned known behaviours and regeneration log

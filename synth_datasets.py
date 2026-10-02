@@ -223,3 +223,7 @@ for n in range(1, 5):
 # datasets above; `python kv_tasks.py [names]` generates them alone.
 import kv_tasks
 kv_tasks.main([])
+# Benchmark tasks (mqar_<K>, parity_<L>, mod3_<L>, selcopy_<N>_<T>; see bench_tasks.py). Seeded;
+# `python bench_tasks.py [names]` generates them alone.
+import bench_tasks
+bench_tasks.main([])

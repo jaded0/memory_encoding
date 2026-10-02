@@ -7,6 +7,7 @@ step where the remembered character was the input and the step that must predict
 """
 import torch
 
+import bench_tasks
 import kv_tasks
 from utils import get_charset
 
@@ -21,6 +22,8 @@ def recall_targets(text, dataset_name):
     if kv_tasks.is_kv(dataset_name):
         info = kv_tasks.episode(text)
         return {info["answer"]: info["answer"] - info["source"] - 1}, None
+    if bench_tasks.is_bench(dataset_name):
+        return bench_tasks.recall_targets(text, dataset_name)
     if "palindrome_dataset_vary_length" in dataset_name:
         middle = text.index(".")
         targets = {middle + j: 2 * j - 1 for j in range(1, middle + 1)}
@@ -43,6 +46,8 @@ def recall_targets(text, dataset_name):
 def recall_chance(dataset_name):
     """Accuracy of guessing uniformly among the characters a recall target can take."""
     charset = get_charset(dataset_name)
+    if bench_tasks.is_bench(dataset_name):
+        return bench_tasks.recall_chance(dataset_name)
     if kv_tasks.is_kv(dataset_name):
         return 1 / len(kv_tasks.VALUES)
     if "palindrome_dataset_vary_length" in dataset_name:
