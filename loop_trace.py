@@ -12,6 +12,10 @@ character (the only place that knows about tracing):
                                               after the forward and the loss, before any weight
                                               changes: activations, the weights that produced
                                               this output, the write this step is about to make
+    tracer.after_pass(step, pass_index, output, output_error, loss)
+                                              K >= 2 only (--fast_backward_per_forward K): after each
+                                              EXTRA pass's forward, before its write (pass 0 is
+                                              recorded by before_update)
     tracer.after_update(step)                 after the whole character step (all fast passes, the
                                               slow half or window end): what changed
     tracer.finish()                           after the sequence (and its last slow window):
@@ -49,6 +53,17 @@ entries); l indexes them:
   slow_total_delta[B,L+1]   |S at the end of the sequence - S at its start| (includes the last window)
 and the derived write_norm[T,B] = sqrt(sum_l fast_write^2) and
 loop_gain[T,B] = write_norm[t] / write_norm[t-1] (NaN where the previous write is zero).
+
+Per-pass quantities, only with --fast_backward_per_forward K >= 2 (P = K passes per character; pass 0
+is the character's first pass, the one every quantity above is taken from; passes 1..K-1 re-forward
+the same input from the same incoming hidden state with the fast weights the previous pass left):
+  fast_write_pass[T,P,B,L]  the write each pass is about to make (as fast_write)
+  fast_norm_pass[T,P,B,L]   |F_l| as that pass's forward used it
+  max_logit_pass, loss_pass [T,P,B]
+and the derived pass_write_norm[T,P,B] and pass_gain[T,P,B] = pass_write_norm[p] / pass_write_norm[p-1]
+within one character (NaN for p = 0 and where the previous pass wrote nothing). The input is the same
+across passes, so unlike loop_gain this ratio isolates the fast loop from input changes. K >= 2 never
+subsamples (1/N is K = 1), so pass 0 always writes.
 """
 import math
 
@@ -67,6 +82,9 @@ class NullTracer:
         pass
 
     def before_update(self, step, output, output_error, loss, hidden, fast_write=True):
+        pass
+
+    def after_pass(self, step, pass_index, output, output_error, loss):
         pass
 
     def after_update(self, step):
@@ -108,6 +126,10 @@ class LoopTracer:
         shapes["slow_delta"] = (num_steps, batch, n_fast + 1)
         for name in ("max_logit", "logit_norm", "loss", "hidden_norm", "h_sat", "i2h_pre_norm"):
             shapes[name] = (num_steps, batch)
+        passes = self.model.fast_iterations
+        if passes > 1:
+            shapes["fast_write_pass"] = shapes["fast_norm_pass"] = (num_steps, passes, batch, n_fast)
+            shapes["max_logit_pass"] = shapes["loss_pass"] = (num_steps, passes, batch)
         self.buffers = {name: torch.zeros(shape, device=device) for name, shape in shapes.items()}
         self.snapshot = None
         self.start_slow = None
@@ -133,12 +155,37 @@ class LoopTracer:
             buffers["fast_drive"][step, :, l] = row_norm(torch.bmm(fast, inputs.unsqueeze(2)))
             buffers["slow_drive"][step, :, l] = row_norm(torch.bmm(slow, inputs.unsqueeze(2)))
             if fast_write:
-                update = ephemeral_update(dfa_per_sample_gradient(projected[l], inputs), layer.plasticity,
-                                          mask, self.update_clamp, layer.is_last_layer)
-                buffers["fast_write"][step, :, l] = self.learning_rate * row_norm(update * mask)
+                buffers["fast_write"][step, :, l] = self._write_norm(layer, projected[l])
+        if "fast_write_pass" in buffers:
+            self._record_pass(step, 0, output, loss, buffers["fast_write"][step], buffers["fast_norm"][step])
         self.snapshot = [layer.per_sample_weights.data.clone() for layer in self.layers]
         if self.start_slow is None:
             self.start_slow = [snap * ~layer.ephemeral_mask for snap, layer in zip(self.snapshot, self.layers)]
+
+    def _write_norm(self, layer, projected_error):
+        """|lr * clamp(alpha * p x^T)| on the layer's ephemeral entries, per batch row."""
+        inputs, mask = layer.in_traces.data, layer.ephemeral_mask
+        update = ephemeral_update(dfa_per_sample_gradient(projected_error, inputs), layer.plasticity,
+                                  mask, self.update_clamp, layer.is_last_layer)
+        return self.learning_rate * row_norm(update * mask)
+
+    def _record_pass(self, step, pass_index, output, loss, write, fast_norm):
+        buffers = self.buffers
+        buffers["fast_write_pass"][step, pass_index] = write
+        buffers["fast_norm_pass"][step, pass_index] = fast_norm
+        buffers["max_logit_pass"][step, pass_index] = output.detach().max(dim=1).values.float()
+        buffers["loss_pass"][step, pass_index] = loss.detach().float()
+
+    @torch.no_grad()
+    def after_pass(self, step, pass_index, output, output_error, loss):
+        """An extra pass (K >= 2): its forward has set the layers' in_traces to this pass's inputs
+        and the fast weights are those the previous pass left; read the write it is about to make."""
+        projected, _ = self.model.dfa_step_errors(output_error, self.grad_norm_clip)
+        write = torch.stack([self._write_norm(layer, projected[l])
+                             for l, layer in enumerate(self.fast_layers)], dim=1)
+        fast_norm = torch.stack([row_norm(layer.per_sample_weights.data * layer.ephemeral_mask)
+                                 for layer in self.fast_layers], dim=1)
+        self._record_pass(step, pass_index, output, loss, write, fast_norm)
 
     @torch.no_grad()
     def after_update(self, step):
@@ -163,12 +210,20 @@ class LoopTracer:
 
 
 def derived_traces(traces):
-    """write_norm [T,B] and loop_gain [T,B] from fast_write [T,B,L]."""
+    """write_norm [T,B] and loop_gain [T,B] from fast_write [T,B,L]; with per-pass buffers also
+    pass_write_norm [T,P,B] and pass_gain [T,P,B]."""
     write = torch.linalg.vector_norm(traces["fast_write"], dim=2)
     gain = torch.full_like(write, float("nan"))
     previous = write[:-1]
     gain[1:] = torch.where(previous > 0, write[1:] / previous.clamp_min(1e-30), gain[1:])
-    return {"write_norm": write, "loop_gain": gain}
+    derived = {"write_norm": write, "loop_gain": gain}
+    if "fast_write_pass" in traces:
+        pass_write = torch.linalg.vector_norm(traces["fast_write_pass"], dim=3)      # [T, P, B]
+        pass_gain = torch.full_like(pass_write, float("nan"))
+        before = pass_write[:, :-1]
+        pass_gain[:, 1:] = torch.where(before > 0, pass_write[:, 1:] / before.clamp_min(1e-30), pass_gain[:, 1:])
+        derived.update({"pass_write_norm": pass_write, "pass_gain": pass_gain})
+    return derived
 
 
 def longest_run_above_one(gain):
@@ -206,4 +261,10 @@ def summarize(traces, prefix="trace"):
             (last("fast_drive") / last("slow_drive").clamp_min(1e-30)).mean()),
         f"{prefix}/slow_total_delta": float(traces["slow_total_delta"].square().sum(dim=1).sqrt().mean()),
     }
+    if "pass_gain" in traces:
+        within = traces["pass_gain"][:, 1:]
+        within = within[torch.isfinite(within)]
+        summary[f"{prefix}/pass_gain_median"] = float(within.median()) if within.numel() else math.nan
+        summary[f"{prefix}/pass_gain_p90"] = float(within.quantile(0.9)) if within.numel() else math.nan
+        summary[f"{prefix}/frac_pass_gain_gt1"] = float((within > 1).float().mean()) if within.numel() else math.nan
     return summary

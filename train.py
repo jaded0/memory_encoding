@@ -237,7 +237,7 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 # loss and metrics above are the first pass's, the next hidden state the last's.
                 extra_hidden = rnn.extra_fast_iterations(
                     hot_input_char_tensor, incoming_hidden, final_char, criterion, config["learning_rate"],
-                    config["ephemeral_update_clamp"], config.get('grad_norm_clip', 0))
+                    config["ephemeral_update_clamp"], config.get('grad_norm_clip', 0), tracer=tracer, step=i)
                 if extra_hidden is not None:
                     hidden = extra_hidden
                 # Then the slow half of pass 1's step, or the deferred window end.

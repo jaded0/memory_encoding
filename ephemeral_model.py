@@ -962,18 +962,22 @@ class EphemeralRNN(torch.nn.Module):
 
     @torch.no_grad()
     def extra_fast_iterations(self, input, hidden, target, criterion, learning_rate, update_clamp,
-                              grad_norm_clip=0):
+                              grad_norm_clip=0, tracer=None, step=0):
         """--fast_backward_per_forward K >= 2, after the character's first pass: K - 1 times,
         forward the same input from the same incoming hidden state with the fast weights as the
         last step left them (the slow weights are still the pre-step ones), take the output error
         of that fresh output, and apply a fast-only DFA step without forgetting (forgetting
         happened once, in the first pass). Slow entries, i2o and biases do not change, and no clip
         statistics or loss are recorded. Returns the hidden state of the final pass (the incoming
-        one if K = 1, for the testing hook)."""
+        one if K = 1, for the testing hook). tracer (loop_trace.py), if given, sees each extra
+        pass (tracer.after_pass(step, pass_index, ...)) after its forward and before its write;
+        it only reads."""
         final_hidden = None
-        for _ in range(self.fast_iterations - 1):
+        for extra in range(self.fast_iterations - 1):
             output, final_hidden = self(input, hidden)
-            _, error = dfa_output_error(output, target, criterion)
+            loss, error = dfa_output_error(output, target, criterion)
+            if tracer is not None:
+                tracer.after_pass(step, extra + 1, output, error, loss)
             self.fast_only_dfa_step(error, learning_rate, update_clamp, grad_norm_clip, forget=False)
         return final_hidden
 
