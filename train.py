@@ -93,6 +93,14 @@ def plasticity_at(schedule, iteration, default):
     return value
 
 
+def compile_cache_limit(schedule, shapes_per_alpha=6, base=64):
+    """torch.compile cache entries the fused step needs under --plasticity_schedule: every distinct alpha is a new
+    constant for each layer shape (trunk layers, i2h, i2o), so a 41-step ramp needs about 41 * 3 entries. Above the
+    limit torch silently falls back to the eager step (X4 ran 4.4x slower from iteration ~100k with limit 64)."""
+    distinct = len({alpha for _, alpha in schedule})
+    return max(base, distinct * shapes_per_alpha + 16)
+
+
 def high_loss_stop(count, loss, window, threshold=5.0):
     """--early_stop_window: (new count of consecutive intervals with loss > threshold, stop?).
     window 0 never stops."""
@@ -987,7 +995,10 @@ def main():
     if plasticity_schedule and args.fused_update:
         # Each alpha is a new constant for the compiled step (per layer shape); the default cache limit of 8
         # would silently fall back to the eager step after a few changes.
-        torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, 64)
+        limit = compile_cache_limit(plasticity_schedule)
+        torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, limit)
+        torch._dynamo.config.accumulated_cache_size_limit = max(
+            torch._dynamo.config.accumulated_cache_size_limit, 2 * limit)
     loss_window = []  # Sliding window of average losses from print_freq intervals
     high_loss_count = 0  # Count of consecutive intervals with loss > threshold
     early_stopped = False

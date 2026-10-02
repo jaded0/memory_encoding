@@ -182,5 +182,15 @@ class SaturationTraceTest(unittest.TestCase):
         self.assertAlmostEqual(summary["trace/i2h_pre_norm_last"], float(traces["i2h_pre_norm"][-1].mean()), places=4)
 
 
+class CompileCacheLimitTest(unittest.TestCase):
+    def test_scales_with_the_number_of_distinct_alphas(self):
+        # A 41-entry ramp compiled the fused step for 41 alphas x 3 layer shapes and silently fell back to the
+        # eager step at the old fixed limit of 64 (X4, 2026-10-01).
+        ramp = train_module.parse_plasticity_schedule(",".join(f"{k * 2500}:{3000 + 50 * k}" for k in range(41)))
+        self.assertGreaterEqual(train_module.compile_cache_limit(ramp), 41 * 3)
+        self.assertEqual(train_module.compile_cache_limit([]), 64)
+        self.assertEqual(train_module.compile_cache_limit(train_module.parse_plasticity_schedule("0:3e3,30000:5e3")), 64)
+
+
 if __name__ == "__main__":
     unittest.main()

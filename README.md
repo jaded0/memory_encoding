@@ -722,8 +722,9 @@ are in the vault design note "ephemeral weights feedback-loop instrumentation de
   `--plasticity` holds before the first entry (use `0:VALUE` to replace it). On resume the value in
   force at the resumed iteration is applied, and resuming with a different schedule is allowed. The
   active alpha is logged each interval as `plasticity`. This one changes training (everything else here
-  is observation only). With `--fused_update` every new alpha recompiles the fused step, so the torch
-  compile cache limit is raised to 64.
+  is observation only). With `--fused_update` every new alpha recompiles the fused step (once per layer shape), so the
+  torch compile cache limit is raised to about 6 entries per distinct alpha (at least 64); beyond the
+  limit torch silently falls back to the much slower eager step.
 - Two more traces with `--trace_loop_every`: `h_sat` (fraction of the tanh state's units with
   |h| > 0.99) and `i2h_pre_norm`, computed from the i2h pre-activation (with `--enable_recurrence false`
   the state is not fed back, which is why `hidden_norm` is 0 there). `trace_replay.py` prints both.
