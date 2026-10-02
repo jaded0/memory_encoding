@@ -10,7 +10,7 @@
 #   bptt_adam  SimpleRNN + BPTT, recurrence on, Adam lr 1e-4, clip 1, residual (C2)
 #   Extras: bptt_sgdres (SGD lr 1e-1, clip 1, residual: the residual is what lets kv_unique_4 train)
 #           and base_a1e4 (plasticity 1e4, mqar_4 only: C4 probe at the longest sequences).
-# One run per array task, index = ((task * 6 + arm) * 2 + seed), then the extras. The sizing of every
+# 58 runs, about 100 GPU-hours, at most 12 at once (--array=0-57%12). One run per array task, index = ((task * 6 + arm) * 2 + seed), then the extras. The sizing of every
 # task's iterations is in ITERS. Runs past cs's 1-day limit continue through the USR1 checkpoint.
 # Submit: sbatch --export=ALL,CODE_COMMIT=<exported commit> [--array=...] sweeps/orc_bench_panel.sbatch
 # Timing: N_ITERS=400 RUN_ROOT=.../bench_timing (overrides every run's iterations and directory).
@@ -43,7 +43,9 @@ readonly SERIES=bench_panel_2026-10-02
 readonly -a TASKS=(kv_unique_4 mqar_4 mod3_8 selcopy_3_9)
 readonly -a ARMS=(base nofast ln slow03 bptt_sgd bptt_adam)
 readonly -a SEEDS=(2718 3141)
-declare -A ITERS=([kv_unique_4]=300000 [mqar_4]=300000 [mod3_8]=300000 [selcopy_3_9]=300000)
+# Sized from the 2026-10-02 A100 timing (it/s: kv_unique_4 ~33, mqar_4 ~19, mod3_8 ~40, selcopy_3_9 ~28):
+# about 100 GPU-hours for the panel. The nofast control gets half of its task's iterations.
+declare -A ITERS=([kv_unique_4]=200000 [mqar_4]=150000 [mod3_8]=200000 [selcopy_3_9]=200000)
 
 # Build "arm task seed" for every run, in array order.
 RUNS=()
@@ -58,6 +60,7 @@ task_id=${SLURM_ARRAY_TASK_ID:?SLURM_ARRAY_TASK_ID is required}
 [[ -n ${RUNS[$task_id]:-} ]] || { echo "No run for array task $task_id (${#RUNS[@]} runs)"; exit 1; }
 read -r arm dataset seed <<< "${RUNS[$task_id]}"
 n_iters=${N_ITERS:-${ITERS[$dataset]}}
+[[ -z ${N_ITERS:-} && $arm == nofast ]] && n_iters=$((n_iters / 2))
 print_freq=${PRINT_FREQ:-5000}
 heldout_every=${HELDOUT_EVERY:-50000}
 save_freq=${SAVE_FREQ:-50000}
@@ -93,7 +96,10 @@ export HF_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export CUBLAS_WORKSPACE_CONFIG=:4096:8
 # A fresh directory per start (a requeued job keeps its job ID; cs-1-5 once left an unwritable one).
-export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID:-local}_XXXXXX")
+# (cs-1-3 once had no room in /tmp, so fall back to the run root.)
+mkdir -p "$RUN_ROOT/tmp"
+export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID:-local}_XXXXXX" 2>/dev/null \
+    || mktemp -d "$RUN_ROOT/tmp/inductor_${SLURM_JOB_ID:-local}_XXXXXX")
 
 echo "Array job: ${SLURM_ARRAY_JOB_ID:-local}_${task_id} (restart count ${SLURM_RESTART_COUNT:-0})"
 echo "Run: $run_name arm $arm, $dataset, seed $seed, $n_iters iterations, lr $lr, plasticity $plasticity," \
