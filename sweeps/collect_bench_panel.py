@@ -58,7 +58,8 @@ def parse_log(path):
         status = "done"
     elif "--- Collapsed" in joined or re.search(r"^Early stopping", joined, re.M):
         status = "collapsed"
-    elif "failed with exit" in joined or "Traceback" in joined:
+    elif "failed with exit" in joined or re.search(r"Traceback[^\n]*\n(?!  File \"[^\"]*multiprocessing/util)", joined):
+        # (the benign NFS "Device or resource busy" tracebacks from multiprocessing finalizers do not count)
         status = "FAILED"
     else:
         status = "running"
@@ -75,6 +76,13 @@ def summarize(info, threshold):
     row["best_recall"] = max(recalls) if recalls else None
     row["iter_ge_threshold"] = next((i for i, r in zip(iters, recalls) if r >= threshold), None)
     row["final_loss"] = blocks[iters[-1]].get("loss") if iters else None
+    losses = [blocks[i]["loss"] for i in iters if "loss" in blocks[i]]
+    row["max_loss"] = max(losses) if losses else None
+    row["loss_gt5"] = sum(1 for x in losses if x > 5)  # intervals with loss above 5 (collapse flag)
+    row["drop_from_best"] = (max(recalls) - recalls[-1]) if recalls else None  # peak-then-fall
+    row["truncated"] = bool(info["n_iters"] and info["last_iter"] < info["n_iters"])
+    for level in (0.3,):
+        row[f"iter_ge_{level}"] = next((i for i, r in zip(iters, recalls) if r >= level), None)
     for protocol in PROTOCOLS:  # latest evaluation that has this protocol
         key = f"heldout_{protocol}/recall_acc"
         held = [i for i in sorted(blocks) if key in blocks[i]]
@@ -108,7 +116,7 @@ def main(argv=None):
     if not rows:
         print("no logs found")
         return
-    cols = ["task", "arm", "seed", "status", "last_iter", "final_recall", "best_recall", "iter_ge_threshold",
+    cols = ["task", "arm", "seed", "status", "last_iter", "truncated", "final_recall", "best_recall", "iter_ge_threshold", "iter_ge_0.3", "max_loss", "loss_gt5", "drop_from_best",
             "heldout_observed", "heldout_strict", "heldout_no_fast", "heldout_free_running", "heldout_strict_first_answer"]
     print("| " + " | ".join(c.replace("iter_ge_threshold", f"iter>={args.threshold}") for c in cols) + " |")
     print("|" + "---|" * len(cols))
@@ -118,8 +126,11 @@ def main(argv=None):
     groups = defaultdict(list)
     for row in rows:
         groups[(row["task"], row["arm"])].append(row)
-    mean = lambda rs, key: (fmt(statistics.mean(r[key] for r in rs if r[key] is not None))
-                            if any(r[key] is not None for r in rs) else "-")
+    def mean(rs, key):
+        vals = [r[key] for r in rs if r[key] is not None]
+        if not vals:
+            return "-"
+        return fmt(statistics.mean(vals)) + (" (" + " / ".join(fmt(v) for v in vals) + ")" if len(vals) > 1 else "")
     print("\nSeed means (final recall_acc; held-out strict / no_fast at the latest evaluation; n seeds, statuses):\n")
     print("| task | arm | final recall | best recall | held-out strict | held-out no-fast | seeds | status |")
     print("|---|---|---|---|---|---|---|---|")
