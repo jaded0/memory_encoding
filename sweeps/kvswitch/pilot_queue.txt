@@ -1,0 +1,9 @@
+# Pilot corner (2026-10-02): S = 4 and S = 64, forget rate 0.03 / 0.1 / 0.3, one seed, alpha 3e4
+# (lr * alpha = 3), 150k iterations, fast weights carried through each 1024-sequence stream.
+# Order: the two most diagnostic pairs first (f 0.03 and 0.3 at both S), then the middle.
+s4_f0.3_a3e4_s2718    kvswitch_s4   2718 0.3  3e4 150000
+s64_f0.03_a3e4_s2718  kvswitch_s64  2718 0.03 3e4 150000
+s4_f0.03_a3e4_s2718   kvswitch_s4   2718 0.03 3e4 150000
+s64_f0.3_a3e4_s2718   kvswitch_s64  2718 0.3  3e4 150000
+s4_f0.1_a3e4_s2718    kvswitch_s4   2718 0.1  3e4 150000
+s64_f0.1_a3e4_s2718   kvswitch_s64  2718 0.1  3e4 150000

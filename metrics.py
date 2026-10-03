@@ -3,10 +3,13 @@
 A "recall target" is a position whose next character is determined by an earlier character of the same
 sequence and cannot be inferred from the current input alone. Its *lag* is the number of steps between the
 step where the remembered character was the input and the step that must predict it. By construction,
-``text[target] == text[target - lag - 1]``.
+``text[target] == text[target - lag - 1]``, except for a kvswitch answer carried from an earlier sequence
+(kv_switch.py), which has no source in its own sequence and is bucketed at lag ``CARRIED_LAG``
+(``recall_acc_lag_59``, also reported as ``recall_acc_carried``).
 """
 import torch
 
+import kv_switch
 import kv_tasks
 from utils import get_charset
 
@@ -21,6 +24,9 @@ def recall_targets(text, dataset_name):
     if kv_tasks.is_kv(dataset_name):
         info = kv_tasks.episode(text)
         return {info["answer"]: info["answer"] - info["source"] - 1}, None
+    if kv_switch.is_switch(dataset_name):
+        answer, source = kv_switch.answer_index(text), kv_switch.in_sequence_source(text)
+        return {answer: CARRIED_LAG if source is None else answer - source - 1}, None
     if "palindrome_dataset_vary_length" in dataset_name:
         middle = text.index(".")
         targets = {middle + j: 2 * j - 1 for j in range(1, middle + 1)}
@@ -43,7 +49,7 @@ def recall_targets(text, dataset_name):
 def recall_chance(dataset_name):
     """Accuracy of guessing uniformly among the characters a recall target can take."""
     charset = get_charset(dataset_name)
-    if kv_tasks.is_kv(dataset_name):
+    if kv_tasks.is_kv(dataset_name) or kv_switch.is_switch(dataset_name):
         return 1 / len(kv_tasks.VALUES)
     if "palindrome_dataset_vary_length" in dataset_name:
         return 1 / len([c for c in charset if c not in ". "])
@@ -56,6 +62,7 @@ def recall_chance(dataset_name):
 
 MAX_LAG = 60  # recall lags are bucketed by key = lag + 2 (0 = padding, 1 = non-recall target)
 KEYS = MAX_LAG + 2
+CARRIED_LAG = MAX_LAG - 1  # the last bucket: kvswitch answers carried from an earlier sequence
 MASK_CACHE_LIMIT = 100_000
 KV_CLASSES = ("correct", "stale", "wrong_key", "other")  # kv_tasks.classify_answer's categories
 
@@ -93,7 +100,7 @@ class IntervalMetrics:
             positions, end_index = recall_targets(text, self.dataset_name)
             for target, lag in positions.items():
                 if target < len(text):
-                    if lag > MAX_LAG:
+                    if lag >= MAX_LAG:  # key lag + 2 must be below KEYS
                         raise ValueError(f"recall lag {lag} exceeds MAX_LAG={MAX_LAG}")
                     keys[target - 1] = lag + 2
             cached = (keys, end_index - 1 if end_index is not None else -1)
@@ -192,4 +199,7 @@ class IntervalMetrics:
         for key in range(2, KEYS):
             if counts[key]:
                 out[f"recall_acc_lag_{key - 2}"] = float(hits[key] / counts[key])
+        if kv_switch.is_switch(self.dataset_name):  # carried answers sit in the CARRIED_LAG bucket
+            out["recall_acc_in_sequence"] = ratio(hits[2:KEYS - 1].sum(), counts[2:KEYS - 1].sum())
+            out["recall_acc_carried"] = ratio(hits[KEYS - 1], counts[KEYS - 1])
         return {k: v for k, v in out.items() if v is not None}

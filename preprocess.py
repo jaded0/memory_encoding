@@ -32,8 +32,9 @@ from datasets import Features, Sequence, Value, load_dataset, load_from_disk
 from torch.nn.functional import one_hot
 from torch.nn.utils.rnn import pad_sequence
 
+import kv_switch
 import kv_tasks
-from reproducibility import ResumableRandomSampler, make_torch_generator, seed_data_worker
+from reproducibility import ResumableRandomSampler, StreamSampler, make_torch_generator, seed_data_worker
 from utils import collate_fn, filter_text, get_charset, initialize_charset, text_to_indices
 
 dataset_keys = {
@@ -57,6 +58,7 @@ dataset_keys = {
     "4_small_palindrome_dataset_vary_length": "train",
 }
 dataset_keys.update({name: "train" for name in kv_tasks.registered_names()})
+dataset_keys.update({name: "train" for name in kv_switch.registered_names()})
 
 # Bump whenever this file changes what a processed dataset contains. The saved name also
 # carries a hash of the charset and of the code of the utils.py preprocessing functions
@@ -82,7 +84,7 @@ class ProcessedDatasetMissing(FileNotFoundError):
 
 
 def is_synthetic(dataset_name):
-    return kv_tasks.is_kv(dataset_name) or any(
+    return kv_tasks.is_kv(dataset_name) or kv_switch.is_switch(dataset_name) or any(
         tag in dataset_name for tag in ("palindrome_dataset", "long_range_memory_dataset", "resequence"))
 
 
@@ -282,6 +284,13 @@ def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True, seed=No
     print(f"{dataset_name} columns:", dataset.column_names)
     print("Sample data:", dataset[0]['text'][:200])
 
+    if kv_switch.is_switch(dataset_name):
+        # Streams: rows stay in stored (stream-major) order; StreamSampler shuffles streams, and
+        # each batch row follows one stream sequence by sequence.
+        collate = OneHotCollate(initialize_charset(dataset_name)[3])
+        return make_stream_dataloader(list(dataset), kv_switch.stream_length(dataset_name), batch_size,
+                                      seed=seed, collate_fn=collate)
+
     # Shuffle the dataset (in memory: nothing is written next to the saved data)
     if seed is None:
         dataset = dataset.shuffle(keep_in_memory=True)
@@ -314,6 +323,19 @@ def make_dataloader(dataset, batch_size, drop_last=True, seed=None, num_workers=
         dataloader_kwargs["worker_init_fn"] = seed_data_worker
 
     return torch.utils.data.DataLoader(dataset, **dataloader_kwargs)
+
+
+def make_stream_dataloader(dataset, length, batch_size, seed=None, num_workers=10, collate_fn=collate_fn):
+    """DataLoader over whole streams of `length` rows (see reproducibility.StreamSampler). Always
+    has a generator, so its position is checkpointed; unseeded runs draw a random one."""
+    generator = make_torch_generator(seed)
+    if generator is None:
+        generator = torch.Generator()
+        generator.seed()
+    return torch.utils.data.DataLoader(
+        dataset, batch_size=batch_size, collate_fn=collate_fn, drop_last=True, num_workers=num_workers,
+        pin_memory=True, generator=generator, worker_init_fn=seed_data_worker,
+        sampler=StreamSampler(len(dataset), length, batch_size, generator))
 
 
 def main(argv=None):
