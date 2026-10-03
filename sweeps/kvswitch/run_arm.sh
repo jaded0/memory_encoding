@@ -1,13 +1,14 @@
 #!/bin/bash
 # One kvswitch arm on one GPU, then stream_eval.py on every kept checkpoint.
-# usage: run_arm.sh NAME DATASET SEED FORGET PLASTICITY ITERS [WIPE_EVERY]
+# usage: run_arm.sh NAME DATASET SEED FORGET PLASTICITY ITERS [WIPE_EVERY [FAST_CLAMP]]
 #   WIPE_EVERY defaults to the stream length (1024): fast weights carry through each stream.
+#   FAST_CLAMP defaults to 1 (--fast_weight_clamp; 0 = off, the clamp-erasure control).
 # Env: ROOT (default ~/kvswitch_2026-10-02), CODE (default $ROOT/code), GPU (default 0).
 # Recipe: the wipe_forget key-recall recipe (hidden 256, 3 layers, DFA, recurrence off, lr 1e-4,
 # 10% fast, fast clamp 1, which made carry-over trainable there), early stop off (the early
 # blowup is a transient).
 set -euo pipefail
-NAME=$1 DATASET=$2 SEED=$3 F=$4 ALPHA=$5 ITERS=$6 WIPE=${7:-1024}
+NAME=$1 DATASET=$2 SEED=$3 F=$4 ALPHA=$5 ITERS=$6 WIPE=${7:-1024} CLAMP=${8:-1}
 ROOT=${ROOT:-$HOME/kvswitch_2026-10-02}
 CODE=${CODE:-$ROOT/code}
 KEEP=${KEEP_EVERY:-50000}
@@ -21,7 +22,7 @@ cd "$CODE"
 python -u train.py --model_type ephemeral --updater dfa --enable_recurrence false --fused_update true \
     --dataset "$DATASET" --input_mode last_one --learning_rate 1e-4 --plasticity "$ALPHA" \
     --forget_rate "$F" --ephemeral_fraction 0.1 --ephemeral_update_clamp 0 --weight_clamp 0 \
-    --fast_weight_clamp 1 --slow_weight_decay 0 --hidden_size 256 --num_layers 3 \
+    --fast_weight_clamp "$CLAMP" --slow_weight_decay 0 --hidden_size 256 --num_layers 3 \
     --residual_connection false --positional_encoding_dim 0 --batch_size 16 --n_iters "$ITERS" \
     --print_freq 2000 --checkpoint_dir "$RUN" --checkpoint_save_freq 10000 \
     --checkpoint_keep_every "$KEEP" --early_stop_window 0 --track false --seed "$SEED" \

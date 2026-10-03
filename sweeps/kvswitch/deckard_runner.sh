@@ -3,7 +3,8 @@
 # below 30% utilisation (mean of 5 samples over 10 s) with under 8 GB in use; polls every 120 s.
 # Stops (between arms) when $ROOT/STOP exists or free disk falls below 40 GB.
 # usage: setsid nohup sweeps/kvswitch/deckard_runner.sh QUEUE > $ROOT/runner.log 2>&1 &
-#   QUEUE lines: NAME DATASET SEED FORGET PLASTICITY ITERS [WIPE_EVERY]; '#' comments.
+#   QUEUE lines: NAME DATASET SEED FORGET PLASTICITY ITERS [WIPE_EVERY [FAST_CLAMP]]; '#' comments.
+# ONLY_GPU=i restricts the runner to GPU i (one runner per GPU when several run at once).
 # Finished arms are appended to $ROOT/done.txt and skipped on a restart.
 set -uo pipefail
 QUEUE=$1
@@ -18,11 +19,11 @@ idle_gpu() {  # prints the index of a GPU below 30% mean utilisation and 8 GB us
     local samples
     samples=$(for i in 1 2 3 4 5; do
         nvidia-smi --query-gpu=index,utilization.gpu,memory.used --format=csv,noheader,nounits; sleep 2; done)
-    echo "$samples" | awk -F', ' '{u[$1]+=$2; m[$1]=($3>m[$1]?$3:m[$1]); n[$1]++}
-        END {for (g in u) if (u[g]/n[g] < 30 && m[g] < 8000) {print g; exit}}'
+    echo "$samples" | awk -F', ' -v only="${ONLY_GPU:-}" '{u[$1]+=$2; m[$1]=($3>m[$1]?$3:m[$1]); n[$1]++}
+        END {for (g in u) if ((only == "" || g == only) && u[g]/n[g] < 30 && m[g] < 8000) {print g; exit}}'
 }
 
-while read -r name dataset seed f alpha iters wipe; do
+while read -r name dataset seed f alpha iters wipe clamp; do
     [[ -z ${name:-} || $name == \#* ]] && continue
     grep -qx "$name" "$ROOT/done.txt" && { log "skip $name (done)"; continue; }
     while true; do
@@ -34,9 +35,9 @@ while read -r name dataset seed f alpha iters wipe; do
         log "no idle GPU for $name; waiting ${POLL}s"
         sleep "$POLL"
     done
-    log "start $name on GPU $gpu ($dataset seed $seed f $f alpha $alpha iters $iters wipe ${wipe:-1024})"
+    log "start $name on GPU $gpu ($dataset seed $seed f $f alpha $alpha iters $iters wipe ${wipe:-1024} clamp ${clamp:-1})"
     if GPU=$gpu ROOT=$ROOT CODE=$CODE bash "$CODE/sweeps/kvswitch/run_arm.sh" \
-            "$name" "$dataset" "$seed" "$f" "$alpha" "$iters" ${wipe:-}; then
+            "$name" "$dataset" "$seed" "$f" "$alpha" "$iters" ${wipe:-} ${clamp:-}; then
         echo "$name" >> "$ROOT/done.txt"; log "finished $name"
     else
         log "FAILED $name (exit $?); see $ROOT/logs/$name.log"

@@ -20,7 +20,8 @@ counted by protocol and by
 
 The headline numbers are acc (all queries), acc_in_sequence, acc_carried, and stale_rate over the
 queries after a stream's first context. --forget_rate overrides the fast forget rate at evaluation
-(a stress test of a model trained at another rate, as in ephemeral-lowrank/wipe_forget).
+(a stress test of a model trained at another rate, as in ephemeral-lowrank/wipe_forget), and
+--fast_weight_clamp the fast-only clamp (0 = off: does the clamp bind on this checkpoint?).
 
     python stream_eval.py --checkpoint PATH [--split validation] [--streams N] [--positions T]
                           [--protocols carry wiped no_fast] [--forget_rate F] [--json OUT]
@@ -181,6 +182,8 @@ def main(argv=None):
     parser.add_argument("--protocols", nargs="+", default=list(PROTOCOLS), choices=PROTOCOLS)
     parser.add_argument("--wipe_every", type=int, default=None, help="default: the checkpoint's")
     parser.add_argument("--forget_rate", type=float, default=None, help="override the fast forget rate")
+    parser.add_argument("--fast_weight_clamp", type=float, default=None,
+                        help="override the fast-only clamp (0 = off) at evaluation")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--json", default=None, help="also write the results here")
     args = parser.parse_args(argv)
@@ -201,13 +204,18 @@ def main(argv=None):
     if args.forget_rate is not None:
         for layer in model.trained_layers():
             layer.forget_rate = args.forget_rate
+    if args.fast_weight_clamp is not None:
+        for layer in model.trained_layers():
+            layer.fast_weight_clamp = args.fast_weight_clamp
     wipe_every = args.wipe_every or config.get("wipe_every", 1)
     groups = load_streams(dataset, args.split, config["batch_size"], args.streams, args.positions)
     results = evaluate_checkpoint_streams(model, groups, config, dataset, args.protocols, wipe_every, charset)
     header = {"checkpoint": args.checkpoint, "iteration": next_iter - 1, "dataset": dataset,
               "split": args.split, "streams": sum(len(g) for g in groups),
               "positions": len(groups[0][0]), "wipe_every": wipe_every,
-              "forget_rate": args.forget_rate if args.forget_rate is not None else config.get("forget_rate")}
+              "forget_rate": args.forget_rate if args.forget_rate is not None else config.get("forget_rate"),
+              "fast_weight_clamp": (args.fast_weight_clamp if args.fast_weight_clamp is not None
+                                    else config.get("fast_weight_clamp"))}
     print(json.dumps(header))
     print(format_table(results))
     if args.json:
