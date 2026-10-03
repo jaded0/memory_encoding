@@ -68,10 +68,12 @@ class NormCap:
         for n, (layer, mode, caps) in self.layers.items():
             S = self.slow_mean(layer)
             s = torch.linalg.svdvals(S)
-            rec['layers'][n] = {'fro': float(s.norm()), 'top5': s[:5].tolist(),
-                                'max_ratio_to_cap': float((s / caps[: s.numel()]).max()),
-                                'n_above_cap': int((s > caps[: s.numel()] * 1.0001).sum()),
-                                'cap_fro': float(caps) if mode == 'frobenius' else None}
+            if mode == 'frobenius':
+                rec['layers'][n] = {'fro': float(s.norm()), 'top5': s[:5].tolist(), 'cap_fro': float(caps)}
+            else:
+                rec['layers'][n] = {'fro': float(s.norm()), 'top5': s[:5].tolist(),
+                                    'max_ratio_to_cap': float((s / caps[: s.numel()]).max()),
+                                    'n_above_cap': int((s > caps[: s.numel()] * 1.0001).sum())}
         for n, (layer, cap) in self.biases.items():
             rec['biases'][n] = {'norm': float(torch.linalg.vector_norm(layer.bias.data)), 'cap': cap}
         with open(self.log_path, 'a') as f:
