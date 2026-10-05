@@ -1,0 +1,1 @@
+E2x_B205k_m0p3 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/runs/E2_B205k_m0p3/latest_checkpoint.pth 355000 0.3 500
