@@ -1,0 +1,12 @@
+B150k_m0p85_long_rs33 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/ckpt/B_00150000.pth 300000 0.85 500 33
+L4241_150k_m1_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/runs/L4241_train/checkpoint_00150000.pth 200000 1 500 21
+B100k_m0p85_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/ckpt/B_00100000.pth 140000 0.85 500 21
+B100k_m1_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/ckpt/B_00100000.pth 140000 1 500 21
+L4241_100k_m0p85_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/runs/L4241_train/checkpoint_00100000.pth 140000 0.85 500 21
+L4241_100k_m1p2_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/runs/L4241_train/checkpoint_00100000.pth 140000 1.2 500 21
+B100k_m1p5_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/ckpt/B_00100000.pth 140000 1.5 500 21
+B20k_m1p2_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/ckpt/B_00020000.pth 50000 1.2 500 21
+B60k_m1_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/ckpt/B_00060000.pth 90000 1 500 21
+L4241_20k_m0p85_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/runs/L4241_train/checkpoint_00020000.pth 50000 0.85 500 21
+L4241_20k_m1p2_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/runs/L4241_train/checkpoint_00020000.pth 50000 1.2 500 21
+L4241_50k_m1_rs21 /home/jaded79/memory_encoding_benchmarks/two_modes_2026-10-03/runs/L4241_train/checkpoint_00050000.pth 80000 1 500 21

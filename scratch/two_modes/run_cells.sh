@@ -21,7 +21,7 @@ while read -r name ck n_iters m pf rs; do
   echo "=== cell $name start $(date) host $(hostname) m=$m ckpt=$ck" >> "$D/train.log"
   echo "=== flags: ${FLAGS[*]}" >> "$D/train.log"
   (cd "$CODE" && WANDB_MODE=disabled HF_DATASETS_OFFLINE=1 HF_OFFLINE=1 CUBLAS_WORKSPACE_CONFIG=:4096:8 \
-    TORCHINDUCTOR_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/ind_XXXXXX") $PY -u train.py "${FLAGS[@]}" --checkpoint_dir "$D" >> "$D/train.log" 2>&1)
+    TORCHINDUCTOR_CACHE_DIR=$(mktemp -d "${TMPDIR:-$HOME/.cache}/ind_XXXXXX") $PY -u train.py "${FLAGS[@]}" --checkpoint_dir "$D" >> "$D/train.log" 2>&1)
   echo "=== exit $? $(date)" >> "$D/train.log"
   # keep traces and the final checkpoint only
 done < "$CELLS"
