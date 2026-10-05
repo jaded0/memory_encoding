@@ -693,6 +693,10 @@ def build_parser():
     parser.add_argument('--seed', type=int, default=None,
                         help='Seed Python, NumPy, Torch, and data loading (unset = drawn from the OS on a fresh run, '
                              'read from the checkpoint on resume).')
+    parser.add_argument('--resume_reseed', type=int, default=None,
+                        help='Resume only: after loading the checkpoint, reseed the RNGs with this value and restart '
+                             'the data stream from the first epoch of a loader built with it, so a replicate of an '
+                             'intervention sees a different data order and noise (default off: exact continuation).')
     parser.add_argument('--deterministic', type=str2bool, nargs='?', const=True, default=None,
                         help='Require deterministic Torch operations (unset = off on a fresh run, '
                              'the checkpoint\'s value on resume).')
@@ -881,6 +885,13 @@ def main():
         checkpoint = None  # everything needed has been copied out; free the CPU copy
         state.update(loaded_main_state) # Update your main program state
         print(f"resumed, starting from iter: {start_iter}")
+        if args.resume_reseed is not None:
+            seed_everything(args.resume_reseed, deterministic=deterministic)
+            dataloader = load_and_preprocess_data(
+                args.dataset, args.batch_size, drop_last=True, seed=args.resume_reseed
+            )
+            data_stream = DataStream(dataloader)
+            print(f"--resume_reseed {args.resume_reseed}: RNGs reseeded and the data stream restarted (not an exact continuation).")
 
         # Check if --plasticity has changed and update plasticity parameters if needed
         if isinstance(rnn, EphemeralRNN):
