@@ -3,7 +3,7 @@
 # Each cell: resume ckpt at stage with plasticity = m*1e4, same seed/data stream, early stop off, tracer on.
 set -u
 CELLS=$1
-while read -r name ck n_iters m pf; do
+while read -r name ck n_iters m pf rs; do
   D=$RUNS/$name; mkdir -p "$D"
   if grep -q "^=== exit 0" "$D/train.log" 2>/dev/null; then echo "skip $name"; continue; fi
   alpha=$(python3 -c "print($m*1e4)")
@@ -13,8 +13,11 @@ while read -r name ck n_iters m pf; do
     --hidden_size 1024 --num_layers 3 --residual_connection false --positional_encoding_dim 0
     --batch_size 16 --track false --deterministic true --resume true
     --n_iters $n_iters --print_freq $pf --trace_loop_every $pf --checkpoint_save_freq 5000
-    --checkpoint_keep_every 0 --checkpoint_keep_max 2 --early_stop_window 0 --seed 3141)
-  [[ -f $D/latest_checkpoint.pth ]] || FLAGS+=(--resume_checkpoint "$CKPT/$ck.pth")
+    --checkpoint_keep_every 0 --checkpoint_keep_max 2 --early_stop_window 0)
+  [[ $ck == /* ]] || FLAGS+=(--seed 3141)   # lineage cells (absolute ckpt path) take the seed from the checkpoint
+  [[ $ck == /* ]] && CK=$ck || CK="$CKPT/$ck.pth"
+  [[ -f $D/latest_checkpoint.pth ]] || FLAGS+=(--resume_checkpoint "$CK")
+  [[ -n ${rs:-} ]] && FLAGS+=(--resume_reseed $rs)
   echo "=== cell $name start $(date) host $(hostname) m=$m ckpt=$ck" >> "$D/train.log"
   echo "=== flags: ${FLAGS[*]}" >> "$D/train.log"
   (cd "$CODE" && WANDB_MODE=disabled HF_DATASETS_OFFLINE=1 HF_OFFLINE=1 CUBLAS_WORKSPACE_CONFIG=:4096:8 \
