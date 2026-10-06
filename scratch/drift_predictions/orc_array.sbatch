@@ -12,7 +12,7 @@
 #SBATCH --open-mode=append
 #SBATCH --job-name=driftpred
 #SBATCH --output=/home/jaded79/memory_encoding_benchmarks/drift_predictions_2026-10-06/logs/%x_%A_%a.out
-set -euo pipefail
+set -eo pipefail
 
 ROOT=/home/jaded79/memory_encoding_benchmarks/drift_predictions_2026-10-06
 ARMS=(nlms label_smoothing alpha0)
@@ -20,6 +20,7 @@ ARM=${ARMS[$SLURM_ARRAY_TASK_ID]}
 RUN=$ROOT/runs/$ARM
 
 conda activate hebby
+set -u
 mkdir -p "$RUN"
 
 EXTRA=()
