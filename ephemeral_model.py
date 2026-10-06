@@ -70,13 +70,13 @@ def dfa_per_sample_gradient(projected_error, input):
 def normalized_readout_error(projected_error, inputs, enabled, eps=1e-6):
     """NLMS scaling for --readout_nlms.
 
-    Divides each sequence's readout step by ||x||^2 / d, preserving the nominal scale when the
-    readout input has unit variance. The same factor applies to the bias, treating it as part of
-    the per-sequence readout step. Disabled returns the original error object unchanged.
+    Divides each sequence's readout step by eps + ||x||^2. The same factor applies to the bias,
+    treating it as part of the per-sequence readout step. Disabled returns the original error
+    object unchanged.
     """
     if not enabled:
         return projected_error
-    scale = inputs.shape[1] / (inputs.square().sum(1) + eps)
+    scale = 1 / (inputs.square().sum(1) + eps)
     return projected_error * scale.unsqueeze(1)
 
 

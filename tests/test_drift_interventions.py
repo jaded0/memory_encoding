@@ -32,7 +32,7 @@ class NormalizedReadoutTest(unittest.TestCase):
         error = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
         inputs = torch.tensor([[1.0, 1.0, 1.0], [2.0, 0.0, 0.0]])
         actual = normalized_readout_error(error, inputs, True, eps=0)
-        expected = error * torch.tensor([[1.0], [0.75]])
+        expected = error * torch.tensor([[1 / 3], [1 / 4]])
         torch.testing.assert_close(actual, expected)
         self.assertIs(normalized_readout_error(error, inputs, False), error)
 

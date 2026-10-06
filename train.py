@@ -606,8 +606,8 @@ def build_parser():
                              'normalized.')
     parser.add_argument('--readout_nlms', type=str2bool, nargs='?', const=True, default=False,
                         help='Ephemeral + DFA: NLMS-normalize each sequence\'s i2o slow update by '
-                             '||x_out||^2 / width. This removes activation magnitude from the readout\'s '
-                             'effective step while preserving its nominal scale at unit variance.')
+                             'eps + ||x_out||^2. This removes activation magnitude from the readout\'s '
+                             'effective step.')
     parser.add_argument('--label_smoothing', type=float, default=0.0,
                         help='Ephemeral + DFA: train toward target*(1-eps) + eps/V, giving cross-entropy '
                              'a finite logit optimum (0 = off).')
