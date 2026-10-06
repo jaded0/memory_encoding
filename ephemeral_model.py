@@ -67,6 +67,19 @@ def dfa_per_sample_gradient(projected_error, input):
     return out * input.unsqueeze(1)  # [batch_size, 1, in_features] -> [batch_size, out_features, in_features]
 
 
+def normalized_readout_error(projected_error, inputs, enabled, eps=1e-6):
+    """NLMS scaling for --readout_nlms.
+
+    Divides each sequence's readout step by eps + ||x||^2. The same factor applies to the bias,
+    treating it as part of the per-sequence readout step. Disabled returns the original error
+    object unchanged.
+    """
+    if not enabled:
+        return projected_error
+    scale = 1 / (inputs.square().sum(1) + eps)
+    return projected_error * scale.unsqueeze(1)
+
+
 def dfa_bias_update(projected_error, learning_rate):
     """DFA bias step, [out]: -learning_rate times the batch mean of the projected error."""
     bias_update = -learning_rate * projected_error.mean(dim=0)
@@ -140,14 +153,20 @@ def clamp_fast_entries(weights, ephemeral_mask, fast_weight_clamp):
     return weights
 
 
-def dfa_output_error(output, target, criterion):
+def dfa_output_error(output, target, criterion, label_smoothing=0.0):
     """The DFA output error dL/d(output), [B, vocab], and the per-sequence loss [B], for the
     logits of one step. criterion is train.py's CrossEntropyLoss(reduction='none'). An all-zero
     (padding) target row gives zero error, so that step writes nothing. The error is a new
-    tensor, not a view of output."""
+    tensor, not a view of output. --label_smoothing eps replaces the one-hot target with
+    target*(1-eps) + eps/V; all-zero padding rows remain zero-error rows."""
     with torch.enable_grad():
         output.requires_grad_(True)
-        loss = criterion(output, target)
+        if label_smoothing:
+            valid = target.sum(1, keepdim=True)
+            smoothed = target * (1 - label_smoothing) + label_smoothing * valid / target.shape[1]
+            loss = criterion(output, smoothed)
+        else:
+            loss = criterion(output, target)
         error = torch.autograd.grad(loss, output, grad_outputs=torch.ones_like(loss), retain_graph=False)[0]
     return loss, error
 
@@ -316,6 +335,7 @@ class EphemeralLinear(nn.Linear):
         self.weight_clamp = weight_clamp
         self.updater = updater
         self.is_last_layer = is_last_layer
+        self.normalize_step = False  # --readout_nlms, set only on i2o
         # --dfa_fprime (set by EphemeralRNN): scale the projected DFA error by f'(pre-activation),
         # where activation names the nonlinearity the model applies to this layer's output.
         self.dfa_fprime = False
@@ -529,6 +549,8 @@ class EphemeralLinear(nn.Linear):
         # error_signal: [batch_size, vocab_size] -> projected_error: [batch_size, out_features]
         projected_error = dfa_projected_error(error_signal, self.feedback_weights, self.is_last_layer,
                                               dfa_layer_activation_derivative(self))
+        projected_error = normalized_readout_error(
+            projected_error, self.in_traces.data, self.is_last_layer and self.normalize_step)
 
         # Store projected error for bias updates
         self._last_projected_error = projected_error
@@ -746,7 +768,8 @@ class EphemeralRNN(torch.nn.Module):
         plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2,
         enable_recurrence=True, retain_sequence_bias_grads=False,
         slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0, layer_norm=False,
-        dfa_fprime=False, slow_update_every=1, fast_backward_per_forward=1
+        dfa_fprime=False, slow_update_every=1, fast_backward_per_forward=1,
+        readout_nlms=False
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -758,7 +781,8 @@ class EphemeralRNN(torch.nn.Module):
         dfa_fprime: --dfa_fprime, see set_dfa_fprime.
         slow_update_every: --slow_update_every (see windowed_dfa_step); 1 is the per-step update.
         fast_backward_per_forward: --fast_backward_per_forward (see extra_fast_iterations and
-        skip_fast_dfa_step); 1 is one fast DFA step per character."""
+        skip_fast_dfa_step); 1 is one fast DFA step per character.
+        readout_nlms: --readout_nlms, NLMS scaling on i2o's DFA step."""
         super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -827,6 +851,7 @@ class EphemeralRNN(torch.nn.Module):
             ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
             fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every
         )
+        self.i2o.normalize_step = readout_nlms
         self.softmax = torch.nn.LogSoftmax(dim=1)
         self.updater = updater
         for layer in self.trained_layers():
@@ -874,6 +899,9 @@ class EphemeralRNN(torch.nn.Module):
         projected = [dfa_projected_error(output_error, layer.feedback_weights, layer.is_last_layer,
                                          dfa_layer_activation_derivative(layer))
                      for layer in layers]
+        projected = [normalized_readout_error(error, layer.in_traces.data,
+                                              layer.is_last_layer and layer.normalize_step)
+                     for layer, error in zip(layers, projected)]
         if grad_norm_clip <= 0:
             return projected, None
         squared = None
