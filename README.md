@@ -288,6 +288,13 @@ The settings may be introduced at a resume boundary for causal interventions. Th
 preserve the original update exactly; `tests/test_drift_interventions.py` covers the error,
 scaling, CLI and fused/unfused paths.
 
+Two diagnostic slow-weight caps, both off when their file flag is empty:
+- `--norm_cap_file PATH` loads general spectrum, Frobenius and bias-norm caps (see
+  `norm_cap.py`); `--norm_cap_every N` schedules cheap caps, `--norm_cap_svd_every N` schedules
+  full SVD caps, and `--norm_cap_start I` delays them until iteration I.
+- `--sv_cap_file PATH` loads singular-value caps for fixed trunk subspaces (see `sv_cap.py`);
+  `--sv_cap_every N` sets their period and `--sv_cap_start I` delays them until iteration I.
+
 Ephemeral BPTT ignores `--ephemeral_update_clamp` by design: it clamps only fast-weight updates,
 and under BPTT those are wiped before any forward pass reads them (see Known issues).
 
@@ -788,6 +795,7 @@ re-drawn every S sequences (values always differ from the previous context's, so
 is unambiguous). Each 7-character sequence shows two current bindings and queries one key:
 `c7a2?a2` (in-sequence) or `d5c7?a2` (carried: `a` was last shown in an earlier sequence of this
 context; asked with probability 0.5 when possible). S = 1 is the no-carry control.
+Any valid name resolves automatically, including unregistered variants such as `kvswitch_s4_l4096`.
 
 - Generate: `python kv_switch.py` (S in 1, 4, 16, 64, 256; `_l64` short streams for smoke tests).
   Splits store metadata (since_switch, query_lag, stale, ...) next to `text`.
