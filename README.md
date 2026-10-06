@@ -284,9 +284,9 @@ Two stability interventions, both ephemeral + DFA only and off by default:
   logit optimum. Padding rows remain zero-error rows. Extra fast passes and held-out evaluation
   are refused because those auxiliary paths currently use the plain error.
 
-A resume refuses either setting if it differs from the checkpoint. Their defaults preserve the
-original update exactly; `tests/test_drift_interventions.py` covers the error, scaling, CLI and
-fused/unfused paths.
+The settings may be introduced at a resume boundary for causal interventions. Their defaults
+preserve the original update exactly; `tests/test_drift_interventions.py` covers the error,
+scaling, CLI and fused/unfused paths.
 
 Ephemeral BPTT ignores `--ephemeral_update_clamp` by design: it clamps only fast-weight updates,
 and under BPTT those are wiped before any forward pass reads them (see Known issues).
