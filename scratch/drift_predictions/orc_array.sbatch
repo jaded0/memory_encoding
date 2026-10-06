@@ -15,6 +15,7 @@
 set -eo pipefail
 
 ROOT=/home/jaded79/memory_encoding_benchmarks/drift_predictions_2026-10-06
+CODE=${CODE:-$ROOT/code}
 ARMS=(nlms label_smoothing alpha0)
 ARM=${ARMS[$SLURM_ARRAY_TASK_ID]}
 RUN=$ROOT/runs/$ARM
@@ -32,7 +33,7 @@ case "$ARM" in
 esac
 
 echo "=== $ARM start $(date) host $(hostname)" >> "$RUN/train.log"
-(cd "$ROOT/code" && WANDB_MODE=disabled HF_DATASETS_OFFLINE=1 HF_OFFLINE=1 \
+(cd "$CODE" && WANDB_MODE=disabled HF_DATASETS_OFFLINE=1 HF_OFFLINE=1 \
   CUBLAS_WORKSPACE_CONFIG=:4096:8 TORCHINDUCTOR_CACHE_DIR=$(mktemp -d "${TMPDIR:-$HOME/.cache}/ind_XXXXXX") \
   "$CONDA_PREFIX/bin/python" -u train.py \
     --model_type ephemeral --updater dfa --enable_recurrence false --fused_update true \
