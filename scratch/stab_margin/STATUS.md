@@ -11,3 +11,4 @@ Chains for phase 2 cancelled; phase 2 to be redesigned after phase 1 results (ST
 NOTE 2026-10-06: Codex short-window limit resets 3:20pm MDT. Waiting on Codex (if limited): final note drafting/figures refresh. Cells keep running on deckard.
 Phase2 = m 5,10 at 150k/600k for ST1/3/4 (12 cells), chained. Phase1 result: all S for m<=3 except ST3_150k_m3 = T.
 Phase3 launched 14:35: ST1/ST4 m=30,100 at 150k/600k; ST3 reseed 11 at boundary (12 cells, ~1.5h). After this total ~12 GPU-h = cap. Phase2 result: ST1/ST4 stable to m=10 at 150k,600k; ST3 edge 3 (150k) -> 5 (600k).
+COMPLETE 2026-10-06 16:xx: 48 cells (~12 GPU-h), note written, branch stab-margin pushed. Not run: 300k/450k stages, ST2 cells.
