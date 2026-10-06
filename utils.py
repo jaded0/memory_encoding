@@ -422,6 +422,10 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
             and config['fast_backward_per_forward'] != loaded_config.get('fast_backward_per_forward', 1)):
         mismatches.append(('fast_backward_per_forward', config['fast_backward_per_forward'],
                            loaded_config.get('fast_backward_per_forward', 1)))
+    # These interventions change the readout or every DFA error, so they cannot switch on resume.
+    for key, default in (('readout_nlms', False), ('label_smoothing', 0.0)):
+        if key in config and config[key] != loaded_config.get(key, default):
+            mismatches.append((key, config[key], loaded_config.get(key, default)))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")

@@ -165,7 +165,8 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
             # Per-sequence output error dL/d(output), [B, vocab]: a new tensor (not a view of
             # output or of grad_outputs) that needs no grad. It was two names, global_error and
             # reward_update, bound to this one object; there was never a second tensor.
-            loss, output_error = dfa_output_error(output, final_char, criterion)
+            loss, output_error = dfa_output_error(
+                output, final_char, criterion, config.get('label_smoothing', 0.0))
             losses.append(loss.detach())
 
             # --fast_backward_per_forward 1/N: only every N-th character (the first, N+1-th, ...)
@@ -475,7 +476,8 @@ def build_model(config, charset, n_characters):
             fast_weight_clamp=config['fast_weight_clamp'], layer_norm=config['layer_norm'],
             dfa_fprime=config.get('dfa_fprime', False),
             slow_update_every=config.get('slow_update_every', 1),
-            fast_backward_per_forward=config.get('fast_backward_per_forward', 1))
+            fast_backward_per_forward=config.get('fast_backward_per_forward', 1),
+            readout_nlms=config.get('readout_nlms', False))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -602,6 +604,13 @@ def build_parser():
                              'activations, after the GELU, so the next layer (and its DFA input trace) '
                              'reads the normalized features. The input and the recurrent state are not '
                              'normalized.')
+    parser.add_argument('--readout_nlms', type=str2bool, nargs='?', const=True, default=False,
+                        help='Ephemeral + DFA: NLMS-normalize each sequence\'s i2o slow update by '
+                             '||x_out||^2 / width. This removes activation magnitude from the readout\'s '
+                             'effective step while preserving its nominal scale at unit variance.')
+    parser.add_argument('--label_smoothing', type=float, default=0.0,
+                        help='Ephemeral + DFA: train toward target*(1-eps) + eps/V, giving cross-entropy '
+                             'a finite logit optimum (0 = off).')
     parser.add_argument('--dfa_fprime', type=str2bool, nargs='?', const=True, default=False,
                         help='DFA only, both models: multiply each non-output layer\'s projected error by '
                              'its activation derivative at the current pre-activation (Nokland 2016): '
@@ -750,6 +759,15 @@ def check_argument_combinations(args, parser):
         parser.error("--wipe_every > 1 needs --model_type ephemeral (SimpleRNN has no fast weights).")
     if args.dfa_fprime and args.updater != 'dfa':
         parser.error("--dfa_fprime applies only to --updater dfa.")
+    interventions = args.readout_nlms or args.label_smoothing != 0
+    if interventions and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
+        parser.error("--readout_nlms and --label_smoothing support only "
+                     "--model_type ephemeral --updater dfa.")
+    if not 0 <= args.label_smoothing < 1:
+        parser.error("--label_smoothing must be in [0, 1).")
+    if args.label_smoothing and (args.fast_backward_per_forward != 1 or args.heldout_eval_every > 0):
+        parser.error("--label_smoothing does not support --fast_backward_per_forward other than 1 "
+                     "or --heldout_eval_every; those auxiliary passes use the plain error.")
     if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
         parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa "
                      "(see EphemeralRNN.check_fast_only_step).")

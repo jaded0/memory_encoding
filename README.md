@@ -275,6 +275,19 @@ changes (the golden traces are byte-identical). A resume refuses a checkpoint wi
 `dfa_fprime`. `tests/test_dfa_fprime.py` checks it against an autograd reference on a tiny
 model, for both models, and fused against unfused.
 
+Two stability interventions, both ephemeral + DFA only and off by default:
+- `--readout_nlms` applies an NLMS factor `d / (eps + ||x_out||^2)` to each
+  sequence's `i2o` weight and bias step. It removes trunk activation magnitude from the
+  readout's effective step without changing the nominal scale for unit-variance inputs.
+- `--label_smoothing eps` replaces the one-hot target with
+  `target*(1-eps) + eps/V`. Unlike plain cross-entropy on separable targets, this has a finite
+  logit optimum. Padding rows remain zero-error rows. Extra fast passes and held-out evaluation
+  are refused because those auxiliary paths currently use the plain error.
+
+A resume refuses either setting if it differs from the checkpoint. Their defaults preserve the
+original update exactly; `tests/test_drift_interventions.py` covers the error, scaling, CLI and
+fused/unfused paths.
+
 Ephemeral BPTT ignores `--ephemeral_update_clamp` by design: it clamps only fast-weight updates,
 and under BPTT those are wiped before any forward pass reads them (see Known issues).
 
