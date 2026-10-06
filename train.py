@@ -2,6 +2,7 @@
 import torch
 from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every, parse_fast_backward_per_forward
 import wandb
+import kv_switch
 import matplotlib.pyplot as plt
 from preprocess import load_and_preprocess_data
 from reproducibility import DataStream, capture_rng_state, record_seed_in_slurm, resolve_seed, seed_everything
@@ -770,6 +771,15 @@ def check_argument_combinations(args, parser):
         parser.error("--wipe_every must be at least 1.")
     if args.wipe_every > 1 and args.model_type != 'ephemeral':
         parser.error("--wipe_every > 1 needs --model_type ephemeral (SimpleRNN has no fast weights).")
+    if kv_switch.is_switch(args.dataset):
+        try:
+            length = kv_switch.stream_length(args.dataset)
+        except ValueError as exc:
+            parser.error(str(exc))
+        if length % args.wipe_every:
+            parser.error(f"--wipe_every {args.wipe_every} must divide the stream length {length} of "
+                         f"{args.dataset}, so the fast entries are wiped at stream starts (use "
+                         f"--wipe_every {length} to carry them through each stream, 1 for no carry).")
     if args.dfa_fprime and args.updater != 'dfa':
         parser.error("--dfa_fprime applies only to --updater dfa.")
     interventions = args.readout_nlms or args.label_smoothing != 0

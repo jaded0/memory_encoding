@@ -779,6 +779,31 @@ few distinct held-out strings (`parity_8`: 256 bit strings in total). Under the 
 no write occurs from the step that predicts the first answer; for MQAR and selective copy the
 later answers therefore get no help from earlier ones.
 
+### Switching key-value streams (`kv_switch.py`, `stream_eval.py`)
+
+`kvswitch_s<S>[_l<L>]` is a stream task whose best memory timescale is set by the switch period
+S, for testing whether the best `--forget_rate` tracks how often the world changes. A stream is
+L consecutive sequences (default 1024) over 4 keys; a context binds each key to a digit and is
+re-drawn every S sequences (values always differ from the previous context's, so a stale answer
+is unambiguous). Each 7-character sequence shows two current bindings and queries one key:
+`c7a2?a2` (in-sequence) or `d5c7?a2` (carried: `a` was last shown in an earlier sequence of this
+context; asked with probability 0.5 when possible). S = 1 is the no-carry control.
+
+- Generate: `python kv_switch.py` (S in 1, 4, 16, 64, 256; `_l64` short streams for smoke tests).
+  Splits store metadata (since_switch, query_lag, stale, ...) next to `text`.
+- Loading: each batch row follows one stream in order (`reproducibility.StreamSampler`; streams
+  are shuffled per epoch, sequences are not), resumable like the shuffling sampler.
+- Train with `--wipe_every L` so the fast entries carry through each stream and are zeroed at
+  its start (`--wipe_every 1` = no carry); a value that does not divide L is refused.
+- Training logs `recall_acc_carried` and `recall_acc_in_sequence` (carried answers use the lag-59
+  bucket). `--heldout_eval_every` still wipes every episode, so it measures in-sequence skill only.
+- `python stream_eval.py --checkpoint X [--forget_rate F]`: frozen-slow evaluation on held-out
+  streams with fast weights carried as in training (protocols `carry`, `wiped`, `no_fast`),
+  accuracy and stale rate by sequences since the switch and by query lag.
+- `plots/kv_switch_reference.py`: linear fast-weight reference learners (Hebbian / delta) on the
+  same streams; `sweeps/kvswitch/` holds the pilot launcher and a waiting GPU runner.
+  `tests/test_kv_switch.py` pins the behaviour.
+
 ### Advanced Features
 
 - **Positional Encoding**: Add positional information with `--positional_encoding_dim N`

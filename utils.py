@@ -5,10 +5,24 @@ import argparse
 import os
 
 import bench_tasks
+import kv_switch
 import kv_tasks
 from reproducibility import restore_rng_state
 
-dataset_keys = {
+class _DatasetKeys(dict):
+    """dataset name -> split key. Any kvswitch_s<S>[_l<L>] name resolves to `value`, registered or not."""
+
+    def __init__(self, *args, switch_value, **kw):
+        super().__init__(*args, **kw)
+        self.switch_value = switch_value
+
+    def __missing__(self, name):
+        if kv_switch.is_switch(name):
+            return self.switch_value
+        raise KeyError(name)
+
+
+dataset_keys = _DatasetKeys({
     "roneneldan/tinystories": "text",
     "jbrazzy/baby_names": "Names",
     "brucewlee1/htest-palindrome": "centerpiece",
@@ -26,13 +40,14 @@ dataset_keys = {
     "1_small_palindrome_dataset_vary_length": "text", 
     "2_small_palindrome_dataset_vary_length": "text", 
     "3_small_palindrome_dataset_vary_length": "text", 
-    "4_small_palindrome_dataset_vary_length": "text", }
+    "4_small_palindrome_dataset_vary_length": "text", }, switch_value="text")
 dataset_keys.update({name: "text" for name in kv_tasks.registered_names()})
 dataset_keys.update({name: "text" for name in bench_tasks.registered_names()})
+dataset_keys.update({name: "text" for name in kv_switch.registered_names()})
 
 def get_charset(dataset_name):
 
-    if kv_tasks.is_kv(dataset_name) or bench_tasks.is_bench(dataset_name):
+    if kv_tasks.is_kv(dataset_name) or bench_tasks.is_bench(dataset_name) or kv_switch.is_switch(dataset_name):
         return kv_tasks.CHARSET
     if "small" in dataset_name:
         set = "23. "

@@ -1,0 +1,4 @@
+# Extension 1 (2026-10-03), GPU 1: as ext_queue_gpu0.txt at S = 64.
+s64_f0.01_a3e4_s2718     kvswitch_s64  2718 0.01  3e4 150000 1024 1
+s64_f0.03_a3e4_c0_s2718  kvswitch_s64  2718 0.03  3e4 150000 1024 0
+s64_f0.003_a3e4_s2718    kvswitch_s64  2718 0.003 3e4 150000 1024 1

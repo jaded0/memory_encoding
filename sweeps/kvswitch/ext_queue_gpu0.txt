@@ -1,0 +1,5 @@
+# Extension 1 (2026-10-03), GPU 0: the pilot's best f was the grid's lowest (0.03) at both S, so
+# locate f* below it, plus the clamp-0 control at the best S = 4 cell. 150k iterations, seed 2718.
+s4_f0.01_a3e4_s2718      kvswitch_s4   2718 0.01  3e4 150000 1024 1
+s4_f0.03_a3e4_c0_s2718   kvswitch_s4   2718 0.03  3e4 150000 1024 0
+s4_f0.003_a3e4_s2718     kvswitch_s4   2718 0.003 3e4 150000 1024 1

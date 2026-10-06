@@ -42,7 +42,8 @@ PROTOCOLS = ("observed", "strict", "no_fast", "free_running")
 
 
 @torch.no_grad()
-def evaluate_held_out(model, onehot, update_mask, config, self_from=None, sample_generator=None):
+def evaluate_held_out(model, onehot, update_mask, config, self_from=None, sample_generator=None,
+                      wipe_fast=True):
     """Runs one batch of episodes, onehot [B, T, vocab], prequentially with frozen slow weights.
     update_mask [B, T-1] (bool) selects the steps whose target writes the fast entries; None
     means no fast weights. config supplies input_mode, pe_matrix, learning_rate,
@@ -50,7 +51,9 @@ def evaluate_held_out(model, onehot, update_mask, config, self_from=None, sample
     that step on, a row's own prediction (argmax, or a softmax sample drawn with
     sample_generator) is its next input and its write target, in place of the truth. Returns the
     predictions and per-sequence losses against the true targets, [T-1, B] each
-    (IntervalMetrics's layout). Changes the model's state."""
+    (IntervalMetrics's layout). wipe_fast=False starts the episode from the fast entries the
+    previous one left (stream_eval.py; the slow copies are still averaged). Changes the model's
+    state."""
     if not isinstance(model, EphemeralRNN):
         raise ValueError("held-out evaluation needs an EphemeralRNN (SimpleRNN has no fast weights)")
     model.check_fast_only_step()
@@ -63,7 +66,10 @@ def evaluate_held_out(model, onehot, update_mask, config, self_from=None, sample
     stream = onehot
     if self_from is not None:
         stream, self_from = onehot.clone(), self_from.to(onehot.device)
-    model.start_sequence_wipe()
+    if wipe_fast:
+        model.start_sequence_wipe()
+    else:
+        model.start_sequence_wipe(wipe_fast=False)
     hidden = model.initHidden(batch)
     preds, losses = [], []
     for i in range(steps):

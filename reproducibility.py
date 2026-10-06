@@ -129,6 +129,40 @@ class ResumableRandomSampler(torch.utils.data.RandomSampler):
         return itertools.islice(super().__iter__(), skip, None)
 
 
+class StreamSampler(ResumableRandomSampler):
+    """Sequence order for stream datasets (kv_switch): rows are stored stream-major (row =
+    stream * length + position); each epoch draws one permutation of the streams, groups them
+    into batch_size streams (a remainder is dropped), and yields position 0 of every stream in a
+    group, then position 1, and so on. With a DataLoader of the same batch_size, batch t of a
+    group holds position t of its streams, so each batch row follows one stream in order.
+
+    It is a ResumableRandomSampler (`skip` in samples, the generator drawn only at the start of
+    an epoch), so DataStream checkpoints and resumes it like the shuffling sampler."""
+
+    def __init__(self, n_rows, length, batch_size, generator):
+        if n_rows % length:
+            raise ValueError(f"{n_rows} rows are not whole streams of {length}")
+        self.n_streams, self.length, self.batch_size = n_rows // length, length, batch_size
+        if self.n_streams < batch_size:
+            raise ValueError(f"{self.n_streams} streams cannot fill a batch of {batch_size}")
+        super().__init__(range(n_rows), generator=generator)
+
+    def __len__(self):
+        return (self.n_streams // self.batch_size) * self.batch_size * self.length
+
+    def _order(self):
+        streams = torch.randperm(self.n_streams, generator=self.generator).tolist()
+        for start in range(0, len(streams) - self.batch_size + 1, self.batch_size):
+            group = streams[start:start + self.batch_size]
+            for position in range(self.length):
+                for stream in group:
+                    yield stream * self.length + position
+
+    def __iter__(self):
+        skip, self.skip = self.skip, 0
+        return itertools.islice(self._order(), skip, None)
+
+
 class DataStream:
     """Endless batches from a DataLoader whose position survives checkpoints.
 
