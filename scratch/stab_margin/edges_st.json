@@ -1,0 +1,56 @@
+[
+  {
+    "arm": "ST1",
+    "stage": 150000,
+    "edge": null,
+    "bracket_low": 100.0,
+    "max_complete_m": 100.0,
+    "status": "stable up to max m=100",
+    "incomplete": []
+  },
+  {
+    "arm": "ST1",
+    "stage": 600000,
+    "edge": null,
+    "bracket_low": 100.0,
+    "max_complete_m": 100.0,
+    "status": "stable up to max m=100",
+    "incomplete": []
+  },
+  {
+    "arm": "ST3",
+    "stage": 150000,
+    "edge": 3.0,
+    "bracket_low": 2.0,
+    "max_complete_m": 10.0,
+    "status": "edge m*=3; bracket 2\u20133",
+    "incomplete": []
+  },
+  {
+    "arm": "ST3",
+    "stage": 600000,
+    "edge": 5.0,
+    "bracket_low": 3.0,
+    "max_complete_m": 10.0,
+    "status": "edge m*=5; bracket 3\u20135",
+    "incomplete": []
+  },
+  {
+    "arm": "ST4",
+    "stage": 150000,
+    "edge": 30.0,
+    "bracket_low": 10.0,
+    "max_complete_m": 100.0,
+    "status": "edge m*=30; bracket 10\u201330",
+    "incomplete": []
+  },
+  {
+    "arm": "ST4",
+    "stage": 600000,
+    "edge": null,
+    "bracket_low": 100.0,
+    "max_complete_m": 100.0,
+    "status": "stable up to max m=100",
+    "incomplete": []
+  }
+]
