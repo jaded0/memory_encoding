@@ -1,6 +1,6 @@
 #!/bin/bash --login
 # Five-predictions follow-up: sbatch --array=0-2 orc_array.sbatch
-#SBATCH --time=0-03:00:00
+#SBATCH --time=0-08:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=7
