@@ -637,6 +637,19 @@ def build_parser():
                              'the value in force at the resumed iteration is applied, and a different schedule '
                              'than the checkpoint\'s is allowed. The active alpha is logged each interval. '
                              'Default empty = off.')
+    parser.add_argument('--sv_cap_file', type=str, default='',
+                        help='DIAGNOSTIC (changes training): torch file of per-trunk-layer subspaces and singular-value '
+                             'caps (see sv_cap.py); every --sv_cap_every iterations the slow weights\' singular '
+                             'values inside those subspaces are hard-capped. Default empty = off.')
+    parser.add_argument('--sv_cap_every', type=int, default=5, help='Apply the --sv_cap_file cap every N iterations.')
+    parser.add_argument('--sv_cap_start', type=int, default=0,
+                        help='First iteration at which the --sv_cap_file cap is applied (delayed intervention).')
+    parser.add_argument('--norm_cap_file', type=str, default='',
+                        help='DIAGNOSTIC (changes training): general slow-weight norm caps (full singular-value '
+                             'spectrum, Frobenius norm, bias norms; see norm_cap.py). Default empty = off.')
+    parser.add_argument('--norm_cap_every', type=int, default=5, help='Cheap norm_cap steps every N iterations.')
+    parser.add_argument('--norm_cap_svd_every', type=int, default=100, help='Full-SVD norm_cap steps every N iterations.')
+    parser.add_argument('--norm_cap_start', type=int, default=0, help='First iteration of the --norm_cap_file caps.')
     parser.add_argument('--trace_loop_every', type=int, default=0,
                         help='Ephemeral + DFA: every N iterations (a multiple of --print_freq; 0 = off) record '
                              'the per-step, within-sequence feedback-loop traces of that iteration\'s batch '
@@ -1010,6 +1023,21 @@ def main():
         torch._dynamo.config.cache_size_limit = max(torch._dynamo.config.cache_size_limit, limit)
         torch._dynamo.config.accumulated_cache_size_limit = max(
             torch._dynamo.config.accumulated_cache_size_limit, 2 * limit)
+    sv_cap = None
+    if args.sv_cap_file:
+        from sv_cap import SlowSvCap
+        sv_cap = SlowSvCap(rnn, args.sv_cap_file, every=args.sv_cap_every, start_iter=args.sv_cap_start,
+                           log_path=os.path.join(args.checkpoint_dir, 'sv_cap_log.jsonl'),
+                           log_every=max(args.print_freq, 1))
+        print(f"Slow-weight singular-value cap from {args.sv_cap_file} every {args.sv_cap_every} iterations "
+              f"from iteration {args.sv_cap_start} (layers {list(sv_cap.targets)}).")
+    norm_cap = None
+    if args.norm_cap_file:
+        from norm_cap import NormCap
+        norm_cap = NormCap(rnn, args.norm_cap_file, every=args.norm_cap_every, svd_every=args.norm_cap_svd_every,
+                           start_iter=args.norm_cap_start, log_path=os.path.join(args.checkpoint_dir, 'norm_cap_log.jsonl'),
+                           log_every=max(args.print_freq, 1))
+        print(f"Slow-weight norm caps from {args.norm_cap_file} (layers {list(norm_cap.layers)}, biases {list(norm_cap.biases)}).")
     loss_window = []  # Sliding window of average losses from print_freq intervals
     high_loss_count = 0  # Count of consecutive intervals with loss > threshold
     early_stopped = False
@@ -1087,6 +1115,12 @@ def main():
                 line_tensor, onehot_line_tensor, rnn, config, state, optimizer, log_outputs=log_outputs_for_train,
                 tracer=tracer if tracing_now else None
             )
+            if norm_cap is not None:
+                norm_cap.apply(iter)
+                norm_cap.log(iter)
+            if sv_cap is not None:
+                sv_cap.apply(iter)
+                sv_cap.log(iter)
             if tracing_now:
                 traces = tracer.finish()
                 torch.save({"iter": iter, "traces": traces},
