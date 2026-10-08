@@ -329,6 +329,7 @@ class SplitStepTest(unittest.TestCase):
             ({}, {"grad_norm_clip": 0.5}),
             ({"dfa_fprime": True}, {}),
             ({"layer_norm": True}, {}),
+            ({"slow_nlms": True}, {}),
         ]
         for model_options, run_options in cases:
             for fused in (False, True):
@@ -357,7 +358,8 @@ class SplitStepTest(unittest.TestCase):
     def test_split_windowed_equals_windowed_at_k1(self):
         for slow in (2, "sequence"):
             with self.subTest(slow=slow):
-                default, split = build(slow_update_every=slow), self.forced(slow_update_every=slow)
+                default = build(slow_update_every=slow, slow_nlms=True)
+                split = self.forced(slow_update_every=slow, slow_nlms=True)
                 for batch in SEQUENCES:
                     run(default, batch), run(split, batch)
                 self.assertTrue(same(weights(default), weights(split)))
@@ -443,6 +445,9 @@ class CombinationsTest(unittest.TestCase):
 
     def test_layer_norm(self):
         self.check(layer_norm=True)
+
+    def test_slow_nlms(self):
+        self.check(slow_nlms=True)
 
     def test_clamps(self):
         self.check(weight_clamp=0.8, fast_weight_clamp=0.5)

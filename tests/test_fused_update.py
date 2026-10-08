@@ -19,13 +19,15 @@ BATCHES = (torch.tensor([[0, 1, 2, 3, 1], [3, 2, 0, 1, 2], [1, 1, 3, 0, 2]]),
            torch.tensor([[2, 0, 3, 1, 2], [1, 3, 2, 0, 1], [0, 0, 1, 2, 3]]))
 
 
-def build(updater="dfa", layer_norm=False, weight_clamp=0, slow_weight_decay=0, fast_weight_clamp=0):
+def build(updater="dfa", layer_norm=False, weight_clamp=0, slow_weight_decay=0, fast_weight_clamp=0,
+          slow_nlms=False):
     seed_everything(11, deterministic=True)
     with contextlib.redirect_stdout(io.StringIO()):
         return EphemeralRNN(len(CHARSET), 4, len(CHARSET), 2, CHARSET, layer_norm=layer_norm,
                             weight_clamp=weight_clamp, updater=updater, plasticity=3.0, batch_size=3,
                             forget_rate=0.25, ephemeral_fraction=0.5, enable_recurrence=True,
-                            slow_weight_decay=slow_weight_decay, fast_weight_clamp=fast_weight_clamp)
+                            slow_weight_decay=slow_weight_decay, fast_weight_clamp=fast_weight_clamp,
+                            slow_nlms=slow_nlms)
 
 
 def run(model, update_clamp=0, grad_norm_clip=0, log_norms_now=False):
@@ -116,6 +118,16 @@ class FusedUpdateTest(unittest.TestCase):
         except Exception as exc:  # no C++ compiler for Inductor's CPU backend, for example
             self.skipTest(f"torch.compile unavailable here: {type(exc).__name__}: {exc}")
         run(unfused, update_clamp=0.05)
+        self.assert_same(state(fused), state(unfused), rtol=1e-5, atol=1e-6)
+
+    def test_compiled_slow_nlms_matches_to_rounding(self):
+        unfused, fused = build(slow_nlms=True), build(slow_nlms=True)
+        fused.enable_fused_update(compile=True)
+        try:
+            run(fused)
+        except Exception as exc:  # no C++ compiler for Inductor's CPU backend, for example
+            self.skipTest(f"torch.compile unavailable here: {type(exc).__name__}: {exc}")
+        run(unfused)
         self.assert_same(state(fused), state(unfused), rtol=1e-5, atol=1e-6)
 
     def test_only_ephemeral_dfa_can_fuse(self):

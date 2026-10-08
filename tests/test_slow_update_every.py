@@ -126,7 +126,7 @@ class OneStepSequencesTest(unittest.TestCase):
         stabilizers = {"slow_weight_decay": 0.05, "fast_weight_clamp": 0.1}
         for setting in ("sequence", 1, 3):
             clamp = {} if setting == "sequence" else {"weight_clamp": 0.2}
-            for options in ({}, {**stabilizers, **clamp}):
+            for options in ({}, {**stabilizers, **clamp}, {"slow_nlms": True}):
                 with self.subTest(setting=setting, **options):
                     reference, model = build(1, **options), build(setting, **options)
                     for batch in (short, SEQUENCES[1][:, :2], short):

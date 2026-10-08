@@ -275,10 +275,14 @@ changes (the golden traces are byte-identical). A resume refuses a checkpoint wi
 `dfa_fprime`. `tests/test_dfa_fprime.py` checks it against an autograd reference on a tiny
 model, for both models, and fused against unfused.
 
-Two stability interventions, both ephemeral + DFA only and off by default:
+Stability interventions, all ephemeral + DFA only and off by default:
 - `--readout_nlms` applies an NLMS factor `1 / (eps + ||x_out||^2)` to each
   sequence's `i2o` weight and bias step. It removes trunk activation magnitude from the
   readout's effective step.
+- `--slow_nlms` applies the same per-sequence factor to every layer's slow weight entries and
+  bias while leaving its fast entries' write exactly unchanged. With `--grad_norm_clip`, only the
+  ordinary unfused per-step path is supported, so the mixed normalized-slow/raw-fast gradient norm
+  is computed explicitly.
 - `--label_smoothing eps` replaces the one-hot target with
   `target*(1-eps) + eps/V`. Unlike plain cross-entropy on separable targets, this has a finite
   logit optimum. Padding rows remain zero-error rows. Extra fast passes and held-out evaluation

@@ -1,5 +1,5 @@
 #!/bin/bash --login
-# Five-predictions follow-up: sbatch --array=0-2 orc_array.sbatch
+# Five-predictions follow-up: sbatch --array=0-3 orc_array.sbatch
 #SBATCH --time=0-08:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -16,7 +16,7 @@ set -eo pipefail
 
 ROOT=/home/jaded79/memory_encoding_benchmarks/drift_predictions_2026-10-06
 CODE=${CODE:-$ROOT/code}
-ARMS=(nlms label_smoothing alpha0)
+ARMS=(nlms label_smoothing alpha0 slow_nlms)
 ARM=${ARMS[$SLURM_ARRAY_TASK_ID]}
 RUN=$ROOT/runs/$ARM
 
@@ -30,6 +30,7 @@ case "$ARM" in
   nlms) EXTRA+=(--readout_nlms true) ;;
   label_smoothing) EXTRA+=(--label_smoothing 0.1) ;;
   alpha0) EXTRA+=(--plasticity 0); N_ITERS=900000 ;;
+  slow_nlms) EXTRA+=(--slow_nlms true) ;;
 esac
 
 echo "=== $ARM start $(date) host $(hostname)" >> "$RUN/train.log"

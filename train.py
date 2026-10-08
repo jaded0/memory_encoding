@@ -478,7 +478,8 @@ def build_model(config, charset, n_characters):
             dfa_fprime=config.get('dfa_fprime', False),
             slow_update_every=config.get('slow_update_every', 1),
             fast_backward_per_forward=config.get('fast_backward_per_forward', 1),
-            readout_nlms=config.get('readout_nlms', False))
+            readout_nlms=config.get('readout_nlms', False),
+            slow_nlms=config.get('slow_nlms', False))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -609,6 +610,9 @@ def build_parser():
                         help='Ephemeral + DFA: NLMS-normalize each sequence\'s i2o slow update by '
                              'eps + ||x_out||^2. This removes activation magnitude from the readout\'s '
                              'effective step.')
+    parser.add_argument('--slow_nlms', type=str2bool, nargs='?', const=True, default=False,
+                        help='Ephemeral + DFA: divide every layer\'s slow-entry and bias step by '
+                             'eps + ||x_l||^2 per sequence while leaving fast writes unchanged.')
     parser.add_argument('--label_smoothing', type=float, default=0.0,
                         help='Ephemeral + DFA: train toward target*(1-eps) + eps/V, giving cross-entropy '
                              'a finite logit optimum (0 = off).')
@@ -782,10 +786,16 @@ def check_argument_combinations(args, parser):
                          f"--wipe_every {length} to carry them through each stream, 1 for no carry).")
     if args.dfa_fprime and args.updater != 'dfa':
         parser.error("--dfa_fprime applies only to --updater dfa.")
-    interventions = args.readout_nlms or args.label_smoothing != 0
+    interventions = args.readout_nlms or args.slow_nlms or args.label_smoothing != 0
     if interventions and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
-        parser.error("--readout_nlms and --label_smoothing support only "
+        parser.error("--readout_nlms, --slow_nlms and --label_smoothing support only "
                      "--model_type ephemeral --updater dfa.")
+    if args.readout_nlms and args.slow_nlms:
+        parser.error("--readout_nlms and --slow_nlms are alternative normalizations.")
+    if args.slow_nlms and args.grad_norm_clip > 0:
+        if args.fused_update or args.slow_update_every != 1 or args.fast_backward_per_forward != 1:
+            parser.error("--slow_nlms with --grad_norm_clip supports only the ordinary unfused "
+                         "per-step path so the mixed fast/slow gradient norm is computed exactly.")
     if not 0 <= args.label_smoothing < 1:
         parser.error("--label_smoothing must be in [0, 1).")
     if args.label_smoothing and (args.fast_backward_per_forward != 1 or args.heldout_eval_every > 0):
@@ -994,6 +1004,9 @@ def main():
             "slow_update_every": args.slow_update_every,
             "fast_backward_per_forward": args.fast_backward_per_forward,
             "dfa_fprime": args.dfa_fprime,
+            "readout_nlms": args.readout_nlms,
+            "slow_nlms": args.slow_nlms,
+            "label_smoothing": args.label_smoothing,
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
             "layer_norm": args.layer_norm,
