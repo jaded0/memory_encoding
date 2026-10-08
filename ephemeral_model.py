@@ -80,13 +80,24 @@ def normalized_readout_error(projected_error, inputs, enabled, eps=1e-6):
     return projected_error * scale.unsqueeze(1)
 
 
-def normalize_slow_gradient(gradient, inputs, ephemeral_mask, enabled, eps=1e-6):
-    """--slow_nlms: divide only slow weight entries by eps + ||x||^2 per sequence."""
-    if not enabled:
+def normalize_slow_gradient(gradient, inputs, ephemeral_mask, enabled, eps=1e-6, slow_scale=1.0):
+    """--slow_nlms: divide only slow weight entries by eps + ||x||^2 per sequence.
+    slow_scale (--readout_slow_lr_scale / --trunk_slow_lr_scale) multiplies the slow entries
+    too, so the layer's slow step is slow_scale * lr while its fast writes are unchanged."""
+    if not enabled and slow_scale == 1:
         return gradient
-    scale = 1 / (inputs.square().sum(1) + eps)
-    normalized = gradient * scale.view(-1, 1, 1)
-    return torch.where(ephemeral_mask.unsqueeze(0), gradient, normalized)
+    if enabled:
+        scale = (slow_scale / (inputs.square().sum(1) + eps)).view(-1, 1, 1)
+    else:
+        scale = slow_scale
+    return torch.where(ephemeral_mask.unsqueeze(0), gradient, gradient * scale)
+
+
+def slow_bias_error(projected_error, inputs, slow_nlms, slow_scale=1.0):
+    """The per-sequence error the (slow) bias steps with: --slow_nlms's NLMS factor and the
+    layer's slow_scale applied to projected_error. Both off returns the same object."""
+    error = normalized_readout_error(projected_error, inputs, slow_nlms)
+    return error if slow_scale == 1 else error * slow_scale
 
 
 def dfa_bias_update(projected_error, learning_rate):
@@ -185,7 +196,7 @@ def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral
                    weight_clamp: float, is_last_layer: bool,
                    slow_weight_decay: float = 0.0, fast_weight_clamp: float = 0.0,
                    freeze_slow: bool = False, freeze_fast: bool = False, fast_forget: bool = True,
-                   slow_nlms: bool = False):
+                   slow_nlms: bool = False, slow_lr_scale: float = 1.0):
     """One EphemeralLinear's whole DFA step, in place on weights and bias: the DFA gradient, the
     update and weight clamp (apply_update), then forgetting (apply_forget_step).
     It is built from the same helpers as those methods, in the same order, so run eagerly it
@@ -201,7 +212,7 @@ def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral
     (fast_forget=False: they are left exactly as they are, the slow half of a K >= 2 character,
     whose fast half already forgot)."""
     gradient = normalize_slow_gradient(dfa_per_sample_gradient(projected_error, inputs), inputs,
-                                       ephemeral_mask, slow_nlms)
+                                       ephemeral_mask, slow_nlms, slow_scale=slow_lr_scale)
     update = ephemeral_update(gradient, plasticity,
                               ephemeral_mask, update_clamp, is_last_layer)
     updated = clamp_fast_entries(
@@ -215,7 +226,7 @@ def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral
         updated = torch.where(ephemeral_mask.unsqueeze(0), forgotten, updated)
     weights.copy_(updated)
     if bias is not None:
-        bias_error = normalized_readout_error(projected_error, inputs, slow_nlms)
+        bias_error = slow_bias_error(projected_error, inputs, slow_nlms, slow_lr_scale)
         bias.add_(dfa_bias_update(bias_error, learning_rate))
 
 
@@ -350,6 +361,7 @@ class EphemeralLinear(nn.Linear):
         self.is_last_layer = is_last_layer
         self.normalize_step = False  # --readout_nlms, set only on i2o
         self.slow_nlms = False  # --slow_nlms, set on every trained layer
+        self.slow_lr_scale = 1.0  # --readout_slow_lr_scale (i2o) / --trunk_slow_lr_scale (others)
         # --dfa_fprime (set by EphemeralRNN): scale the projected DFA error by f'(pre-activation),
         # where activation names the nonlinearity the model applies to this layer's output.
         self.dfa_fprime = False
@@ -569,11 +581,12 @@ class EphemeralLinear(nn.Linear):
         # Per-sequence gradient: outer product with the input trace, [batch_size, out_features, in_features]
         gradient = dfa_per_sample_gradient(projected_error, self.in_traces.data)
         gradient = normalize_slow_gradient(
-            gradient, self.in_traces.data, self.ephemeral_mask, self.slow_nlms)
+            gradient, self.in_traces.data, self.ephemeral_mask, self.slow_nlms,
+            slow_scale=self.slow_lr_scale)
 
-        # Biases are slow, so --slow_nlms scales their per-sequence error too.
-        self._last_projected_error = normalized_readout_error(
-            projected_error, self.in_traces.data, self.slow_nlms)
+        # Biases are slow, so --slow_nlms and the slow lr scale apply to their error too.
+        self._last_projected_error = slow_bias_error(
+            projected_error, self.in_traces.data, self.slow_nlms, self.slow_lr_scale)
 
         # Populate per_sample_weights.grad
         if self.per_sample_weights.grad is None:
@@ -786,7 +799,7 @@ class EphemeralRNN(torch.nn.Module):
         enable_recurrence=True, retain_sequence_bias_grads=False,
         slow_weight_decay=0, output_tanh=False, fast_weight_clamp=0, layer_norm=False,
         dfa_fprime=False, slow_update_every=1, fast_backward_per_forward=1,
-        readout_nlms=False, slow_nlms=False
+        readout_nlms=False, slow_nlms=False, readout_slow_lr_scale=1.0, trunk_slow_lr_scale=1.0
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -800,7 +813,9 @@ class EphemeralRNN(torch.nn.Module):
         fast_backward_per_forward: --fast_backward_per_forward (see extra_fast_iterations and
         skip_fast_dfa_step); 1 is one fast DFA step per character.
         readout_nlms: --readout_nlms, NLMS scaling on i2o's whole DFA step.
-        slow_nlms: --slow_nlms, NLMS scaling on each layer's slow entries and bias only."""
+        slow_nlms: --slow_nlms, NLMS scaling on each layer's slow entries and bias only.
+        readout_slow_lr_scale / trunk_slow_lr_scale: multiply the slow step (slow entries and bias)
+        of i2o / of every other trained layer; fast writes are unchanged. 1 is the original step."""
         super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -872,6 +887,7 @@ class EphemeralRNN(torch.nn.Module):
         self.i2o.normalize_step = readout_nlms
         for layer in self.trained_layers():
             layer.slow_nlms = slow_nlms
+            layer.slow_lr_scale = readout_slow_lr_scale if layer is self.i2o else trunk_slow_lr_scale
         self.softmax = torch.nn.LogSoftmax(dim=1)
         self.updater = updater
         for layer in self.trained_layers():
@@ -909,7 +925,8 @@ class EphemeralRNN(torch.nn.Module):
                 error, layer.in_traces.data, layer.fused_plasticity(), layer.ephemeral_mask,
                 layer.forget_rate, learning_rate, update_clamp,
                 layer.weight_clamp, layer.is_last_layer, layer.slow_weight_decay,
-                layer.fast_weight_clamp, slow_nlms=layer.slow_nlms)
+                layer.fast_weight_clamp, slow_nlms=layer.slow_nlms,
+                 slow_lr_scale=layer.slow_lr_scale)
 
     def dfa_step_errors(self, output_error, grad_norm_clip=0):
         """Each trained layer's projected error for one DFA step, and the pre-clip per-sequence
@@ -963,7 +980,8 @@ class EphemeralRNN(torch.nn.Module):
              layer.fused_plasticity(), layer.ephemeral_mask, layer.forget_rate if forget else 0.0,
              learning_rate, update_clamp, layer.weight_clamp, layer.is_last_layer,
              layer.slow_weight_decay if forget else 0.0, layer.fast_weight_clamp, True,
-             slow_nlms=layer.slow_nlms)
+             slow_nlms=layer.slow_nlms,
+                 slow_lr_scale=layer.slow_lr_scale)
 
     @property
     def split_step(self):
@@ -989,7 +1007,7 @@ class EphemeralRNN(torch.nn.Module):
             if log_norms:
                 gradient = normalize_slow_gradient(
                     dfa_per_sample_gradient(error, inputs), inputs,
-                    layer.ephemeral_mask, layer.slow_nlms)
+                    layer.ephemeral_mask, layer.slow_nlms, slow_scale=layer.slow_lr_scale)
                 layer._log_update_norms(ephemeral_update(
                     gradient, layer.plasticity,
                     layer.ephemeral_mask, update_clamp, layer.is_last_layer))
@@ -1010,7 +1028,8 @@ class EphemeralRNN(torch.nn.Module):
                  error, inputs, layer.fused_plasticity(), layer.ephemeral_mask,
                   layer.forget_rate, learning_rate, update_clamp, layer.weight_clamp,
                   layer.is_last_layer, layer.slow_weight_decay, layer.fast_weight_clamp,
-                  False, True, False, slow_nlms=layer.slow_nlms)
+                  False, True, False, slow_nlms=layer.slow_nlms,
+                 slow_lr_scale=layer.slow_lr_scale)
 
     @torch.no_grad()
     def extra_fast_iterations(self, input, hidden, target, criterion, learning_rate, update_clamp,
@@ -1049,7 +1068,7 @@ class EphemeralRNN(torch.nn.Module):
             if log_norms:
                 gradient = normalize_slow_gradient(
                     dfa_per_sample_gradient(error, layer.in_traces.data), layer.in_traces.data,
-                    layer.ephemeral_mask, layer.slow_nlms)
+                    layer.ephemeral_mask, layer.slow_nlms, slow_scale=layer.slow_lr_scale)
                 layer._log_update_norms(ephemeral_update(
                     gradient, layer.plasticity,
                     layer.ephemeral_mask, update_clamp, layer.is_last_layer))
@@ -1057,7 +1076,8 @@ class EphemeralRNN(torch.nn.Module):
                  error, layer.in_traces.data, layer.fused_plasticity(), layer.ephemeral_mask,
                   layer.forget_rate, learning_rate, update_clamp, layer.weight_clamp,
                   layer.is_last_layer, layer.slow_weight_decay, layer.fast_weight_clamp,
-                  False, True, slow_nlms=layer.slow_nlms)
+                  False, True, slow_nlms=layer.slow_nlms,
+                 slow_lr_scale=layer.slow_lr_scale)
 
     @torch.no_grad()
     def windowed_dfa_step(self, output_error, learning_rate, update_clamp, grad_norm_clip=0,
@@ -1085,11 +1105,12 @@ class EphemeralRNN(torch.nn.Module):
             if log_norms:
                 gradient = normalize_slow_gradient(
                     dfa_per_sample_gradient(error, layer.in_traces.data), layer.in_traces.data,
-                    layer.ephemeral_mask, layer.slow_nlms)
+                    layer.ephemeral_mask, layer.slow_nlms, slow_scale=layer.slow_lr_scale)
                 layer._log_update_norms(ephemeral_update(
                     gradient, layer.plasticity,
                     layer.ephemeral_mask, update_clamp, layer.is_last_layer))
-            slow_error = normalized_readout_error(error, layer.in_traces.data, layer.slow_nlms)
+            slow_error = slow_bias_error(error, layer.in_traces.data, layer.slow_nlms,
+                                         layer.slow_lr_scale)
             layer.accumulate_slow_gradient(slow_error, slot)
             if not layer.is_last_layer:
                 self._fast_entry_step(layer, torch.zeros_like(error) if skip_fast else error,
