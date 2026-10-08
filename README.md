@@ -283,6 +283,10 @@ Stability interventions, all ephemeral + DFA only and off by default:
   bias while leaving its fast entries' write exactly unchanged. With `--grad_norm_clip`, only the
   ordinary unfused per-step path is supported, so the mixed normalized-slow/raw-fast gradient norm
   is computed explicitly.
+- `--readout_slow_lr_scale s` / `--trunk_slow_lr_scale s` multiply the slow step (slow weight
+  entries and bias) of the readout `i2o` / of every other trained layer by `s`, leaving every fast
+  write unchanged. This is the readout-only (or trunk-only) slow learning-rate test from a
+  pre-collapse checkpoint. Not supported with `--grad_norm_clip`.
 - `--label_smoothing eps` replaces the one-hot target with
   `target*(1-eps) + eps/V`. Unlike plain cross-entropy on separable targets, this has a finite
   logit optimum. Padding rows remain zero-error rows. Extra fast passes and held-out evaluation

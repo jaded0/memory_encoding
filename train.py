@@ -479,7 +479,9 @@ def build_model(config, charset, n_characters):
             slow_update_every=config.get('slow_update_every', 1),
             fast_backward_per_forward=config.get('fast_backward_per_forward', 1),
             readout_nlms=config.get('readout_nlms', False),
-            slow_nlms=config.get('slow_nlms', False))
+            slow_nlms=config.get('slow_nlms', False),
+            readout_slow_lr_scale=config.get('readout_slow_lr_scale', 1.0),
+            trunk_slow_lr_scale=config.get('trunk_slow_lr_scale', 1.0))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -613,6 +615,12 @@ def build_parser():
     parser.add_argument('--slow_nlms', type=str2bool, nargs='?', const=True, default=False,
                         help='Ephemeral + DFA: divide every layer\'s slow-entry and bias step by '
                              'eps + ||x_l||^2 per sequence while leaving fast writes unchanged.')
+    parser.add_argument('--readout_slow_lr_scale', type=float, default=1.0,
+                        help='Ephemeral + DFA: multiply the readout (i2o) slow step, weights and bias, by this '
+                             'factor (1 = off). Other layers and every fast write are unchanged.')
+    parser.add_argument('--trunk_slow_lr_scale', type=float, default=1.0,
+                        help='Ephemeral + DFA: multiply the slow step (slow entries and bias) of every trained '
+                             'layer except i2o by this factor (1 = off). Fast writes are unchanged.')
     parser.add_argument('--label_smoothing', type=float, default=0.0,
                         help='Ephemeral + DFA: train toward target*(1-eps) + eps/V, giving cross-entropy '
                              'a finite logit optimum (0 = off).')
@@ -796,6 +804,16 @@ def check_argument_combinations(args, parser):
         if args.fused_update or args.slow_update_every != 1 or args.fast_backward_per_forward != 1:
             parser.error("--slow_nlms with --grad_norm_clip supports only the ordinary unfused "
                          "per-step path so the mixed fast/slow gradient norm is computed exactly.")
+    slow_scales = (args.readout_slow_lr_scale, args.trunk_slow_lr_scale)
+    if slow_scales != (1.0, 1.0):
+        if args.model_type != 'ephemeral' or args.updater != 'dfa':
+            parser.error("--readout_slow_lr_scale and --trunk_slow_lr_scale support only "
+                         "--model_type ephemeral --updater dfa.")
+        if min(slow_scales) < 0:
+            parser.error("--readout_slow_lr_scale and --trunk_slow_lr_scale must be >= 0.")
+        if args.grad_norm_clip > 0:
+            parser.error("--readout_slow_lr_scale and --trunk_slow_lr_scale do not support "
+                         "--grad_norm_clip (the fused and unfused clip norms would differ).")
     if not 0 <= args.label_smoothing < 1:
         parser.error("--label_smoothing must be in [0, 1).")
     if args.label_smoothing and (args.fast_backward_per_forward != 1 or args.heldout_eval_every > 0):
@@ -1007,6 +1025,8 @@ def main():
             "readout_nlms": args.readout_nlms,
             "slow_nlms": args.slow_nlms,
             "label_smoothing": args.label_smoothing,
+            "readout_slow_lr_scale": args.readout_slow_lr_scale,
+            "trunk_slow_lr_scale": args.trunk_slow_lr_scale,
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
             "layer_norm": args.layer_norm,
