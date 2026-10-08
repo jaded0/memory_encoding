@@ -1,0 +1,10 @@
+--- /home/jaden/lowrank_deep/real_model/code/train.py	2026-09-30 19:07:18.000000000 -0600
++++ /home/jaden/lowrank_deep/transition/code/train.py	2026-09-30 23:00:37.372139880 -0600
+@@ -1143,6 +1143,7 @@
+             # ==============================================================
+             if args.checkpoint_save_freq > 0 and iter % args.checkpoint_save_freq == 0:
+                 save_checkpoint(checkpoint_state(iter + 1), args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
++                save_checkpoint(checkpoint_state(iter + 1), args.checkpoint_dir, f"ckpt_{iter + 1:06d}.pth") # LOCAL PATCH (transition study): numbered snapshots
+ 
+         # End of training loop - mark normal completion if no early stopping occurred
+         if args.track and wandb.run and not nan_detected and not early_stopped and not stopped_by_signal:
