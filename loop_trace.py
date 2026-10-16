@@ -23,7 +23,7 @@ character (the only place that knows about tracing):
 
 Static-buffer rules, so a CUDA-graph or fused rewrite can keep the interface: every buffer is a
 preallocated [T, ...] device tensor written by index (no .item(), no branching on values), the
-write is computed from (output_error, layer traces) by the model's own dfa_step_errors and
+write is computed from (output_error, layer traces) by the model's own fast_write_projected and
 ephemeral_update, so it does not depend on which update path (unfused, fused, windowed,
 fast-backward) runs, and only finish() synchronizes.
 
@@ -146,7 +146,7 @@ class LoopTracer:
         buffers["i2h_pre_norm"][step] = row_norm(pre)
         buffers["h_sat"][step] = (torch.tanh(pre).abs() > H_SAT_THRESHOLD).float().mean(dim=1)
         if fast_write:
-            projected, _ = model.dfa_step_errors(output_error, self.grad_norm_clip)
+            projected = model.fast_write_projected(output_error, self.grad_norm_clip)
         for l, layer in enumerate(self.fast_layers):
             inputs, weights, mask = layer.in_traces.data, layer.per_sample_weights.data, layer.ephemeral_mask
             fast, slow = weights * mask, weights * ~mask
@@ -180,7 +180,7 @@ class LoopTracer:
     def after_pass(self, step, pass_index, output, output_error, loss):
         """An extra pass (K >= 2): its forward has set the layers' in_traces to this pass's inputs
         and the fast weights are those the previous pass left; read the write it is about to make."""
-        projected, _ = self.model.dfa_step_errors(output_error, self.grad_norm_clip)
+        projected = self.model.fast_write_projected(output_error, self.grad_norm_clip)
         write = torch.stack([self._write_norm(layer, projected[l])
                              for l, layer in enumerate(self.fast_layers)], dim=1)
         fast_norm = torch.stack([row_norm(layer.per_sample_weights.data * layer.ephemeral_mask)

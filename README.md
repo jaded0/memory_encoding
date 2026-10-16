@@ -287,6 +287,22 @@ Stability interventions, all ephemeral + DFA only and off by default:
   entries and bias) of the readout `i2o` / of every other trained layer by `s`, leaving every fast
   write unchanged. This is the readout-only (or trunk-only) slow learning-rate test from a
   pre-collapse checkpoint. Not supported with `--grad_norm_clip`.
+- `--fast_layers 0,1` keeps ephemeral entries only in the listed trunk layers (0-based); the
+  others become all-slow (`i2h` keeps its entries). With `--num_layers 3`, `0,1` is the 10-13
+  "L01" arm: no fast writes in the last trunk layer. The mask draw consumes the same random numbers,
+  so everything else in the run is unchanged.
+- `--decouple_fast_feedback 2` gives the listed trunk layers' fast writes their own fixed random
+  feedback matrix `B_fast` (seeded per layer, not stored in checkpoints), while their slow
+  learning keeps the usual feedback matrix: the "DC2" arm.
+- `--fast_write_from_readout 2 --fast_write_from_readout_scale s` makes the last trunk layer's
+  fast writes follow the exact readout gradient, rescaled to `s` times the DFA write's norm (the
+  "aimed write"; only for the last trunk layer read directly by `i2o`). `heldout.py
+  --fast_write_from_readout_scale` overrides the scale of a checkpoint (the code_v2 runs of
+  2026-10-13 set it with `SCRATCH_RG_SCALE`, which their checkpoints do not record).
+  These two need `--updater dfa` and no `--grad_norm_clip`. Every step path (unfused, fused,
+  windowed, split, held-out fast-only, the loop tracer) uses the same fast-write error, so print
+  steps no longer need `SCRATCH_FORCE_FUSED`; `tests/test_fast_layer_flags.py` checks the port
+  against the code_v2 snapshot.
 - `--label_smoothing eps` replaces the one-hot target with
   `target*(1-eps) + eps/V`. Unlike plain cross-entropy on separable targets, this has a finite
   logit optimum. Padding rows remain zero-error rows. Extra fast passes and held-out evaluation
