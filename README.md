@@ -327,6 +327,20 @@ Stability interventions, all ephemeral + DFA only and off by default:
   models (proposals F4 and S1 in the vault's "ephemeral weights experiment proposals"). Until a
   definition is chosen and tested against an explicit masked reference, `train.py` refuses the
   combination.
+- **Fast read normalization** (`--fast_read_norm {off,running,rms}`, DFA, ephemeral model;
+  added 2026-10-16 for the vault's cheap check RN, "ephemeral weights cheap checks 2026-10-16").
+  Forward-only: a layer with fast entries computes `S x + scale · F x + b` (`F` = the ephemeral
+  entries, `S` = the slow ones) instead of one `bmm`; the DFA writes, the slow step and every
+  update path are unchanged. `scale` is per batch row and never above 1 (`fast_read_scale`):
+  - `running`: `1 / max(1, n)`, `n = lr · α · (fraction of fast entries) · (z · |x|)`, where `z` is
+    the decayed running sum of `|x_s|` over the sequence's earlier steps (`z ← (1−f)(z + |x|)`
+    after each read, zeroed by the wipe). `n` bounds the total key–query weight the read sums its
+    stored values with, so once it exceeds 1 the read is a weighted average of the stored values,
+    as in normalized linear attention; below 1 nothing changes. It assumes one fast write per
+    forward, so `--fast_backward_per_forward` other than 1 is refused.
+  - `rms`: `min(1, rms(S x) / rms(F x))`: the fast part is never louder than the slow part.
+  - `off` (default) is the original forward, bit for bit (`tests/test_fast_read_norm.py`).
+  The loop tracer's `fast_drive` still reports the raw `|F x|`.
 - `--label_smoothing eps` replaces the one-hot target with
   `target*(1-eps) + eps/V`. Unlike plain cross-entropy on separable targets, this has a finite
   logit optimum. Padding rows remain zero-error rows. Extra fast passes and held-out evaluation
