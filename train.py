@@ -208,6 +208,9 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                     layer.populate_dfa_gradients(output_error)
                 rnn.i2h.populate_dfa_gradients(output_error)
                 rnn.i2o.populate_dfa_gradients(output_error)
+                # --decouple_fast_feedback / --fast_write_from_readout: the ephemeral entries'
+                # gradient from their own fast-write error, as in every other step path.
+                rnn.override_fast_gradients(output_error)
                 # --grad_norm_clip: each sequence's raw gradient, before alpha and the clamps.
                 if config.get('grad_norm_clip', 0) > 0:
                     rnn.clip_grad_norm_per_sequence(config['grad_norm_clip'])
@@ -446,6 +449,14 @@ def build_optimizer(model, config):
     return torch.optim.SGD(model.parameters(), lr=config['learning_rate'])
 
 
+def parse_layer_list(value):
+    """--fast_layers and friends: a comma list of trunk layer indices ("0,1"), or None for ''.
+    The config (and so every checkpoint) keeps the string as given."""
+    if not value:
+        return None
+    return [int(v) for v in str(value).split(',')]
+
+
 def build_model(config, charset, n_characters):
     """The model a run's config describes (train.py's own config, or a checkpoint's)."""
     if config['input_mode'] not in ('last_one', 'last_two'):
@@ -481,7 +492,11 @@ def build_model(config, charset, n_characters):
             readout_nlms=config.get('readout_nlms', False),
             slow_nlms=config.get('slow_nlms', False),
             readout_slow_lr_scale=config.get('readout_slow_lr_scale', 1.0),
-            trunk_slow_lr_scale=config.get('trunk_slow_lr_scale', 1.0))
+            trunk_slow_lr_scale=config.get('trunk_slow_lr_scale', 1.0),
+            fast_layers=parse_layer_list(config.get('fast_layers', '')),
+            decouple_fast_feedback=parse_layer_list(config.get('decouple_fast_feedback', '')),
+            fast_write_from_readout=parse_layer_list(config.get('fast_write_from_readout', '')),
+            fast_write_from_readout_scale=config.get('fast_write_from_readout_scale', 1.0))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -603,6 +618,21 @@ def build_parser():
                         help='Both models: the output head i2o reads tanh of the shared trunk instead of '
                              'the trunk (removed from the default on 2026-09-24; see '
                              'docs/tapped_vs_forked_rnn_report.md).')
+    parser.add_argument('--fast_layers', type=str, default='',
+                        help='Ephemeral model: comma list of trunk layers (0-based) that keep ephemeral '
+                             'entries; the others are all-slow. Empty (default) = every layer. i2h keeps '
+                             'its entries. "0,1" with --n_layers 3 is the 10-13 "L01" arm.')
+    parser.add_argument('--decouple_fast_feedback', type=str, default='',
+                        help='Ephemeral DFA: comma list of trunk layers whose fast writes project the '
+                             'output error through their own fixed random feedback matrix B_fast; their '
+                             'slow learning keeps the usual one. "2" with --n_layers 3 is the "DC2" arm.')
+    parser.add_argument('--fast_write_from_readout', type=str, default='',
+                        help='Ephemeral DFA: the last trunk layer (give its index) writes its fast entries '
+                             'along the exact readout gradient instead of its DFA error, rescaled to '
+                             '--fast_write_from_readout_scale times the DFA error\'s norm (the "aimed write").')
+    parser.add_argument('--fast_write_from_readout_scale', type=float, default=1.0,
+                        help='Size of the --fast_write_from_readout write relative to the DFA write '
+                             '(the 10-13 runs\' SCRATCH_RG_SCALE: 0.1, 0.03).')
     parser.add_argument('--layer_norm', type=str2bool, nargs='?', const=True, default=False,
                         help='Both models: LayerNorm (no learnable gain or bias) on each trunk layer\'s '
                              'activations, after the GELU, so the next layer (and its DFA input trace) '
@@ -779,6 +809,20 @@ def check_argument_combinations(args, parser):
         if args.print_freq <= 0 or args.trace_loop_every % args.print_freq != 0:
             parser.error("--trace_loop_every must be a multiple of --print_freq (the traces are logged "
                          "with the interval metrics).")
+    if args.fast_layers and args.model_type != 'ephemeral':
+        parser.error("--fast_layers needs --model_type ephemeral.")
+    if args.decouple_fast_feedback or args.fast_write_from_readout:
+        if args.model_type != 'ephemeral' or args.updater != 'dfa':
+            parser.error("--decouple_fast_feedback and --fast_write_from_readout support only "
+                         "--model_type ephemeral --updater dfa.")
+        if args.grad_norm_clip > 0:
+            parser.error("--decouple_fast_feedback and --fast_write_from_readout are not defined with "
+                         "--grad_norm_clip (which error would the clip norm and scale?).")
+    for name in ('fast_layers', 'decouple_fast_feedback', 'fast_write_from_readout'):
+        try:
+            parse_layer_list(getattr(args, name))
+        except ValueError:
+            parser.error(f"--{name} must be a comma list of layer indices, like 0,1.")
     if args.wipe_every < 1:
         parser.error("--wipe_every must be at least 1.")
     if args.wipe_every > 1 and args.model_type != 'ephemeral':
@@ -1030,6 +1074,10 @@ def main():
             "slow_weight_decay": args.slow_weight_decay,
             "output_tanh": args.output_tanh,
             "layer_norm": args.layer_norm,
+            "fast_layers": args.fast_layers,
+            "decouple_fast_feedback": args.decouple_fast_feedback,
+            "fast_write_from_readout": args.fast_write_from_readout,
+            "fast_write_from_readout_scale": args.fast_write_from_readout_scale,
             "fast_weight_clamp": args.fast_weight_clamp,
             "wipe_every": args.wipe_every,
             "fused_update_active": config["fused_update_active"],

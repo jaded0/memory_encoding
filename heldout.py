@@ -185,6 +185,10 @@ def main(argv=None):
     parser.add_argument("--free_running_sample", type=int, default=None, metavar="SEED",
                         help="free_running samples its own predictions from the softmax with this seed "
                              "(default: the argmax)")
+    parser.add_argument("--fast_write_from_readout_scale", type=float, default=None,
+                        help="override the checkpoint's aimed-write scale (default: the checkpoint's). "
+                             "The 10-13 code_v2 aimed-write runs set it with SCRATCH_RG_SCALE, which their "
+                             "checkpoints do not record, so give it here (0 evaluates with no trunk-2 writes)")
     args = parser.parse_args(argv)
 
     from train import build_model, build_parser, positional_encoding  # train.py imports this module
@@ -193,6 +197,8 @@ def main(argv=None):
     defaults = {key: value for key, value in vars(build_parser().parse_args([])).items()
                 if not key.startswith("_")}
     config = {**defaults, **upgrade_legacy_config(checkpoint.get("config", {}))}
+    if args.fast_write_from_readout_scale is not None:
+        config["fast_write_from_readout_scale"] = args.fast_write_from_readout_scale
     charset, _, _, n_characters = initialize_charset(config["dataset"])
     model = build_model(config, charset, n_characters)
     model, _, next_iter, _, _ = load_checkpoint(args.checkpoint, model, config, device=args.device,
@@ -204,7 +210,8 @@ def main(argv=None):
                                  free_running_sample=args.free_running_sample)
     header = {"checkpoint": args.checkpoint, "iteration": next_iter - 1, "dataset": dataset,
               "split": args.split, "episodes": len(batches) * config["batch_size"],
-              "free_running_sample": args.free_running_sample}
+              "free_running_sample": args.free_running_sample,
+              "fast_write_from_readout_scale": config.get("fast_write_from_readout_scale", 1.0)}
     print(json.dumps(header))
     for key, value in results.items():
         print(f"  {key}: {value:.4f}")
