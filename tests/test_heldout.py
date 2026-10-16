@@ -61,7 +61,20 @@ def with_frozen_slow_training(model):
             layer.per_sample_weights.data.copy_(torch.where(layer.ephemeral_mask, layer.per_sample_weights.data, weights))
             layer.bias.data.copy_(bias)
 
+    def slow_step_then_restore(*args, **kwargs):
+        # --fast_backward_per_forward K >= 2: the slow half (and the slow forget) comes here.
+        slow_step(*args, **kwargs)
+        forget_then_restore_only()
+
+    def forget_then_restore_only():
+        for layer in model.trained_layers():
+            weights, bias = frozen[layer]
+            layer.per_sample_weights.data.copy_(torch.where(layer.ephemeral_mask, layer.per_sample_weights.data, weights))
+            layer.bias.data.copy_(bias)
+
+    slow_step = model.apply_slow_step
     model.start_sequence_wipe, model.apply_forget_step = wipe_then_snapshot, forget_then_restore
+    model.apply_slow_step = slow_step_then_restore
     return model
 
 
@@ -101,6 +114,21 @@ class EvaluatorMatchesTrainerTest(unittest.TestCase):
     def test_fast_entries_match_the_training_step_with_dfa_fprime(self):
         # The evaluator's projected errors go through the same f' as the training step's.
         self.check(exact=True, model_options={"fast_weight_clamp": 0.01, "dfa_fprime": True})
+
+    def test_fast_entries_match_training_with_reforward_passes(self):
+        # --fast_backward_per_forward K: the evaluator takes the K - 1 extra fast-only passes too.
+        for k in (2, 3):
+            with self.subTest(k=k):
+                self.check(exact=True, model_options={"fast_weight_clamp": 0.01, "fast_backward_per_forward": k})
+
+    def test_reforward_passes_change_the_evaluation(self):
+        # Not vacuous: with K = 2 the evaluator writes more than one pass would.
+        cfg, onehot, mask = config(), episodes(TEXTS), torch.ones(BATCH, 6, dtype=torch.bool)
+        one, two = build(fast_weight_clamp=0.01), build(fast_weight_clamp=0.01, fast_backward_per_forward=2)
+        heldout.evaluate_held_out(one, onehot, mask, cfg)
+        heldout.evaluate_held_out(two, onehot, mask, cfg)
+        self.assertFalse(torch.allclose(one.linear_layers[1].per_sample_weights,
+                                        two.linear_layers[1].per_sample_weights))
 
     def test_with_grad_norm_clip_they_match_to_rounding(self):
         # Training clips the materialized gradient; the evaluator uses the closed form.
