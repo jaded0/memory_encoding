@@ -299,10 +299,34 @@ Stability interventions, all ephemeral + DFA only and off by default:
   "aimed write"; only for the last trunk layer read directly by `i2o`). `heldout.py
   --fast_write_from_readout_scale` overrides the scale of a checkpoint (the code_v2 runs of
   2026-10-13 set it with `SCRATCH_RG_SCALE`, which their checkpoints do not record).
-  These two need `--updater dfa` and no `--grad_norm_clip`. Every step path (unfused, fused,
-  windowed, split, held-out fast-only, the loop tracer) uses the same fast-write error, so print
-  steps no longer need `SCRATCH_FORCE_FUSED`; `tests/test_fast_layer_flags.py` checks the port
-  against the code_v2 snapshot.
+  These two need `--updater dfa` and no `--grad_norm_clip` (see "Clipping with the fast-write
+  flags" below). Every step path (unfused, fused, windowed, split, held-out fast-only, the loop
+  tracer) uses the same fast-write error, so print steps no longer need `SCRATCH_FORCE_FUSED`;
+  `tests/test_fast_layer_flags.py` checks the port against the code_v2 snapshot.
+
+  **Clipping with the fast-write flags (refused, not yet defined).** `--fast_layers` alone works
+  with `--grad_norm_clip`: a layer without fast entries still has the gradient `p xᵀ`, so the
+  rank-1 closed form `|p| |x|` in `dfa_step_errors` is exact. `--decouple_fast_feedback` and
+  `--fast_write_from_readout` break that. Their fast entries are written with a second error
+  (`fast_write_errors`: `B_fast e`, or the rescaled readout gradient), so the layer's update is
+  `(p xᵀ) ⊙ (1−m) + (p_fast xᵀ) ⊙ m`, which is not rank 1. Today the clip would scale `p` only,
+  and `p_fast` is computed from the unclipped output error, so the fast writes would escape the
+  clip while their norm is not even in it. A definition has to choose:
+  1. **What the norm covers.** The applied update's norm, `Σ_{(1−m)} (p_i x_j)² + Σ_m (p_fast,i x_j)²`,
+     needs the mask (no closed form); or a norm over `p` alone (slow learning only); or separate
+     slow and fast norms.
+  2. **What gets scaled.** One factor for both errors (conventional clipping of the update that
+     is applied), or the slow error only, or each by its own norm.
+  3. **The aimed write's reference.** `--fast_write_from_readout_scale s` sets the fast write to
+     `s` × the DFA write's norm. Clip first and the aimed write shrinks with the clip; clip
+     after and `s` no longer fixes its size.
+  4. **Per sequence vs global**, as for the plain clip (per sequence, before α and the clamps).
+  This matters for any stabilizer arm combined with L01/DC2 or the aimed write: CLIP30 (plain
+  `--grad_norm_clip 30`) and CLIPFAST (fast-only clipping of the full raw norm, the battery's
+  `--grad_norm_clip_target fast`, which is not on `main`) are so far measured only on plain
+  models (proposals F4 and S1 in the vault's "ephemeral weights experiment proposals"). Until a
+  definition is chosen and tested against an explicit masked reference, `train.py` refuses the
+  combination.
 - `--label_smoothing eps` replaces the one-hot target with
   `target*(1-eps) + eps/V`. Unlike plain cross-entropy on separable targets, this has a finite
   logit optimum. Padding rows remain zero-error rows. Extra fast passes and held-out evaluation

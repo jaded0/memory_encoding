@@ -817,7 +817,8 @@ def check_argument_combinations(args, parser):
                          "--model_type ephemeral --updater dfa.")
         if args.grad_norm_clip > 0:
             parser.error("--decouple_fast_feedback and --fast_write_from_readout are not defined with "
-                         "--grad_norm_clip (which error would the clip norm and scale?).")
+                         "--grad_norm_clip (which error would the clip norm and scale?). See "
+                         "'Clipping with the fast-write flags' in README.md.")
     for name in ('fast_layers', 'decouple_fast_feedback', 'fast_write_from_readout'):
         try:
             parse_layer_list(getattr(args, name))
