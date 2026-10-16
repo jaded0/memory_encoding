@@ -73,7 +73,8 @@ def evaluate_held_out(model, onehot, update_mask, config, self_from=None, sample
     hidden = model.initHidden(batch)
     preds, losses = [], []
     for i in range(steps):
-        output, hidden = model(model_input(stream, i, config['input_mode'], config['pe_matrix']), hidden)
+        step_input, incoming_hidden = model_input(stream, i, config['input_mode'], config['pe_matrix']), hidden
+        output, hidden = model(step_input, incoming_hidden)
         pred = output.argmax(dim=1)
         if self_from is not None:
             if sample_generator is not None:
@@ -85,14 +86,26 @@ def evaluate_held_out(model, onehot, update_mask, config, self_from=None, sample
             stream[own, i + 1] = F.one_hot(pred[own], stream.shape[-1]).to(stream.dtype)
             _, output_error = dfa_output_error(output, stream[:, i + 1], criterion)
             loss = criterion(output.detach(), onehot[:, i + 1])  # scored against the truth
+            write_target = stream[:, i + 1]
         else:
             loss, output_error = dfa_output_error(output, onehot[:, i + 1], criterion)
+            write_target = onehot[:, i + 1]
         preds.append(pred)
         losses.append(loss.detach())
         if update_mask is not None:
             # A masked row gets zero error: its fast entries only forget, as a padding step does.
             model.fast_only_dfa_step(output_error * update_mask[:, i, None], config['learning_rate'],
                                      config['ephemeral_update_clamp'], config.get('grad_norm_clip', 0))
+            # --fast_backward_per_forward K >= 2: the K - 1 extra fast-only passes of training
+            # (EphemeralRNN.extra_fast_iterations): re-forward the same input from the same incoming
+            # hidden state, take the fresh error and write without forgetting. The prediction and
+            # loss stay pass 1's; the next hidden state is the last pass's, as in training.
+            for _ in range(model.fast_iterations - 1):
+                output, hidden = model(step_input, incoming_hidden)
+                _, extra_error = dfa_output_error(output, write_target, criterion)
+                model.fast_only_dfa_step(extra_error * update_mask[:, i, None], config['learning_rate'],
+                                         config['ephemeral_update_clamp'], config.get('grad_norm_clip', 0),
+                                         forget=False)
     return torch.stack(preds), torch.stack(losses)
 
 
