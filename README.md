@@ -894,7 +894,10 @@ Run the network-free assertion suite from the repository root:
 CUDA_VISIBLE_DEVICES="" python -m pytest tests/ -q
 ```
 
-`pytest` is not in `environment.yml`; install it with `pip install pytest`.
+`environment.yml` pins every package to the versions of the `hebby` env on ORC (2026-10-22), pytest
+included. The golden traces check the Torch version string, so run the suite in that env: a pip wheel
+of the same Torch (`2.5.1+cu121`, as on omen and deckard) fails `tests/test_characterization.py` on
+the version alone.
 
 The suite includes fixed-input golden traces through the real `train.train()`
 path for DFA, backprop, and BPTT (and for the SimpleRNN baseline under DFA), a finite-update smoke test for all three

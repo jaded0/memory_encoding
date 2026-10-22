@@ -1,23 +1,27 @@
 name: hebby
+# Pinned 2026-10-22 to the hebby env on ORC (conda list there), where the golden traces in
+# tests/fixtures are generated and pass. torch's version string must match the fixture's
+# ("2.5.1" from the pytorch channel; a pip wheel reports "2.5.1+cu121" and fails
+# tests/test_characterization.py's version check).
 channels:
   - nvidia
   - pytorch
   - conda-forge
   - defaults
 dependencies:
-  - python=3.11  # Match your Python version
-  - pytorch
+  - python=3.11.11
+  - pytorch=2.5.1
   - pytorch-cuda=12.1
-  - torchvision
-  - torchaudio
-  - imageio
-  - matplotlib
-  - wandb
-  - numpy
-  - scipy
-  - psutil
-  - pytest
+  - torchvision=0.20.1
+  - torchaudio=2.5.1
+  - imageio=2.37.0
+  - matplotlib=3.10.1
+  - wandb=0.19.8
+  - numpy=2.2.4
+  - scipy=1.15.2
+  - psutil=7.0.0
   - pip
   - pip:
-      - datasets
-      - wandb-osh
+      - datasets==3.4.1
+      - wandb-osh==1.2.2
+      - pytest==9.1.1
