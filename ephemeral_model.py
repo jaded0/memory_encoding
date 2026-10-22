@@ -107,6 +107,71 @@ def fast_read_scale(mode, fast, slow, key_mass=None, input=None, coef=0.0, eps=1
     raise ValueError(f"--fast_read_norm {mode!r}: expected one of {FAST_READ_NORMS}")
 
 
+ORDER2_MAPS = ('order2', 'order1')
+ORDER2_MODES = ('parallel', 'replace')
+
+
+def order2_projection(in_features, dim, seed, layer_index):
+    """--order2_layers: the fixed random projection [dim, in] of a layer's input that the order-two
+    feature map expands, drawn from its own generator (seeded by the run's seed and the layer) so the
+    global RNG stream, and with it every other initial weight, is the same as without the flag. Its
+    scale does not matter: order2_features normalizes the projected vector."""
+    generator = torch.Generator().manual_seed((int(seed) % 2**31) * 101 + 31337 + int(layer_index))
+    return torch.randn(dim, in_features, generator=generator)
+
+
+def order2_kernel_norm(order, temperature):
+    """The order-two (or order-one) kernel at a perfect match, k(1): 1 + t + t^2/2 (or 1 + t)."""
+    return 1 + temperature + temperature ** 2 / 2 if order == 'order2' else 1 + temperature
+
+
+def order2_feature_size(order, dim):
+    """The number of features order2_features gives: 1 + d + d^2 (order2, Based's second-order Taylor
+    map: 273 for d = 16) or 1 + d (order1)."""
+    return 1 + dim + dim * dim if order == 'order2' else 1 + dim
+
+
+def order2_features(x, projection, order, temperature, fraction, eps=1e-12):
+    """The features psi(x), [B, F], a layer's order-two fast matrix reads and writes with.
+
+    z = sqrt(t) * P x / |P x| (t = --order2_temperature), so z.z' = t * c with c the cosine of the
+    projected inputs. phi(z) = [1, z, vec(z z^T) / sqrt(2)] (order2) or [1, z] (order1), so that
+    phi(z).phi(z') = 1 + t c + t^2 c^2 / 2, the first three terms of exp(t c) (order1: 1 + t c).
+    psi(x) = sqrt(fraction / k(1)) * |x| * phi(z), which makes the kernel
+        psi(x).psi(y) = fraction * |x| |y| * k(c) / k(1),
+    the linear masked read's own expected key factor fraction * x.y = fraction |x| |y| c with the
+    cosine c replaced by k(c) / k(1). A perfect match therefore reads exactly as large as on the
+    linear fast entries, at the same alpha, learning rate and forget rate, and with the same
+    dependence on |x|; only the profile over cosines differs (size-matched by construction).
+    A zero input gives zero features."""
+    u = x @ projection.t()
+    z = u * (math.sqrt(temperature) / u.norm(dim=1, keepdim=True).clamp_min(eps))
+    parts = [torch.ones_like(z[:, :1]), z]
+    if order == 'order2':
+        parts.append((z.unsqueeze(2) * z.unsqueeze(1)).flatten(1) * _INV_SQRT2)
+    phi = torch.cat(parts, dim=1)
+    scale = math.sqrt(fraction / order2_kernel_norm(order, temperature)) * x.norm(dim=1, keepdim=True)
+    return phi * scale
+
+
+def order2_step(fast, error, features, alpha, learning_rate, forget_rate, update_clamp, weight_clamp,
+                fast_weight_clamp):
+    """A layer's order-two fast matrix G [B, out, F] takes its DFA write in place, in the order the
+    linear fast entries take theirs (dfa_layer_step): -alpha * (error outer features), the
+    element-wise --ephemeral_update_clamp, G + lr * update, --weight_clamp and --fast_weight_clamp,
+    then forgetting, G <- (1 - forget_rate) G. error is the layer's fast-write error [B, out] (its
+    projected DFA error, or the --decouple_fast_feedback / --fast_write_from_readout override), so the
+    write is "error times whatever this layer sees", with psi(x) in place of x. A zero error row
+    only forgets."""
+    update = -alpha * (error.unsqueeze(2) * features.unsqueeze(1))
+    if update_clamp > 0:
+        update = update.clamp(-update_clamp, update_clamp)
+    updated = regularized_weight(fast + learning_rate * update, weight_clamp)
+    if fast_weight_clamp:
+        updated = updated.clamp(-fast_weight_clamp, fast_weight_clamp)
+    fast.copy_(updated * (1 - forget_rate))
+
+
 def dfa_per_sample_gradient(projected_error, input):
     """Per-sequence DFA gradient, [B, out, in]: the outer product of each sequence's projected
     error [B, out] with its layer input (the input trace) [B, in]."""
@@ -444,7 +509,17 @@ class EphemeralLinear(nn.Linear):
         self.fast_read_norm = 'off'
         self.fast_read_coef = 0.0
         self.register_buffer('fast_key_mass', None, persistent=False)
-        self.in_traces = nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
+        # --order2_layers (set by EphemeralRNN.set_order2): a separate fast matrix order2_fast
+        # [B, out, F] read and written through order2_features of a fixed projection order2_proj.
+        # Both are None (and so absent from the state dict) when the flag is off.
+        self.order2 = None
+        self.order2_replace = False
+        self.order2_temperature = 0.0
+        self.order2_fraction = 0.0
+        self.order2_trace = None
+        self.register_buffer('order2_proj', None)
+        self.register_buffer('order2_fast', None)
+        self.in_traces =nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
         self.out_traces = nn.Parameter(torch.zeros(batch_size, out_features), requires_grad=requires_grad)
 
         self.last_ephemeral_step_norm = nn.Parameter(torch.tensor(0.0), requires_grad=False)
@@ -568,6 +643,8 @@ class EphemeralLinear(nn.Linear):
             self.per_sample_weights.data.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
             if self.fast_key_mass is not None:
                 self.fast_key_mass.zero_()
+            if self.order2_fast is not None:
+                self.order2_fast.zero_()
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
         self._retained_outputs = []
@@ -628,6 +705,12 @@ class EphemeralLinear(nn.Linear):
             output = torch.bmm(self.per_sample_weights, input_unsq).squeeze(2)
         else:
             output = self._normalized_read(input, input_unsq)
+        if self.order2 is not None:
+            # --order2_layers: + G psi(x), the order-two fast read (parallel to the linear one, or,
+            # under 'replace', the only fast read: the linear fast entries are then never written).
+            self.order2_trace = order2_features(input.detach(), self.order2_proj, self.order2,
+                                                self.order2_temperature, self.order2_fraction)
+            output = output + torch.bmm(self.order2_fast, self.order2_trace.unsqueeze(2)).squeeze(2)
 
         # Optionally add a bias if needed.
         if self.bias is not None:
@@ -657,6 +740,18 @@ class EphemeralLinear(nn.Linear):
         else:
             scale = fast_read_scale(self.fast_read_norm, fast, slow)
         return slow + scale * fast
+
+    def order2_alpha(self):
+        """alpha for the order-two fast matrix: the layer's (uniform) fast plasticity."""
+        alpha = self.fused_plasticity()
+        return alpha if isinstance(alpha, float) else float(alpha[self.ephemeral_mask].mean())
+
+    def order2_write(self, error, learning_rate, update_clamp, forget=True):
+        """This step's DFA write on the order-two fast matrix (order2_step), with the features this
+        layer's last forward recorded. forget=False leaves out the forgetting."""
+        order2_step(self.order2_fast, error, self.order2_trace, self.order2_alpha(), learning_rate,
+                    self.forget_rate if forget else 0.0, update_clamp, self.weight_clamp,
+                    self.fast_weight_clamp)
 
     def update_imprints(self, input, output):
         self.in_traces.data = input
@@ -904,7 +999,9 @@ class EphemeralRNN(torch.nn.Module):
         dfa_fprime=False, slow_update_every=1, fast_backward_per_forward=1,
         readout_nlms=False, slow_nlms=False, readout_slow_lr_scale=1.0, trunk_slow_lr_scale=1.0,
         fast_layers=None, decouple_fast_feedback=None, fast_write_from_readout=None,
-        fast_write_from_readout_scale=1.0, fast_read_norm='off', fast_read_norm_lr=None
+        fast_write_from_readout_scale=1.0, fast_read_norm='off', fast_read_norm_lr=None,
+        order2_layers=None, order2_map='order2', order2_mode='parallel', order2_temperature=4.0,
+        order2_dim=16, order2_seed=0
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -931,7 +1028,10 @@ class EphemeralRNN(torch.nn.Module):
         last trunk layer's fast writes follow the exact readout gradient (readout_direction_error,
         "aimed write"), scaled by --fast_write_from_readout_scale.
         fast_read_norm / fast_read_norm_lr: --fast_read_norm (see set_fast_read_norm); 'running'
-        needs the learning rate."""
+        needs the learning rate.
+        order2_layers / order2_map / order2_mode / order2_temperature / order2_dim / order2_seed:
+        --order2_layers and friends, an order-two (or order-one control) fast matrix on a fixed
+        projection of those trunk layers' inputs (see set_order2). None: off."""
         super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -1043,6 +1143,70 @@ class EphemeralRNN(torch.nn.Module):
         self.fused_layer_step = None  # set by enable_fused_update (--fused_update)
         set_dfa_fprime(self, dfa_fprime)
         self.set_fast_read_norm(fast_read_norm, fast_read_norm_lr)
+        self.order2_layers = None
+        if order2_layers is not None:
+            self.set_order2(order2_layers, order2_map, order2_mode, order2_temperature, order2_dim,
+                            order2_seed)
+
+    def set_order2(self, layers, order='order2', mode='parallel', temperature=4.0, dim=16, seed=0):
+        """--order2_layers: each listed trunk layer gets a second fast matrix G [B, out, F], read as
+        G psi(x) next to its slow and linear fast read, with psi = order2_features of a fixed random
+        projection to `dim` numbers (order2: 1 + d + d^2 features; order1, the control: 1 + d).
+        DFA is unchanged: G is written with the same fast-write error as the layer's linear fast
+        entries, times psi(x) instead of x, with the same alpha, learning rate, clamps and forget
+        rate, and it is wiped with them. mode 'parallel' keeps the linear fast entries; 'replace'
+        never writes them (their error is zero, so they stay at their wiped zero), which leaves G as
+        the layer's only fast read and the slow entries exactly as they were. The layers must have
+        fast entries (psi is scaled by the layer's fast fraction). One fast write per forward and the
+        per-step slow update are assumed, so the DFA updater, --slow_update_every 1,
+        --fast_backward_per_forward 1 and --fast_read_norm off are required."""
+        layers = sorted(set(layers))
+        if order not in ORDER2_MAPS:
+            raise ValueError(f"--order2_map {order!r}: expected one of {ORDER2_MAPS}")
+        if mode not in ORDER2_MODES:
+            raise ValueError(f"--order2_mode {mode!r}: expected one of {ORDER2_MODES}")
+        if not temperature > 0 or int(dim) < 1:
+            raise ValueError("--order2_temperature must be > 0 and --order2_dim >= 1")
+        if any(not 0 <= i < self.num_layers for i in layers) or not layers:
+            raise ValueError(f"--order2_layers {layers}: trunk layers are 0..{self.num_layers - 1}")
+        if self.updater != 'dfa':
+            raise ValueError("--order2_layers supports only the DFA updater")
+        if self.slow_update_every != 1 or self.fast_iterations != 1 or self.fast_subsample != 1:
+            raise ValueError("--order2_layers needs --slow_update_every 1 and --fast_backward_per_forward 1")
+        if self.fast_read_norm != 'off':
+            raise ValueError("--order2_layers is not defined with --fast_read_norm")
+        for index in layers:
+            layer = self.linear_layers[index]
+            if not bool(layer.ephemeral_mask.any()):
+                raise ValueError(f"--order2_layers {index}: the layer has no fast entries (--fast_layers)")
+            device = layer.per_sample_weights.device
+            layer.order2 = order
+            layer.order2_replace = mode == 'replace'
+            layer.order2_temperature = float(temperature)
+            layer.order2_fraction = float(layer.ephemeral_mask.float().mean())
+            layer.order2_proj = order2_projection(layer.in_features, int(dim), seed, index).to(device)
+            layer.order2_fast = torch.zeros(layer.batch_size, layer.out_features,
+                                            order2_feature_size(order, int(dim)), device=device)
+        self.order2_layers = layers
+
+    def order2_targets(self):
+        """The trained layers with an order-two fast matrix."""
+        return [layer for layer in self.linear_layers if layer.order2 is not None]
+
+    @torch.no_grad()
+    def order2_dfa_step(self, output_error, learning_rate, update_clamp, forget=True, projected=None):
+        """The order-two fast matrices' write for this step (EphemeralLinear.order2_write), from the
+        same fast-write errors the linear fast entries would take (before 'replace' zeroes those).
+        Nothing else changes, so it can run before or after the other layers' step; it must run
+        before i2o's update when --fast_write_from_readout reads i2o's weights. No-op when off."""
+        if self.order2_layers is None:
+            return
+        if projected is None:
+            projected, _ = self.dfa_step_errors(output_error)
+        overrides = self._fast_error_overrides(output_error, projected)
+        for layer, error, fast in zip(self.trained_layers(), projected, overrides):
+            if layer.order2 is not None:
+                layer.order2_write(error if fast is None else fast, learning_rate, update_clamp, forget)
 
     def set_fast_read_norm(self, mode, learning_rate=None):
         """--fast_read_norm on every layer with ephemeral entries (the trunk layers --fast_layers
@@ -1090,6 +1254,7 @@ class EphemeralRNN(torch.nn.Module):
         if norms is not None:
             self.grad_clip_stats.record(norms, grad_norm_clip)
         fast_errors = self.fast_write_errors(output_error, projected)
+        self.order2_dfa_step(output_error, learning_rate, update_clamp, projected=projected)
         for layer, error, fast_error in zip(layers, projected, fast_errors):
             layer._last_projected_error = error
             self.fused_layer_step(
@@ -1130,7 +1295,19 @@ class EphemeralRNN(torch.nn.Module):
         follows the readout gradient (readout_direction_error, from i2o's weights before this
         step's update). Every step path writes the fast entries with these, so training, norm
         logging, held-out evaluation and the loop tracer all see the same writes. Neither flag
-        is defined with --grad_norm_clip (train.py rejects the combination)."""
+        is defined with --grad_norm_clip (train.py rejects the combination).
+        --order2_mode replace: a layer with an order-two fast matrix writes its linear fast entries
+        with a zero error (they are never written); its order-two matrix takes the error this
+        method would otherwise give (order2_dfa_step)."""
+        errors = self._fast_error_overrides(output_error, projected)
+        if self.order2_layers is None:
+            return errors
+        return [torch.zeros_like(error) if layer.order2_replace else fast
+                for layer, error, fast in zip(self.trained_layers(), projected, errors)]
+
+    def _fast_error_overrides(self, output_error, projected):
+        """fast_write_errors before --order2_mode replace: the --decouple_fast_feedback or
+        --fast_write_from_readout error of each trained layer, else None."""
         errors = []
         for layer, error in zip(self.trained_layers(), projected):
             if layer.fast_write_from_readout:
@@ -1158,7 +1335,7 @@ class EphemeralRNN(torch.nn.Module):
         leaves the ephemeral entries as they are, so this equals dfa_layer_step's gradient."""
         layers = self.trained_layers()
         if not any(layer.fast_write_from_readout or layer.fast_feedback_weights is not None
-                   for layer in layers):
+                   or layer.order2_replace for layer in layers):
             return
         projected, _ = self.dfa_step_errors(output_error)
         for layer, fast_error in zip(layers, self.fast_write_errors(output_error, projected)):
@@ -1182,6 +1359,9 @@ class EphemeralRNN(torch.nn.Module):
         output_error is zero only forget. Used by heldout.py; it records no clip statistics.
         forget=False leaves out the forgetting (the extra passes of --fast_backward_per_forward K)."""
         self.check_fast_only_step()
+        if self.order2_layers is not None:
+            self.order2_dfa_step(output_error, learning_rate, update_clamp, forget,
+                                 projected=self.dfa_step_errors(output_error, grad_norm_clip)[0])
         for layer, error in zip(self.trained_layers(), self.fast_write_projected(output_error, grad_norm_clip)):
             if layer.is_last_layer:
                 continue  # i2o has no ephemeral entries: the frozen step would leave it unchanged
