@@ -203,9 +203,18 @@ def _mqar_source(text, k, j):
     return text.index(key, 0, 2 * k) + 1
 
 
+# metrics.IntervalMetrics buckets lags below MAX_LAG = 60 (and kv_switch keeps 59 for carried answers),
+# while a 52-pair mqarw episode has lags up to 2K + 3Q = 128, so mqarw reports min(lag, 57): bucket 57
+# means "57 or more". recall_acc is unaffected; exact lags come from the text (episode()).
+WIDE_LAG_CAP = 57
+
+
 def recall_targets(text, name):
-    """({target index: lag}, None), lag = target - source - 1, as metrics.recall_targets."""
-    return {answer: answer - source - 1 for answer, source in episode(text, name)["answers"].items()}, None
+    """({target index: lag}, None), lag = target - source - 1, as metrics.recall_targets (mqarw:
+    min(lag, WIDE_LAG_CAP))."""
+    cap = WIDE_LAG_CAP if _NAMES["mqarw"].match(name) else None
+    return {answer: answer - source - 1 if cap is None else min(answer - source - 1, cap)
+            for answer, source in episode(text, name)["answers"].items()}, None
 
 
 def recall_chance(name):

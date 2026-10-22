@@ -223,7 +223,7 @@ class WideMqarTest(unittest.TestCase):
                 targets, _ = recall_targets(text, name)
                 self.assertEqual(sorted(targets), [a for a, _, _ in ref])
                 for answer, value, source in ref:
-                    self.assertEqual(targets[answer], answer - source - 1)
+                    self.assertEqual(targets[answer], min(answer - source - 1, bench_tasks.WIDE_LAG_CAP))
         self.assertGreater(len(seen_k), 40)  # the mixture covers the range
         # Padding at the end of a batch does not change the answers.
         text = bench_tasks.generate_split("mqarw_r1_52_q8", "train", 1)[0]
