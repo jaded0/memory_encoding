@@ -424,6 +424,35 @@ Stability interventions, all ephemeral + DFA only and off by default:
   `target*(1-eps) + eps/V`. Unlike plain cross-entropy on separable targets, this has a finite
   logit optimum. Padding rows remain zero-error rows. Extra fast passes and held-out evaluation
   are refused because those auxiliary paths currently use the plain error.
+- **Order-two fast read** (`--order2_layers L,..`, DFA, ephemeral model; added 2026-10-22 for the
+  vault's "video experiment 5", one step from a linear fast read toward softmax). Each listed
+  trunk layer gets a second fast matrix `G` `[B, out, F]` beside its weights, and its
+  pre-activation becomes `S x + F x + G ψ(x) + b`. `ψ` is Based's second-order Taylor feature map
+  of a fixed random projection of the layer input to `--order2_dim` (16) numbers: with
+  `z = √t · P x / |P x|` (`t = --order2_temperature`, default 4), `φ(z) = [1, z, vec(z zᵀ)/√2]`
+  (273 features), so `φ(z)·φ(z') = 1 + t c + t² c²/2` for the projected cosine `c`, the first
+  three terms of `exp(t c)`. Then `ψ(x) = √(fraction / k(1)) · |x| · φ(z)`, which makes
+  `ψ(x)·ψ(y) = fraction · |x| |y| · k(c)/k(1)`: the linear masked read's expected key factor
+  `fraction · x·y` with `c` replaced by `k(c)/k(1)`. A perfect match therefore reads exactly as
+  large as on the linear fast entries, with the same α, learning rate, forget rate and dependence
+  on `|x|`; only the profile over cosines is sharper (size matched by construction).
+  - **Write.** DFA is unchanged: `G` takes the layer's own fast-write error `p` (its projected
+    DFA error, or the `--decouple_fast_feedback` / `--fast_write_from_readout` override) times
+    `ψ(x)` instead of `x`, `G ← (1−f)(G − lr·α·p ψᵀ)` with the same update/weight/fast clamps,
+    and is wiped with the fast entries. Every step path that is allowed (unfused, fused, the
+    print steps that log norms, held-out fast-only) writes it the same way.
+  - `--order2_map order1` is the control: `φ(z) = [1, z]` (17 features), kernel `(1 + t c)/(1 + t)`,
+    the first-order truncation on the same projection, so `order2` minus `order1` isolates the
+    second-order term from "a projection plus extra fast memory".
+  - `--order2_mode parallel` (default) keeps the linear fast entries; `replace` never writes them
+    (their write error is zero, so they stay at the wipe's zero) and `G` is the layer's only fast
+    read. The slow entries are the same in both.
+  - The projection is drawn from its own generator, seeded by `--seed` and the layer index, so every
+    other initial weight is unchanged; it and `G` are buffers in the checkpoint (only when on), and a
+    resume with different order-two settings is refused. Layers without fast entries,
+    `--grad_norm_clip`, `--slow_update_every` or `--fast_backward_per_forward` other than 1,
+    `--fast_read_norm`, backprop and BPTT are refused. Off (default, empty) is the original model, bit
+    for bit (`tests/test_order2.py`).
 
 The settings may be introduced at a resume boundary for causal interventions. Their defaults
 preserve the original update exactly; `tests/test_drift_interventions.py` covers the error,

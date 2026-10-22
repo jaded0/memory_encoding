@@ -205,6 +205,9 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 # i2h is the forked state head. Direct feedback trains it even though the
                 # current output reads the sibling emission path; this is an explicit local
                 # surrogate for temporal credit, not BPTT through future states.
+                # --order2_layers: the order-two fast matrices' write, from this step's errors and
+                # i2o's weights before its update (as in fused_dfa_step). A no-op when off.
+                rnn.order2_dfa_step(output_error, config["learning_rate"], config["ephemeral_update_clamp"])
                 for layer in rnn.linear_layers:
                     layer.populate_dfa_gradients(output_error)
                 rnn.i2h.populate_dfa_gradients(output_error)
@@ -500,7 +503,13 @@ def build_model(config, charset, n_characters):
             fast_write_from_readout_scale=config.get('fast_write_from_readout_scale', 1.0),
             fast_read_norm=config.get('fast_read_norm', 'off'),
             fast_read_norm_lr=config.get('learning_rate'),
-            fast_structure=config.get('fast_structure', 'exclusive'))
+            fast_structure=config.get('fast_structure', 'exclusive'),
+            order2_layers=parse_layer_list(config.get('order2_layers', '')),
+            order2_map=config.get('order2_map', 'order2'),
+            order2_mode=config.get('order2_mode', 'parallel'),
+            order2_temperature=config.get('order2_temperature', 4.0),
+            order2_dim=config.get('order2_dim', 16),
+            order2_seed=config.get('seed') or 0)
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -656,6 +665,24 @@ def build_parser():
                              'sum of absolute key-query scores sum_s |x_s . x|; rms: cap rms(F x) at rms(S x); '
                              'ln: LayerNorm (no gain or bias) of F x alone. Off (default) is the one-bmm forward, '
                              'bit for bit. See README "Fast read normalization".')
+    parser.add_argument('--order2_layers', type=str, default='',
+                        help='Ephemeral DFA (2026-10-22, video experiment 5): comma list of trunk layers that '
+                             'get an order-two fast matrix G, read as G psi(x) next to the layer\'s other '
+                             'reads, psi = Based\'s second-order Taylor features of a fixed random '
+                             '--order2_dim projection of the layer input, scaled so a perfect key match reads '
+                             'as large as on the linear fast entries. Written with the layer\'s own DFA fast '
+                             'error. Empty (default) = off, bit for bit. See README "Order-two fast read".')
+    parser.add_argument('--order2_map', type=str, default='order2', choices=['order2', 'order1'],
+                        help='--order2_layers feature map: order2 (1, z, z z^T / sqrt 2: 273 features at d 16) '
+                             'or order1 (1, z: the size-matched first-order control on the same projection).')
+    parser.add_argument('--order2_mode', type=str, default='parallel', choices=['parallel', 'replace'],
+                        help='--order2_layers: parallel keeps the layer\'s linear fast entries; replace never '
+                             'writes them, so G is the layer\'s only fast read.')
+    parser.add_argument('--order2_temperature', type=float, default=4.0,
+                        help='--order2_layers: t, with |z|^2 = t, so the kernel is 1 + t c + t^2 c^2 / 2 of the '
+                             'projected cosine c (the softmax temperature analogue).')
+    parser.add_argument('--order2_dim', type=int, default=16,
+                        help='--order2_layers: the projection size d.')
     parser.add_argument('--layer_norm', type=str2bool, nargs='?', const=True, default=False,
                         help='Both models: LayerNorm (no learnable gain or bias) on each trunk layer\'s '
                              'activations, after the GELU, so the next layer (and its DFA input trace) '
@@ -864,7 +891,21 @@ def check_argument_combinations(args, parser):
                                  fast_read_norm=args.fast_read_norm)
         except ValueError as exc:
             parser.error(str(exc))
-    for name in ('fast_layers', 'decouple_fast_feedback', 'fast_write_from_readout'):
+    if args.order2_layers:
+        if args.model_type != 'ephemeral' or args.updater != 'dfa':
+            parser.error("--order2_layers supports only --model_type ephemeral --updater dfa.")
+        if args.grad_norm_clip > 0:
+            parser.error("--order2_layers is not defined with --grad_norm_clip (the clip norm does not "
+                         "include the order-two matrices).")
+        if str(args.slow_update_every) != '1' or str(args.fast_backward_per_forward) != '1':
+            parser.error("--order2_layers needs --slow_update_every 1 and --fast_backward_per_forward 1.")
+        if args.fast_read_norm != 'off':
+            parser.error("--order2_layers is not defined with --fast_read_norm.")
+        if args.fast_structure != 'exclusive':
+            parser.error("--order2_layers is defined only for --fast_structure exclusive.")
+        if args.order2_temperature <= 0 or args.order2_dim < 1:
+            parser.error("--order2_temperature must be > 0 and --order2_dim >= 1.")
+    for name in ('fast_layers', 'decouple_fast_feedback', 'fast_write_from_readout', 'order2_layers'):
         try:
             parse_layer_list(getattr(args, name))
         except ValueError:
@@ -1125,6 +1166,11 @@ def main():
             "decouple_fast_feedback": args.decouple_fast_feedback,
             "fast_write_from_readout": args.fast_write_from_readout,
             "fast_write_from_readout_scale": args.fast_write_from_readout_scale,
+            "order2_layers": args.order2_layers,
+            "order2_map": args.order2_map,
+            "order2_mode": args.order2_mode,
+            "order2_temperature": args.order2_temperature,
+            "order2_dim": args.order2_dim,
             "fast_weight_clamp": args.fast_weight_clamp,
             "wipe_every": args.wipe_every,
             "fused_update_active": config["fused_update_active"],
