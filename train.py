@@ -1,6 +1,7 @@
 # train.py
 import torch
-from ephemeral_model import EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every, parse_fast_backward_per_forward
+from ephemeral_model import (EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every,
+                             parse_fast_backward_per_forward, FAST_STRUCTURES, check_fast_structure)
 import wandb
 import kv_switch
 import matplotlib.pyplot as plt
@@ -498,7 +499,8 @@ def build_model(config, charset, n_characters):
             fast_write_from_readout=parse_layer_list(config.get('fast_write_from_readout', '')),
             fast_write_from_readout_scale=config.get('fast_write_from_readout_scale', 1.0),
             fast_read_norm=config.get('fast_read_norm', 'off'),
-            fast_read_norm_lr=config.get('learning_rate'))
+            fast_read_norm_lr=config.get('learning_rate'),
+            fast_structure=config.get('fast_structure', 'exclusive'))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -635,6 +637,16 @@ def build_parser():
     parser.add_argument('--fast_write_from_readout_scale', type=float, default=1.0,
                         help='Size of the --fast_write_from_readout write relative to the DFA write '
                              '(the 10-13 runs\' SCRATCH_RG_SCALE: 0.1, 0.03).')
+    parser.add_argument('--fast_structure', type=str, default='exclusive', choices=list(FAST_STRUCTURES),
+                        help='Ephemeral DFA: how the fast weights sit on the slow ones. exclusive (default): '
+                             'a fast connection holds only its fast value (the slow weight under it is absent). '
+                             'additive_masked: every connection has a slow weight S, and the fast part F lives '
+                             'on the --ephemeral_fraction mask, W = S + F*m. additive_dense: F on every '
+                             'connection, W = S + F. Both parts take the same DFA error: S the plain step '
+                             '(--weight_clamp, --slow_weight_decay), F (1-f)(F - lr*alpha*g) on its support '
+                             '(--ephemeral_update_clamp, --fast_weight_clamp). Matched gain: lr*alpha*phi_eff '
+                             'equal, phi_eff = --ephemeral_fraction for exclusive/additive_masked, 1 for '
+                             'additive_dense. See README "Fast weights on top of slow ones".')
     parser.add_argument('--fast_read_norm', type=str, default='off',
                         choices=['off', 'running', 'rms', 'ln', 'absrun'],
                         help='Ephemeral DFA, DIAGNOSTIC (2026-10-16, cheap check RN; ln/absrun 2026-10-22): '
@@ -839,6 +851,19 @@ def check_argument_combinations(args, parser):
         if args.fast_read_norm == 'absrun' and args.wipe_every != 1:
             parser.error("--fast_read_norm absrun keeps the sequence's keys until the wipe; it is not "
                          "defined with --wipe_every other than 1.")
+    if args.fast_structure != 'exclusive':
+        if args.model_type != 'ephemeral':
+            parser.error(f"--fast_structure {args.fast_structure} needs --model_type ephemeral.")
+        try:
+            check_fast_structure(args.fast_structure, updater=args.updater,
+                                 slow_update_every=args.slow_update_every,
+                                 fast_backward_per_forward=args.fast_backward_per_forward,
+                                 slow_nlms=args.slow_nlms, trunk_slow_lr_scale=args.trunk_slow_lr_scale,
+                                 decouple_fast_feedback=args.decouple_fast_feedback,
+                                 fast_write_from_readout=args.fast_write_from_readout,
+                                 fast_read_norm=args.fast_read_norm)
+        except ValueError as exc:
+            parser.error(str(exc))
     for name in ('fast_layers', 'decouple_fast_feedback', 'fast_write_from_readout'):
         try:
             parse_layer_list(getattr(args, name))
@@ -1096,6 +1121,7 @@ def main():
             "output_tanh": args.output_tanh,
             "layer_norm": args.layer_norm,
             "fast_layers": args.fast_layers,
+            "fast_structure": args.fast_structure,
             "decouple_fast_feedback": args.decouple_fast_feedback,
             "fast_write_from_readout": args.fast_write_from_readout,
             "fast_write_from_readout_scale": args.fast_write_from_readout_scale,

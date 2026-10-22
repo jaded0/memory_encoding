@@ -170,5 +170,82 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual("".join(kv_tasks.CHARSET[i] for i in indices[0]), texts[0])
 
 
+
+def reference_wide_answers(text):
+    """mqarw, re-derived from the text alone: (answer index, value, source index) per query."""
+    k = text.index("?") // 2
+    table = {text[2 * i]: (2 * i + 1, text[2 * i + 1]) for i in range(k)}
+    out = []
+    at = 2 * k
+    while at < len(text):
+        assert text[at] == "?"
+        source, value = table[text[at + 1]]
+        assert text[at + 2] == value
+        out.append((at + 2, value, source))
+        at += 3
+    return out
+
+
+class WideMqarTest(unittest.TestCase):
+    def test_names(self):
+        self.assertEqual(bench_tasks.parse_name("mqarw_24_q8"), ("mqarw", (24, 24, 8)))
+        self.assertEqual(bench_tasks.parse_name("mqarw_6"), ("mqarw", (6, 6, 6)))
+        self.assertEqual(bench_tasks.parse_name("mqarw_r1_52_q8"), ("mqarw", (1, 52, 8)))
+        self.assertEqual(bench_tasks.parse_name("mqarw_r4_9"), ("mqarw", (4, 9, 9)))
+        for bad in ("mqarw_53", "mqarw_8_q9", "mqarw_r5_4", "mqarw_r0_8", "mqarw_r1_60_q8"):
+            with self.assertRaises(ValueError):
+                bench_tasks.parse_name(bad)
+        self.assertTrue(bench_tasks.is_bench("mqarw_r1_52_q8"))
+
+    def test_charset_extends_the_kv_charset(self):
+        self.assertEqual(len(bench_tasks.WIDE_CHARSET), 65)
+        self.assertEqual(len(set(bench_tasks.WIDE_CHARSET)), 65)
+        self.assertTrue(bench_tasks.WIDE_CHARSET.startswith(kv_tasks.CHARSET))
+        self.assertEqual(set(bench_tasks.WIDE_KEYS) | set(kv_tasks.VALUES) | set(" ?."),
+                         set(bench_tasks.WIDE_CHARSET))
+        for name in ("mqarw_8_q8", "mqarw_r1_52_q8", "mqarw_52_q8"):
+            self.assertEqual(utils.get_charset(name), bench_tasks.WIDE_CHARSET)
+        self.assertEqual(utils.get_charset("mqar_4"), kv_tasks.CHARSET)
+
+    def test_layout_and_answers(self):
+        seen_k = set()
+        for name in ("mqarw_r1_52_q8", "mqarw_52_q8", "mqarw_8_q8", "mqarw_3"):
+            low, high, q_cap = bench_tasks.parse_name(name)[1]
+            for text in bench_tasks.generate_split(name, "train", 400):
+                k = text.index("?") // 2
+                seen_k.add(k)
+                self.assertTrue(low <= k <= high)
+                self.assertEqual(len(text), 2 * k + 3 * min(k, q_cap))
+                self.assertEqual(len(set(text[0:2 * k:2])), k)  # distinct keys
+                self.assertTrue(set(text) <= set(bench_tasks.WIDE_CHARSET))
+                ref = reference_wide_answers(text)
+                self.assertEqual(len({text[a - 1] for a, _, _ in ref}), len(ref))  # distinct queries
+                targets, _ = recall_targets(text, name)
+                self.assertEqual(sorted(targets), [a for a, _, _ in ref])
+                for answer, value, source in ref:
+                    self.assertEqual(targets[answer], min(answer - source - 1, bench_tasks.WIDE_LAG_CAP))
+        self.assertGreater(len(seen_k), 40)  # the mixture covers the range
+        # Padding at the end of a batch does not change the answers.
+        text = bench_tasks.generate_split("mqarw_r1_52_q8", "train", 1)[0]
+        self.assertEqual(recall_targets(text + "   ", "mqarw_r1_52_q8"), recall_targets(text, "mqarw_r1_52_q8"))
+
+    def test_mixture_training_cores_never_meet_fixed_load_held_out_cores(self):
+        train = {bench_tasks.core(t) for t in bench_tasks.generate_split("mqarw_r1_4_q8", "train", 20000)}
+        for k in (1, 2, 4):
+            name = f"mqarw_{k}_q{k}"
+            for split in ("validation", "test"):
+                held = {bench_tasks.core(t) for t in bench_tasks.generate_split(name, split, 300)}
+                self.assertFalse(train & held, (name, split))
+
+    def test_registered(self):
+        for k in bench_tasks.WIDE_LOADS:
+            name = f"mqarw_{k}_q{min(k, 8)}"
+            self.assertIn(name, bench_tasks.registered_names())
+            self.assertEqual(utils.dataset_keys[name], "text")
+            self.assertTrue(preprocess.is_synthetic(name))
+        self.assertIn("mqarw_r1_52_q8", bench_tasks.registered_names())
+        self.assertAlmostEqual(recall_chance("mqarw_r1_52_q8"), 0.1)
+
+
 if __name__ == "__main__":
     unittest.main()
