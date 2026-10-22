@@ -446,6 +446,13 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
     if config.get('fast_structure', 'exclusive') != loaded_config.get('fast_structure', 'exclusive'):
         mismatches.append(('fast_structure', config.get('fast_structure', 'exclusive'),
                            loaded_config.get('fast_structure', 'exclusive')))
+    # --order2_layers and its settings change the forward pass and the fast state (absent: off).
+    order2_defaults = {'order2_layers': '', 'order2_map': 'order2', 'order2_mode': 'parallel',
+                       'order2_temperature': 4.0, 'order2_dim': 16}
+    if config.get('order2_layers') or loaded_config.get('order2_layers'):
+        mismatches.extend((key, config.get(key, default), loaded_config.get(key, default))
+                          for key, default in order2_defaults.items()
+                          if config.get(key, default) != loaded_config.get(key, default))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")
