@@ -56,6 +56,61 @@ replaces each sequence's copy with the batch mean and zeroes the ephemeral entri
 Forgetting multiplies the ephemeral entries by `1 - forget_rate`. Layers without ephemeral
 entries log no ephemeral norms.
 
+### Fast weights on top of slow ones (`--fast_structure`)
+
+`--fast_structure exclusive` (the default) is everything above: a fast connection holds only its
+fast value, and the slow weight under it is absent. Two additive structures give every connection a
+slow weight `S` and add a fast part `F` (DFA, ephemeral model only):
+
+| `--fast_structure` | weight | fast support |
+| --- | --- | --- |
+| `exclusive` | `S*(1-m) + F*m` | the `--ephemeral_fraction` mask `m` |
+| `additive_masked` | `S + F*m` | the same mask |
+| `additive_dense` | `S + F` | every connection (the fast-weight-programmer form: `F` is an exact sum of outer products) |
+
+- **Storage.** `S` is `per_sample_weights` (all of it slow, initialized from the full `nn.Linear`
+  draw; nothing is zeroed under the mask) and `F` is a new parameter `fast_state`, `[B, out, in]`,
+  saved in checkpoints. Exclusive layers have no `fast_state`, so their state dicts are unchanged.
+  The mask is drawn as before, so a seed gives the same masks, feedback matrices and slow init in
+  every structure. `i2o` is slow-only in every structure, and a trunk layer that `--fast_layers`
+  leaves without fast entries stays exclusive (all-slow).
+- **Step.** Both parts take the same projected DFA error `p` (one shared feedback channel):
+  `S <- (1 - slow_weight_decay) clamp_wc(S - lr p x^T)` on every entry (plus the bias step), and
+  `F <- (1 - f) clamp_fwc(F + lr clamp_uc(-alpha p x^T))` on `F`'s support. `--weight_clamp` bounds `S`;
+  `--fast_weight_clamp` bounds `F` and `--ephemeral_update_clamp` each fast write. (In the exclusive
+  structure `--weight_clamp` also bounds the fast entries, so the clamp-matched additive arm sets
+  `--fast_weight_clamp` to the same value; with additive_masked and the slow weight under the mask
+  removed, that reproduces the exclusive step exactly, which a test checks.) The step is
+  `dfa_additive_layer_step`, two calls of `dfa_layer_step`, compiled into one function under
+  `--fused_update`. The forward is `S x + F x`.
+- **The wipe** averages all of `S` over the batch and zeroes `F` (each row keeps its `F` between
+  wipes under `--wipe_every N`).
+- **Matched gain.** At equal `alpha` the structures do not have equal fast gain: over the random
+  mask, the masked read of one write is `E_m[(p x^T * m) q] = phi (x.q) p`, `phi` times the unmasked
+  read (measured 1.03 times that on a trained model). The fast gain is therefore
+  `c_eff = lr * alpha * phi_eff` with `phi_eff = --ephemeral_fraction` for `exclusive` and
+  `additive_masked` and `1` for `additive_dense`, the same quantity as the project's c-phi. Matched
+  gain means equal `c_eff`: `alpha_dense = phi * alpha_exclusive` (3e3 for an exclusive 3e4 at
+  `phi` 0.1). Not matched, and part of the structure: the masked read's per-row deviation from its
+  mean, and the per-entry size (dense entries are `phi` times smaller, so a per-entry clamp binds
+  later; compare structures clamp-free too).
+- **Supported:** unfused and `--fused_update` steps, `--grad_norm_clip` (on the raw `p x^T`, as for
+  exclusive), the clamps above, `--slow_weight_decay`, `--wipe_every`, `--fast_layers`,
+  `--layer_norm`, `--dfa_fprime`, `--readout_nlms` and `--readout_slow_lr_scale` (i2o only),
+  `--plasticity_schedule`, held-out evaluation (`heldout.py`: the fast-only step writes `F` only),
+  and the loop tracer (`fast_*` traces read `F`, `slow_*` read `S`). **Refused:** non-DFA updaters,
+  `--slow_update_every` other than 1, `--fast_backward_per_forward` other than 1,
+  `--decouple_fast_feedback`, `--fast_write_from_readout`, `--slow_nlms`, `--trunk_slow_lr_scale`
+  and `--fast_read_norm` (other step paths or a second fast-write error, not ported). A resume with a
+  different structure is refused.
+- **Cost.** Fused, at hidden 1024 on an A6000, an additive iteration takes about 1.4 times an
+  exclusive one on 3pal (53.5 against 76.5 it/s; two passes over `[B, out, in]` per layer instead of
+  one). Unfused it is 2.6 times (8.4 against 21.9 it/s).
+
+History: the three-arm pilot of 2026-09-30 (vault `ephemeral-lowrank/three_arm_pilot.md`, branch
+`worktree-agent-a42eab09d5da49c3c`) introduced the flag; it was ported to `main` on 2026-10-22 for
+the mask load test and proposal C6. `tests/test_fast_structure.py` pins the behaviour.
+
 ### Keeping fast weights across sequences (`--wipe_every N`)
 
 `--wipe_every N` (default 1, every sequence) zeroes the fast entries only at the start of every
@@ -862,11 +917,21 @@ text before the first `?` sends 10% of strings to validation, 10% to test and 80
 | Dataset | Example | Answers (recall targets) |
 | --- | --- | --- |
 | `mqar_<K>[_q<Q>]` | `a1b2c3d4?c3?a1?d4?b2` | multi-query associative recall: K distinct keys, then Q (default K) distinct queries; every value after a queried key is scored |
+| `mqarw_<K>[_q<Q>]`, `mqarw_r<A>_<B>[_q<Q>]` | `W7R7e1z7?z7?R7?W7?e1` | MQAR with 52 keys (`a`-`z`, `A`-`Z`); the `r` form draws K from A..B per episode and asks min(K, Q) queries |
 | `mod3_<L>`, `mod<m>_<L>`, `parity_<L>` | `01101001?1` | L random bits, then the count of ones mod m (parity: m = 2); one answer that depends on every bit (lag L from the first bit) |
 | `selcopy_<N>_<T>` | `..4.7..2.?472` | N distinct digits at random positions among T slots, then the digits in order after `?` (teacher forced) |
 
 Only registered names train (`mqar_2/4/8`, `mod3_4/8/12`, `parity_4/8/12`, `selcopy_3_9`,
-`selcopy_4_12`); the generator accepts others. Generate with `python bench_tasks.py [names] [--seed 0]`
+`selcopy_4_12`, and the wide-key MQAR names below); the generator accepts others.
+
+**Wide-key MQAR (`mqarw`).** `mqar`'s keys are `a`-`j`, so at most 10 pairs. `mqarw_<K>[_q<Q>]`
+draws K keys from the 52 letters `a`-`z`, `A`-`Z` (values `0`-`9`), and `mqarw_r<A>_<B>[_q<Q>]`
+draws K uniformly from A..B per episode and asks `min(K, Q)` queries. The family has its own
+65-symbol character set (`bench_tasks.WIDE_CHARSET`, kv_tasks' 23 symbols first), shared by every
+`mqarw` name, so a model trained on the mixture `mqarw_r1_52_q8` can be scored at any fixed load with
+`heldout.py --dataset mqarw_<K>_q<min(K,8)>` (registered for K in 1, 2, 4, 8, 12, 16, 24, 32, 40,
+48, 52; generate them with `python bench_tasks.py NAME`). Mixed lengths are padded within a batch.
+Lags above 57 are reported in the 57 bucket (`metrics` buckets stop at 60); `recall_acc` is exact. Generate with `python bench_tasks.py [names] [--seed 0]`
 (default `mqar_4 mod3_8 parity_8 selcopy_3_9`; 1,000,000 / 5,000 / 20,000 rows). Small spaces have
 few distinct held-out strings (`parity_8`: 256 bit strings in total). Under the `strict` protocol
 no write occurs from the step that predicts the first answer; for MQAR and selective copy the
