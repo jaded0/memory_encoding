@@ -148,8 +148,8 @@ class LoopTracer:
         if fast_write:
             projected = model.fast_write_projected(output_error, self.grad_norm_clip)
         for l, layer in enumerate(self.fast_layers):
-            inputs, weights, mask = layer.in_traces.data, layer.per_sample_weights.data, layer.ephemeral_mask
-            fast, slow = weights * mask, weights * ~mask
+            inputs = layer.in_traces.data
+            fast, slow = layer.fast_weights(), layer.slow_weights()
             buffers["act_norm"][step, :, l] = row_norm(inputs)
             buffers["fast_norm"][step, :, l] = row_norm(fast)
             buffers["fast_drive"][step, :, l] = row_norm(torch.bmm(fast, inputs.unsqueeze(2)))
@@ -158,14 +158,16 @@ class LoopTracer:
                 buffers["fast_write"][step, :, l] = self._write_norm(layer, projected[l])
         if "fast_write_pass" in buffers:
             self._record_pass(step, 0, output, loss, buffers["fast_write"][step], buffers["fast_norm"][step])
-        self.snapshot = [layer.per_sample_weights.data.clone() for layer in self.layers]
+        self.snapshot = [(layer.fast_weights().clone(), layer.slow_weights().clone()) for layer in self.layers]
         if self.start_slow is None:
-            self.start_slow = [snap * ~layer.ephemeral_mask for snap, layer in zip(self.snapshot, self.layers)]
+            self.start_slow = [slow for _, slow in self.snapshot]
 
     def _write_norm(self, layer, projected_error):
-        """|lr * clamp(alpha * p x^T)| on the layer's ephemeral entries, per batch row."""
-        inputs, mask = layer.in_traces.data, layer.ephemeral_mask
-        update = ephemeral_update(dfa_per_sample_gradient(projected_error, inputs), layer.plasticity,
+        """|lr * clamp(alpha * p x^T)| on the layer's ephemeral entries (additive: F's support),
+        per batch row."""
+        inputs, mask = layer.in_traces.data, layer.fast_mask
+        plasticity = layer.fast_alpha() if layer.is_additive else layer.plasticity
+        update = ephemeral_update(dfa_per_sample_gradient(projected_error, inputs), plasticity,
                                   mask, self.update_clamp, layer.is_last_layer)
         return self.learning_rate * row_norm(update * mask)
 
@@ -183,17 +185,15 @@ class LoopTracer:
         projected = self.model.fast_write_projected(output_error, self.grad_norm_clip)
         write = torch.stack([self._write_norm(layer, projected[l])
                              for l, layer in enumerate(self.fast_layers)], dim=1)
-        fast_norm = torch.stack([row_norm(layer.per_sample_weights.data * layer.ephemeral_mask)
-                                 for layer in self.fast_layers], dim=1)
+        fast_norm = torch.stack([row_norm(layer.fast_weights()) for layer in self.fast_layers], dim=1)
         self._record_pass(step, pass_index, output, loss, write, fast_norm)
 
     @torch.no_grad()
     def after_update(self, step):
-        for l, (layer, before) in enumerate(zip(self.layers, self.snapshot)):
-            delta, mask = layer.per_sample_weights.data - before, layer.ephemeral_mask
+        for l, (layer, (fast_before, slow_before)) in enumerate(zip(self.layers, self.snapshot)):
             if l < len(self.fast_layers):
-                self.buffers["fast_delta"][step, :, l] = row_norm(delta * mask)
-            self.buffers["slow_delta"][step, :, l] = row_norm(delta * ~mask)
+                self.buffers["fast_delta"][step, :, l] = row_norm(layer.fast_weights() - fast_before)
+            self.buffers["slow_delta"][step, :, l] = row_norm(layer.slow_weights() - slow_before)
         self.snapshot = None
 
     @torch.no_grad()
@@ -202,7 +202,7 @@ class LoopTracer:
         write_norm and loop_gain."""
         traces = {name: buffer.cpu() for name, buffer in self.buffers.items()}
         traces["slow_total_delta"] = torch.stack([
-            row_norm(layer.per_sample_weights.data * ~layer.ephemeral_mask - start)
+            row_norm(layer.slow_weights() - start)
             for layer, start in zip(self.layers, self.start_slow)], dim=1).cpu()
         traces.update(derived_traces(traces))
         self.buffers, self.start_slow = {}, None

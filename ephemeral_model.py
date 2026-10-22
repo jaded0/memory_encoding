@@ -328,6 +328,56 @@ def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral
         bias.add_(dfa_bias_update(bias_error, learning_rate))
 
 
+FAST_STRUCTURES = ('exclusive', 'additive_masked', 'additive_dense')
+
+
+def parse_fast_structure(value):
+    """--fast_structure: how a layer's fast weights sit on its slow weights.
+
+    exclusive (the default, and the only structure before 2026-10-22): a fast connection holds only
+    its fast value, so the slow weight under it is absent; W = S * (1 - m) + F * m.
+    additive_masked: every connection has a slow weight S and the fast part F lives on the same
+    fixed random mask m, W = S + F * m.
+    additive_dense: F on every connection, W = S + F (the fast-weight-programmer form, whose fast
+    part is an exact sum of outer products).
+
+    Matched gain (README "Fast weights on top of slow ones"): the expected fast read of one write
+    is lr * alpha * phi_eff * (x . q) p, with phi_eff = --ephemeral_fraction for exclusive and
+    additive_masked and 1 for additive_dense, so alpha_dense = fraction * alpha_exclusive matches
+    the exclusive arm's c-phi."""
+    if value not in FAST_STRUCTURES:
+        raise ValueError(f"--fast_structure takes one of {FAST_STRUCTURES}, not {value!r}")
+    return value
+
+
+def dfa_additive_layer_step(slow, fast, bias, projected_error, inputs, alpha: float, fast_mask, no_mask,
+                            forget_rate: float, learning_rate: float, update_clamp: float,
+                            weight_clamp: float, slow_weight_decay: float = 0.0,
+                            fast_weight_clamp: float = 0.0, fast_only: bool = False,
+                            fast_forget: bool = True):
+    """One additive EphemeralLinear's whole DFA step, in place (--fast_structure additive_*),
+    W = S + F. Two calls of dfa_layer_step, so there is no new update arithmetic:
+
+    - the slow part S (skipped if fast_only: held-out evaluation and the fast-only step): an empty
+      mask and alpha 1, so every entry takes S <- (1 - slow_weight_decay) clamp_wc(S - lr g), and
+      the bias takes its step;
+    - the fast part F: freeze_slow on fast_mask, so the entries on the mask take
+      F <- (1 - forget_rate) clamp_fwc(F + lr clamp_uc(-alpha g)) and every other entry of F stays
+      exactly 0. --weight_clamp acts on S only; --fast_weight_clamp acts on F (the analogue of the
+      exclusive structure's weight clamp on its fast entries).
+
+    g = p x^T per sequence with the same projected error p for both parts (one shared feedback
+    channel, as in the exclusive structure). fast_mask is the layer's random mask (additive_masked)
+    or all ones (additive_dense); no_mask is all False. fast_forget=False leaves out F's forgetting
+    (the forget-free fast-only step EphemeralRNN.fast_only_dfa_step takes with forget=False)."""
+    if not fast_only:
+        dfa_layer_step(slow, bias, projected_error, inputs, 1.0, no_mask, 0.0, learning_rate, 0.0,
+                       weight_clamp, False, slow_weight_decay)
+    dfa_layer_step(fast, None, projected_error, inputs, alpha, fast_mask,
+                   forget_rate if fast_forget else 0.0, learning_rate, update_clamp, 0.0, False, 0.0,
+                   fast_weight_clamp, True)
+
+
 def parse_slow_update_every(value):
     """--slow_update_every: a positive integer N (steps) or 'sequence'."""
     if isinstance(value, str) and value.strip().lower() == "sequence":
@@ -436,7 +486,7 @@ def set_dfa_fprime(model, enabled):
 
 
 class EphemeralLinear(nn.Linear):
-    def __init__(self, in_features, out_features, charset, bias=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2, slow_weight_decay=0, fast_weight_clamp=0, slow_update_every=1):
+    def __init__(self, in_features, out_features, charset, bias=True, weight_clamp=0, updater='dfa', requires_grad=False, is_last_layer=False, plasticity=1, batch_size=1, forget_rate=0.01, ephemeral_fraction=0.2, slow_weight_decay=0, fast_weight_clamp=0, slow_update_every=1, fast_structure='exclusive'):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see apply_forget_step). The paper's "forgetting rate
         coefficient 0.7" is 1 - forget_rate, i.e. forget_rate = 0.3. Same meaning as --forget_rate.
@@ -444,8 +494,23 @@ class EphemeralLinear(nn.Linear):
         ephemeral_fraction: fraction of entries that are ephemeral (--ephemeral_fraction).
         weight_clamp: applied after each update (--weight_clamp; see _apply_regularization).
         slow_update_every: --slow_update_every, 1 (every step), N or 'sequence'. Anything but 1
-        allocates the window's accumulators (see accumulate_slow_gradient)."""
+        allocates the window's accumulators (see accumulate_slow_gradient).
+        fast_structure: --fast_structure (parse_fast_structure). The additive structures keep S in
+        per_sample_weights (every entry slow, none zeroed at init) and F in the extra fast_state
+        parameter; they need the DFA updater and slow_update_every 1. A last layer (i2o) and a
+        layer with ephemeral_fraction 0 (--fast_layers) have no fast weights and are always
+        'exclusive', which for them is the same thing: all-slow."""
         super(EphemeralLinear, self).__init__(in_features, out_features, bias)
+        fast_structure = parse_fast_structure(fast_structure)
+        self.fast_structure = ('exclusive' if is_last_layer or ephemeral_fraction == 0
+                               else fast_structure)
+        if self.is_additive:
+            if updater != 'dfa':
+                raise ValueError(f"--fast_structure {fast_structure} supports only the DFA updater, "
+                                 f"not {updater!r}")
+            if parse_slow_update_every(slow_update_every) != 1:
+                raise ValueError(f"--fast_structure {fast_structure} does not support "
+                                 f"--slow_update_every {slow_update_every}")
 
         # Set requires_grad for the base class parameters
         self.weight.requires_grad = False # Base weights are not trained directly
@@ -516,7 +581,8 @@ class EphemeralLinear(nn.Linear):
         with torch.no_grad():
             initial_weights = self.weight.unsqueeze(0).expand_as(self.per_sample_weights)
             self.per_sample_weights.copy_(initial_weights)
-            self.per_sample_weights.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
+            if not self.is_additive:
+                self.per_sample_weights.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
         distribution[self.ephemeral_mask] = plasticity
 
         # A plain attribute, not state: the per-entry forget rate is forget_rate on the ephemeral
@@ -552,6 +618,50 @@ class EphemeralLinear(nn.Linear):
         if self.slow_update_every != 1 and bias:
             self.register_buffer('bias_grad_sum', torch.zeros(out_features), persistent=False)
 
+        # --fast_structure additive_*: the fast part F, one dense [out, in] copy per sequence, 0 off
+        # its support. A saved parameter, so a checkpoint carries it (a --wipe_every N > 1 run keeps
+        # F between batches); exclusive layers have none, so their state dicts are unchanged. The
+        # masks are derived from ephemeral_mask (non-persistent, nothing new to save or draw).
+        if self.is_additive:
+            self.fast_state = nn.Parameter(torch.zeros_like(self.per_sample_weights), requires_grad=False)
+            self.register_buffer('no_fast_mask', torch.zeros_like(self.ephemeral_mask.data), persistent=False)
+            if self.fast_structure == 'additive_dense':
+                self.register_buffer('dense_fast_mask', torch.ones_like(self.ephemeral_mask.data),
+                                     persistent=False)
+
+    @property
+    def is_additive(self):
+        """--fast_structure additive_masked or additive_dense on this layer (W = S + F)."""
+        return self.fast_structure != 'exclusive'
+
+    @property
+    def fast_mask(self):
+        """Where this layer's fast weights live: the random ephemeral mask (exclusive and
+        additive_masked) or every connection (additive_dense)."""
+        return self.dense_fast_mask if self.fast_structure == 'additive_dense' else self.ephemeral_mask
+
+    def fast_alpha(self):
+        """alpha (a float) for the additive fast step: the plasticity of the mask's entries
+        (--plasticity, or the --plasticity_schedule value in force)."""
+        alpha = self.fused_plasticity()
+        if torch.is_tensor(alpha):
+            raise ValueError(f"--fast_structure {self.fast_structure} needs a uniform plasticity alpha")
+        return alpha
+
+    def fast_weights(self):
+        """The fast part of this layer's per-sequence weights, [B, out, in]: the masked entries of
+        per_sample_weights (exclusive), or F (additive). A new tensor for exclusive, F itself for
+        additive. Used by observers (loop_trace.py), not by the step."""
+        if self.is_additive:
+            return self.fast_state.data
+        return self.per_sample_weights.data * self.ephemeral_mask
+
+    def slow_weights(self):
+        """The slow part, [B, out, in]: the unmasked entries (exclusive), or all of S (additive)."""
+        if self.is_additive:
+            return self.per_sample_weights.data
+        return self.per_sample_weights.data * ~self.ephemeral_mask
+
     def fused_plasticity(self):
         """alpha as a float when the plasticity tensor is alpha on the mask and 1 elsewhere (always
         so in training: see set_plasticity), else the tensor itself. The fused and windowed steps
@@ -584,7 +694,18 @@ class EphemeralLinear(nn.Linear):
         With --slow_update_every sequence the slow entries are already one shared matrix (the
         previous sequence ended with the batch-mean step, written to every copy), so the mean is
         skipped and they are left exactly as they are: the mean of B equal copies can differ in
-        the last bit. The fast entries are wiped or kept as above."""
+        the last bit. The fast entries are wiped or kept as above.
+
+        Additive structures: every entry of per_sample_weights is slow (S), so all of it takes the
+        batch mean; fast_state (F) is zeroed if wipe_fast, else each row keeps its own."""
+        if self.is_additive:
+            aggregated = self.per_sample_weights.mean(dim=0, keepdim=True)
+            self.per_sample_weights.data.copy_(aggregated.expand_as(self.per_sample_weights))
+            if wipe_fast:
+                self.fast_state.data.zero_()
+            self.t.fill_(0.0)
+            self._retained_outputs = []
+            return
         if self.slow_update_every != "sequence":
             # Suppose per_sample_weights is of shape [B, out_features, in_features]
             # Aggregate across the batch (e.g., average) to get a single copy:
@@ -660,7 +781,11 @@ class EphemeralLinear(nn.Linear):
         input_unsq = input.unsqueeze(2)
 
         # The output will be [B, out_features, 1] and then we can squeeze the last dimension.
-        if self.fast_read_norm == 'off':
+        if self.is_additive:
+            # (S + F) x as S x + F x: two reads of [B, out, in] instead of three plus a write.
+            output = torch.baddbmm(torch.bmm(self.per_sample_weights, input_unsq),
+                                   self.fast_state, input_unsq).squeeze(2)
+        elif self.fast_read_norm == 'off':
             output = torch.bmm(self.per_sample_weights, input_unsq).squeeze(2)
         else:
             output = self._normalized_read(input, input_unsq)
@@ -793,6 +918,14 @@ class EphemeralLinear(nn.Linear):
             self._apply_regularization()
             return
 
+        if self.is_additive:
+            # The whole additive step (S, bias, F and F's forgetting) in one call;
+            # apply_forget_step does nothing for this layer. It uses the projected error
+            # populate_dfa_gradients stored, which --grad_norm_clip has already rescaled, and the
+            # gradient's own entries are not needed. Update norms are not logged.
+            self.additive_step(self._last_projected_error, learning_rate, update_clamp)
+            return
+
         # The gradient was populated by DFA or backprop; plasticity scaling and the update clamp
         # are shared with dfa_layer_step (--fused_update).
         update = ephemeral_update(self.per_sample_weights.grad, self.plasticity, self.ephemeral_mask,
@@ -808,6 +941,18 @@ class EphemeralLinear(nn.Linear):
         self._update_bias_from_grad(learning_rate)
         # Apply the weight clamps if enabled
         self._apply_regularization()
+
+    def additive_step(self, projected_error, learning_rate, update_clamp, step=None, fast_only=False,
+                      fast_forget=True):
+        """An additive layer's DFA step (dfa_additive_layer_step) with this layer's settings, in
+        place. step is the function to call (EphemeralRNN's compiled one under --fused_update);
+        fast_only writes F only (S and the bias frozen); fast_forget=False skips F's forgetting."""
+        (step or dfa_additive_layer_step)(
+            self.per_sample_weights.data, self.fast_state.data,
+            None if self.bias is None or fast_only else self.bias.data, projected_error,
+            self.in_traces.data, self.fast_alpha(), self.fast_mask, self.no_fast_mask,
+            self.forget_rate, learning_rate, update_clamp, self.weight_clamp,
+            self.slow_weight_decay, self.fast_weight_clamp, fast_only, fast_forget)
 
     def _update_bias_from_grad(self, learning_rate):
         """Helper method to update bias using stored gradients."""
@@ -848,7 +993,13 @@ class EphemeralLinear(nn.Linear):
 
     def _apply_regularization(self):
         """--weight_clamp, then --fast_weight_clamp, on per_sample_weights. Plasticity, biases,
-        feedback matrices, traces, and logged norms are intentionally excluded."""
+        feedback matrices, traces, and logged norms are intentionally excluded. Additive layers:
+        --weight_clamp on S and --fast_weight_clamp on F, as in their step."""
+        if self.is_additive:
+            regularized_weight(self.per_sample_weights.data, self.weight_clamp)
+            if self.fast_weight_clamp:
+                self.fast_state.data.clamp_(-self.fast_weight_clamp, self.fast_weight_clamp)
+            return
         self.per_sample_weights.data = clamp_fast_entries(
             regularized_weight(self.per_sample_weights.data, self.weight_clamp),
             self.ephemeral_mask, self.fast_weight_clamp)
@@ -859,7 +1010,10 @@ class EphemeralLinear(nn.Linear):
         so each call keeps
         1 - forget_rate of every ephemeral weight. train.py calls this after each update (after
         the clamps too), as in the paper: w <- (1 - forget_rate) * (w - lr*alpha*g).
-        This is done through .data under no_grad to avoid recording the update in autograd."""
+        This is done through .data under no_grad to avoid recording the update in autograd.
+        Additive layers forget inside their step (additive_step): nothing to do here."""
+        if self.is_additive:
+            return
         with torch.no_grad():
             self.per_sample_weights.data.mul_(forget_keep(self.forget_rate, self.ephemeral_mask,
                                                           self.slow_weight_decay))
@@ -888,6 +1042,14 @@ class EphemeralLinear(nn.Linear):
 
     def get_norms(self):
         """Calculates and returns weight and last update norms."""
+        if self.is_additive:
+            # S is slow_weight_norm and F is ephemeral_weight_norm (the composite S + F is not
+            # formed); additive steps do not record update norms.
+            with torch.no_grad():
+                slow = torch.norm(self.per_sample_weights.data).item()
+                fast = torch.norm(self.fast_state.data).item()
+            return {'weight_norm': (slow ** 2 + fast ** 2) ** 0.5, 'ephemeral_weight_norm': fast,
+                    'slow_weight_norm': slow, 'ephemeral_update_norm': 0.0, 'slow_update_norm': 0.0}
         with torch.no_grad():
             weights = self.per_sample_weights.data
             # Ensure mask is broadcastable for indexing
@@ -946,6 +1108,44 @@ class EphemeralLinear(nn.Linear):
             self._fused_plasticity = None
             print(f"Set plasticity to {value} for {torch.sum(self.ephemeral_mask).item()} ephemeral weights")
 
+def check_fast_structure(fast_structure, updater='dfa', slow_update_every=1, fast_backward_per_forward=1,
+                         slow_nlms=False, trunk_slow_lr_scale=1.0, decouple_fast_feedback=None,
+                         fast_write_from_readout=None, fast_read_norm='off'):
+    """Raises ValueError for settings the additive structures do not define. They take the per-step
+    DFA step (one fast write per character, the slow step every character) with one projected
+    error shared by S and F. Refused: other updaters (backprop's alpha scaling and BPTT's update
+    are written for the exclusive mask), --slow_update_every N, --fast_backward_per_forward other
+    than 1 (other step paths, not ported), --decouple_fast_feedback and --fast_write_from_readout
+    (a second fast-write error), --slow_nlms and --trunk_slow_lr_scale (they rescale the slow part
+    of the shared error), --fast_read_norm (a split read of the exclusive mask). Accepted:
+    --fused_update, --grad_norm_clip (the raw p x^T, as for exclusive), --ephemeral_update_clamp
+    and --fast_weight_clamp (on F), --weight_clamp and --slow_weight_decay (on S), --fast_layers,
+    --wipe_every, --layer_norm, --dfa_fprime, --readout_nlms and --readout_slow_lr_scale (i2o only,
+    which is slow-only in every structure), --plasticity_schedule."""
+    if fast_structure == 'exclusive':
+        return
+    refused = []
+    if updater != 'dfa':
+        refused.append(f"--updater {updater}")
+    if parse_slow_update_every(slow_update_every) != 1:
+        refused.append(f"--slow_update_every {slow_update_every}")
+    if parse_fast_backward_per_forward(fast_backward_per_forward) != 1:
+        refused.append(f"--fast_backward_per_forward {fast_backward_per_forward}")
+    if slow_nlms:
+        refused.append("--slow_nlms")
+    if trunk_slow_lr_scale != 1:
+        refused.append(f"--trunk_slow_lr_scale {trunk_slow_lr_scale}")
+    if decouple_fast_feedback:
+        refused.append("--decouple_fast_feedback")
+    if fast_write_from_readout:
+        refused.append("--fast_write_from_readout")
+    if fast_read_norm != 'off':
+        refused.append(f"--fast_read_norm {fast_read_norm}")
+    if refused:
+        raise ValueError(f"--fast_structure {fast_structure} does not support {', '.join(refused)} "
+                         "(see check_fast_structure)")
+
+
 class EphemeralRNN(torch.nn.Module):
     def __init__(
         self, input_size, hidden_size, output_size, num_layers, charset,
@@ -957,7 +1157,8 @@ class EphemeralRNN(torch.nn.Module):
         dfa_fprime=False, slow_update_every=1, fast_backward_per_forward=1,
         readout_nlms=False, slow_nlms=False, readout_slow_lr_scale=1.0, trunk_slow_lr_scale=1.0,
         fast_layers=None, decouple_fast_feedback=None, fast_write_from_readout=None,
-        fast_write_from_readout_scale=1.0, fast_read_norm='off', fast_read_norm_lr=None
+        fast_write_from_readout_scale=1.0, fast_read_norm='off', fast_read_norm_lr=None,
+        fast_structure='exclusive'
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -984,8 +1185,20 @@ class EphemeralRNN(torch.nn.Module):
         last trunk layer's fast writes follow the exact readout gradient (readout_direction_error,
         "aimed write"), scaled by --fast_write_from_readout_scale.
         fast_read_norm / fast_read_norm_lr: --fast_read_norm (see set_fast_read_norm); 'running'
-        and 'absrun' need the learning rate."""
+        and 'absrun' need the learning rate.
+        fast_structure: --fast_structure (parse_fast_structure) for the trunk layers that have fast
+        entries and i2h; i2o is always the slow-only head. The additive structures take the
+        per-step DFA path (unfused or --fused_update, held-out evaluation, the loop tracer); the
+        flags that add other step paths or a second fast-write error are refused (see
+        check_fast_structure)."""
         super(EphemeralRNN, self).__init__()
+        self.fast_structure = parse_fast_structure(fast_structure)
+        check_fast_structure(self.fast_structure, updater=updater, slow_update_every=slow_update_every,
+                             fast_backward_per_forward=fast_backward_per_forward, slow_nlms=slow_nlms,
+                             trunk_slow_lr_scale=trunk_slow_lr_scale,
+                             decouple_fast_feedback=decouple_fast_feedback,
+                             fast_write_from_readout=fast_write_from_readout,
+                             fast_read_norm=fast_read_norm)
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout_rate = dropout_rate
@@ -1044,7 +1257,8 @@ class EphemeralRNN(torch.nn.Module):
                 updater=updater, plasticity=plasticity,
                 batch_size=batch_size, forget_rate=forget_rate,
                 ephemeral_fraction=trunk_fraction(0), slow_weight_decay=slow_weight_decay,
-            fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every
+            fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every,
+            fast_structure=fast_structure
             )
         ])
         for index in range(1, num_layers):
@@ -1054,7 +1268,8 @@ class EphemeralRNN(torch.nn.Module):
                 updater=updater, plasticity=plasticity,
                 batch_size=batch_size, forget_rate=forget_rate,
                 ephemeral_fraction=trunk_fraction(index), slow_weight_decay=slow_weight_decay,
-            fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every
+            fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every,
+            fast_structure=fast_structure
             ))
 
         # Dropout layers
@@ -1069,7 +1284,8 @@ class EphemeralRNN(torch.nn.Module):
             updater=updater, plasticity=plasticity,
             batch_size=batch_size, forget_rate=forget_rate,
             ephemeral_fraction=ephemeral_fraction, slow_weight_decay=slow_weight_decay,
-            fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every
+            fast_weight_clamp=fast_weight_clamp, slow_update_every=slow_update_every,
+            fast_structure=fast_structure
         )
         self.i2o = EphemeralLinear(
             inner_size, output_size, charset,
@@ -1094,6 +1310,7 @@ class EphemeralRNN(torch.nn.Module):
             layer.retain_sequence_bias_grads = retain_sequence_bias_grads
         self.grad_clip_stats = GradNormClipStats()
         self.fused_layer_step = None  # set by enable_fused_update (--fused_update)
+        self.fused_additive_step = None  # likewise, for additive layers (--fast_structure)
         set_dfa_fprime(self, dfa_fprime)
         self.set_fast_read_norm(fast_read_norm, fast_read_norm_lr)
 
@@ -1128,6 +1345,9 @@ class EphemeralRNN(torch.nn.Module):
         if self.updater != 'dfa':
             raise ValueError(f"--fused_update supports only the DFA updater, not {self.updater!r}")
         self.fused_layer_step = torch.compile(dfa_layer_step, dynamic=False) if compile else dfa_layer_step
+        if self.fast_structure != 'exclusive':
+            self.fused_additive_step = (torch.compile(dfa_additive_layer_step, dynamic=False) if compile
+                                        else dfa_additive_layer_step)
 
     @torch.no_grad()
     def fused_dfa_step(self, output_error, learning_rate, update_clamp, grad_norm_clip=0):
@@ -1146,6 +1366,9 @@ class EphemeralRNN(torch.nn.Module):
         fast_errors = self.fast_write_errors(output_error, projected)
         for layer, error, fast_error in zip(layers, projected, fast_errors):
             layer._last_projected_error = error
+            if layer.is_additive:
+                layer.additive_step(error, learning_rate, update_clamp, self.fused_additive_step)
+                continue
             self.fused_layer_step(
                 layer.per_sample_weights.data, None if layer.bias is None else layer.bias.data,
                 error, layer.in_traces.data, layer.fused_plasticity(), layer.ephemeral_mask,
@@ -1243,7 +1466,12 @@ class EphemeralRNN(torch.nn.Module):
 
     def _fast_entry_step(self, layer, error, learning_rate, update_clamp, forget=True):
         """dfa_layer_step with freeze_slow: this step on the ephemeral entries only (bias frozen).
-        forget=False: no forgetting (forget rate 0; decay 0, which only acts on slow entries)."""
+        forget=False: no forgetting (forget rate 0; decay 0, which only acts on slow entries).
+        Additive layers: this step on F only (S and the bias frozen)."""
+        if layer.is_additive:
+            layer.additive_step(error, learning_rate, update_clamp, self.fused_additive_step,
+                                fast_only=True, fast_forget=forget)
+            return
         step = self.fused_layer_step or dfa_layer_step
         step(layer.per_sample_weights.data, None, error, layer.in_traces.data,
              layer.fused_plasticity(), layer.ephemeral_mask, layer.forget_rate if forget else 0.0,

@@ -29,6 +29,19 @@ to test, and 80% to train, so no validation or test core occurs in training. Sma
 (parity_8: 256 bit strings) have few distinct held-out cores, so held-out accuracy there counts
 distinct strings, not 5,000 / 20,000 independent ones; larger names have more.
 
+Wide-key MQAR (mqarw, added 2026-10-22 for the mask load test): mqar's keys are a-j, so at most 10
+pairs. mqarw draws keys from the 52 letters a-z and A-Z (values 0-9 as before), in its own character
+set, WIDE_CHARSET (65 symbols, kv_tasks' plus the 42 extra letters), shared by every mqarw name, so
+models trained on one mqarw name can be evaluated on any other (heldout.py --dataset).
+
+    mqarw_<K>[_q<Q>]          K distinct keys, Q (default K) distinct queries: mqar_<K>_q<Q> with wide keys
+    mqarw_r<A>_<B>[_q<Q>]     K drawn uniformly from A..B per episode, then min(K, Q) queries (Q
+                              default: K, every key queried); the load sweep's training mixture
+
+Layout and scoring are mqar's (2K table characters, then '?' key value per query); K and the number
+of queries of an episode are read from its text, so a mixture needs nothing else. In a batch the
+shorter episodes are padded with zero rows, which write nothing.
+
 Generate: python bench_tasks.py [names ...] [--seed 0] (default: mqar_4, mod3_8, parity_8, selcopy_3_9).
 Each split has its own random stream from (seed, name, split), like kv_tasks.
 """
@@ -36,21 +49,28 @@ import argparse
 import hashlib
 import random
 import re
+import string
 
 import kv_tasks
-from kv_tasks import DISTRACTOR, KEYS, QUERY, SPLIT_SIZES, VALUES
+from kv_tasks import DISTRACTOR, KEYS, PAD, QUERY, SPLIT_SIZES, VALUES
 
 CHARSET = kv_tasks.CHARSET
 DEFAULT_SEED = kv_tasks.DEFAULT_SEED
 BLANK = DISTRACTOR
-FAMILIES = ("mqar", "count", "selcopy")
+WIDE_KEYS = string.ascii_lowercase + string.ascii_uppercase  # 52 keys; a-j are mqar's KEYS
+WIDE_CHARSET = CHARSET + WIDE_KEYS[len(KEYS):]  # kv_tasks' 23 symbols keep their indices
+FAMILIES = ("mqar", "count", "selcopy", "mqarw")
 _NAMES = {
     "mqar": re.compile(r"^mqar_(\d+)(?:_q(\d+))?$"),
     "count": re.compile(r"^(?:parity|mod([3-9]))_(\d+)$"),
     "selcopy": re.compile(r"^selcopy_(\d+)_(\d+)$"),
+    "mqarw": re.compile(r"^mqarw_(?:(\d+)|r(\d+)_(\d+))(?:_q(\d+))?$"),
 }
+# The load sweep (2026-10-22): the training mixture, and fixed loads K with min(K, 8) queries.
+WIDE_LOADS = (1, 2, 4, 8, 12, 16, 24, 32, 40, 48, 52)
 REGISTERED = ("mqar_2", "mqar_4", "mqar_8", "mod3_4", "mod3_8", "mod3_12", "parity_4", "parity_8",
-              "parity_12", "selcopy_3_9", "selcopy_4_12")
+              "parity_12", "selcopy_3_9", "selcopy_4_12", "mqarw_r1_52_q8",
+              *(f"mqarw_{k}_q{min(k, 8)}" for k in WIDE_LOADS))
 
 
 def parse_name(name):
@@ -75,7 +95,27 @@ def parse_name(name):
         if not 1 <= n <= len(VALUES) or t < n or t + n > 50:
             raise ValueError(f"{name}: need 1 <= N <= {len(VALUES)}, N <= T, T + N <= 50")
         return "selcopy", (n, t)
+    match = _NAMES["mqarw"].match(name)
+    if match:
+        if match.group(1) is not None:
+            low = high = int(match.group(1))
+            q = int(match.group(4) or low)
+            if not 1 <= q <= low:
+                raise ValueError(f"{name}: need 1 <= Q <= K")
+        else:
+            low, high = int(match.group(2)), int(match.group(3))
+            q = int(match.group(4)) if match.group(4) else high
+            if q < 1:
+                raise ValueError(f"{name}: need Q >= 1")
+        if not 1 <= low <= high <= len(WIDE_KEYS):
+            raise ValueError(f"{name}: need 1 <= A <= B <= {len(WIDE_KEYS)}")
+        return "mqarw", (low, high, q)
     return None
+
+
+def charset(name):
+    """The character set of a benchmark task: WIDE_CHARSET for mqarw, else kv_tasks' CHARSET."""
+    return WIDE_CHARSET if _NAMES["mqarw"].match(name) else CHARSET
 
 
 def is_bench(name):
@@ -94,6 +134,13 @@ def generate_sample(rng, family, params):
         values = [rng.choice(VALUES) for _ in range(k)]
         table = "".join(key + value for key, value in zip(keys, values))
         return table + "".join(QUERY + keys[i] + values[i] for i in rng.sample(range(k), q))
+    if family == "mqarw":
+        low, high, q_cap = params
+        k = rng.randint(low, high)
+        keys = rng.sample(WIDE_KEYS, k)
+        values = [rng.choice(VALUES) for _ in range(k)]
+        table = "".join(key + value for key, value in zip(keys, values))
+        return table + "".join(QUERY + keys[i] + values[i] for i in rng.sample(range(k), min(k, q_cap)))
     if family == "count":
         modulus, length = params
         bits = "".join(rng.choice("01") for _ in range(length))
@@ -139,6 +186,10 @@ def episode(text, name):
     if family == "mqar":
         k, q = params
         return {"answers": {2 * k + 3 * j + 2: _mqar_source(text, k, j) for j in range(q)}}
+    if family == "mqarw":
+        k = query_at // 2  # an mqarw episode is its table (2K) then 3 characters per query
+        q = (len(text.rstrip(PAD)) - 2 * k) // 3
+        return {"answers": {2 * k + 3 * j + 2: _mqar_source(text, k, j) for j in range(q)}}
     if family == "count":
         return {"answers": {query_at + 1: 0}}
     n, t = params
@@ -182,7 +233,7 @@ def main(argv=None):
     for name in args.names:
         if not is_bench(name):
             parser.error(f"{name} is not a benchmark task name (mqar_<K>[_q<Q>], parity_<L>, mod<m>_<L>, "
-                         "selcopy_<N>_<T>)")
+                         "selcopy_<N>_<T>, mqarw_<K>[_q<Q>], mqarw_r<A>_<B>[_q<Q>])")
         generate_dataset(name, args.seed, out_dir=args.out_dir)
 
 

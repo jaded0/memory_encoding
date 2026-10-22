@@ -47,7 +47,9 @@ dataset_keys.update({name: "text" for name in kv_switch.registered_names()})
 
 def get_charset(dataset_name):
 
-    if kv_tasks.is_kv(dataset_name) or bench_tasks.is_bench(dataset_name) or kv_switch.is_switch(dataset_name):
+    if bench_tasks.is_bench(dataset_name):
+        return bench_tasks.charset(dataset_name)
+    if kv_tasks.is_kv(dataset_name) or kv_switch.is_switch(dataset_name):
         return kv_tasks.CHARSET
     if "small" in dataset_name:
         set = "23. "
@@ -439,6 +441,11 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
             and config['fast_backward_per_forward'] != loaded_config.get('fast_backward_per_forward', 1)):
         mismatches.append(('fast_backward_per_forward', config['fast_backward_per_forward'],
                            loaded_config.get('fast_backward_per_forward', 1)))
+    # --fast_structure changes what the layers are and what they save (fast_state); a checkpoint from
+    # before the flag is exclusive.
+    if config.get('fast_structure', 'exclusive') != loaded_config.get('fast_structure', 'exclusive'):
+        mismatches.append(('fast_structure', config.get('fast_structure', 'exclusive'),
+                           loaded_config.get('fast_structure', 'exclusive')))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")
