@@ -24,4 +24,4 @@ else data=mqar_8; n=200000; arm=par2t16; seed=${seeds[$((t - 100))]}; fi
 echo "task $t -> $data $arm s$seed"; nvidia-smi --query-gpu=name --format=csv,noheader
 cd ~/order2_2026-10-22/code
 mkdir -p $HOME/.cache/inductor_o2; export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d $HOME/.cache/inductor_o2/XXXX)
-bash scratch/order2_2026-10-22/o2_train.sh $data $n $arm $seed $HOME/nobackup/order2_2026-10-22/runs
+bash scratch/order2_2026-10-22/o2_train.sh $data $n $arm $seed $HOME/nobackup/archive/order2_2026-10-22/runs
