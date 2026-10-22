@@ -750,6 +750,11 @@ def build_parser():
     parser.add_argument('--group', type=str, default="nothing_in_particular", help='Description of what sort of experiment is being run, here.')
     parser.add_argument('--tags', nargs='*', default=[], help="List of tags for WandB")
     parser.add_argument('--batch_size', type=int, default=16, help='how much to stuff in at once')
+    parser.add_argument('--max_seq_len', type=int, default=0,
+                        help='Keep only the first N characters of every training sequence (0 = whole '
+                             'sequences, the default). Cropping happens in the collate, after the rows are '
+                             'drawn, so the data order is unchanged. Meant for TinyStories, where a batch is '
+                             'otherwise padded to its longest story.')
     parser.add_argument('--positional_encoding_dim', type=int, default=0,
                         help='Dimension for optional positional encoding (0 means off).')
     parser.add_argument('--input_mode', type=str, default='last_one', choices=['last_one', 'last_two'],
@@ -803,6 +808,8 @@ def check_argument_combinations(args, parser):
                      "or bptt: the ephemeral model and DFA update their weights by hand, per sequence.")
     if args.early_stop_window < 0:
         parser.error("--early_stop_window must not be negative.")
+    if args.max_seq_len < 0 or args.max_seq_len == 1:
+        parser.error("--max_seq_len must be 0 (whole sequences) or at least 2 (one prediction step).")
     try:
         parse_plasticity_schedule(args.plasticity_schedule)
     except ValueError as exc:
@@ -976,9 +983,11 @@ def main():
     config["charset_size"] = n_characters         # ← add this line
     print(f"Character set size: {n_characters}")
 
-    # Use drop_last=True if batch size doesn't divide dataset size evenly
+    # Use drop_last=True if batch size doesn't divide dataset size evenly. --max_seq_len crops
+    # each row in the collate (passed only when set, so the default call is the old one).
+    crop = {"max_seq_len": args.max_seq_len} if args.max_seq_len else {}
     dataloader = load_and_preprocess_data(
-        args.dataset, args.batch_size, drop_last=True, seed=seed
+        args.dataset, args.batch_size, drop_last=True, seed=seed, **crop
     )
 
     config["pe_matrix"] = positional_encoding(args.positional_encoding_dim, device)
@@ -1016,7 +1025,7 @@ def main():
         if args.resume_reseed is not None:
             seed_everything(args.resume_reseed, deterministic=deterministic)
             dataloader = load_and_preprocess_data(
-                args.dataset, args.batch_size, drop_last=True, seed=args.resume_reseed
+                args.dataset, args.batch_size, drop_last=True, seed=args.resume_reseed, **crop
             )
             data_stream = DataStream(dataloader)
             print(f"--resume_reseed {args.resume_reseed}: RNGs reseeded and the data stream restarted (not an exact continuation).")
