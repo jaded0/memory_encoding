@@ -327,11 +327,13 @@ Stability interventions, all ephemeral + DFA only and off by default:
   models (proposals F4 and S1 in the vault's "ephemeral weights experiment proposals"). Until a
   definition is chosen and tested against an explicit masked reference, `train.py` refuses the
   combination.
-- **Fast read normalization** (`--fast_read_norm {off,running,rms}`, DFA, ephemeral model;
-  added 2026-10-16 for the vault's cheap check RN, "ephemeral weights cheap checks 2026-10-16").
+- **Fast read normalization** (`--fast_read_norm {off,running,rms,ln,absrun}`, DFA, ephemeral model;
+  added 2026-10-16 for the vault's cheap check RN, "ephemeral weights cheap checks 2026-10-16";
+  `ln` and `absrun` added 2026-10-22 to test the onramp review's two literal proposals).
   Forward-only: a layer with fast entries computes `S x + scale · F x + b` (`F` = the ephemeral
-  entries, `S` = the slow ones) instead of one `bmm`; the DFA writes, the slow step and every
-  update path are unchanged. `scale` is per batch row and never above 1 (`fast_read_scale`):
+  entries, `S` = the slow ones), or `S x + LN(F x) + b` for `ln`, instead of one `bmm`; the DFA
+  writes, the slow step and every update path are unchanged. For the scale modes `scale` is per
+  batch row and never above 1 (`fast_read_scale`):
   - `running`: `1 / max(1, n)`, `n = lr · α · (fraction of fast entries) · (z · |x|)`, where `z` is
     the decayed running sum of `|x_s|` over the sequence's earlier steps (`z ← (1−f)(z + |x|)`
     after each read, zeroed by the wipe). `n` bounds the total key–query weight the read sums its
@@ -339,8 +341,30 @@ Stability interventions, all ephemeral + DFA only and off by default:
     as in normalized linear attention; below 1 nothing changes. It assumes one fast write per
     forward, so `--fast_backward_per_forward` other than 1 is refused.
   - `rms`: `min(1, rms(S x) / rms(F x))`: the fast part is never louder than the slow part.
+  - `absrun`: `1 / max(1, n)`, `n = lr · α · (fraction of fast entries) · Σ_s (1−f)^(t−s) |x_s · x_t|`,
+    the decayed sum of the absolute key–query scores of the sequence's earlier steps (keys are the
+    layer's inputs; the decay is the fast entries' own forget rate, so step s's key carries the
+    weight its write has left). This is `running` with the exact score magnitude in place of
+    `running`'s element-wise bound `Σ_j |x_s,j||x_t,j| ≥ |x_s · x_t|`: only stored keys that
+    actually match the query count, so it quiets less. It is the plain linear-attention normalizer
+    `Σ_s φ(k_s)·φ(q)` with an absolute value, because the keys here are signed activations and a
+    signed sum can pass through zero. At t = 0 there are no keys, `n = 0` and `scale = 1` (and
+    `F = 0` anyway). The layer keeps the sequence's keys (`[B, t, in]`), cleared by the wipe. Like
+    `running` it counts every earlier step's key, written or not (a padding step, or a `strict`
+    held-out step, adds a key with no write), and it assumes one write per forward:
+    `--fast_backward_per_forward` other than 1 is refused, and so is `--wipe_every` other than 1
+    (the key list would grow across sequences).
+  - `ln`: `LN(F x) = (F x − mean) / sqrt(var + 1e-5)` per batch row over the layer's outputs, with
+    **no gain or bias**, like `--layer_norm`'s `trunk_layer_norm`. A LayerNorm's affine is normally
+    learned by backpropagating through the normalized output; here no gradient flows into the fast
+    path (the fast entries are written with the DFA error, never trained through their read), and
+    a DFA-learned gain would be a new slow parameter on the same feedback channel, free to grow and
+    undo the bound being tested. The layer's bias already supplies the shift. Unlike the scale modes,
+    `ln` sets the fast read's size instead of capping it: an empty store reads exactly 0, but any
+    non-negligible `F x` reads back at rms ≈ 1 per unit, whatever `S x` is, so a faint read is
+    amplified and a loud one quieted.
   - `off` (default) is the original forward, bit for bit (`tests/test_fast_read_norm.py`).
-  The loop tracer's `fast_drive` still reports the raw `|F x|`.
+  The loop tracer's `fast_drive` still reports the raw `|F x|`, before the scale or the LN.
 - `--label_smoothing eps` replaces the one-hot target with
   `target*(1-eps) + eps/V`. Unlike plain cross-entropy on separable targets, this has a finite
   logit optimum. Padding rows remain zero-error rows. Extra fast passes and held-out evaluation
