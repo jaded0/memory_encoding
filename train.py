@@ -635,12 +635,15 @@ def build_parser():
     parser.add_argument('--fast_write_from_readout_scale', type=float, default=1.0,
                         help='Size of the --fast_write_from_readout write relative to the DFA write '
                              '(the 10-13 runs\' SCRATCH_RG_SCALE: 0.1, 0.03).')
-    parser.add_argument('--fast_read_norm', type=str, default='off', choices=['off', 'running', 'rms'],
-                        help='Ephemeral DFA, DIAGNOSTIC (2026-10-16, cheap check RN): rescale only the fast '
-                             'part F x of each layer\'s pre-activation (writes unchanged). running: divide by '
-                             'max(1, lr*alpha*fraction * (decayed running sum of |x_s|) . |x|), a floor-guarded '
-                             'linear-attention normalizer; rms: cap rms(F x) at rms(S x). Off (default) is the '
-                             'one-bmm forward, bit for bit. See README "Fast read normalization".')
+    parser.add_argument('--fast_read_norm', type=str, default='off',
+                        choices=['off', 'running', 'rms', 'ln', 'absrun'],
+                        help='Ephemeral DFA, DIAGNOSTIC (2026-10-16, cheap check RN; ln/absrun 2026-10-22): '
+                             'rescale only the fast part F x of each layer\'s pre-activation (writes unchanged). '
+                             'running: divide by max(1, lr*alpha*fraction * (decayed running sum of |x_s|) . |x|), '
+                             'a floor-guarded linear-attention normalizer; absrun: the same floor with the decayed '
+                             'sum of absolute key-query scores sum_s |x_s . x|; rms: cap rms(F x) at rms(S x); '
+                             'ln: LayerNorm (no gain or bias) of F x alone. Off (default) is the one-bmm forward, '
+                             'bit for bit. See README "Fast read normalization".')
     parser.add_argument('--layer_norm', type=str2bool, nargs='?', const=True, default=False,
                         help='Both models: LayerNorm (no learnable gain or bias) on each trunk layer\'s '
                              'activations, after the GELU, so the next layer (and its DFA input trace) '
@@ -830,9 +833,12 @@ def check_argument_combinations(args, parser):
     if args.fast_read_norm != 'off':
         if args.model_type != 'ephemeral' or args.updater != 'dfa':
             parser.error("--fast_read_norm supports only --model_type ephemeral --updater dfa.")
-        if args.fast_read_norm == 'running' and str(args.fast_backward_per_forward) != '1':
-            parser.error("--fast_read_norm running assumes one fast write per forward; it is not defined "
-                         "with --fast_backward_per_forward other than 1.")
+        if args.fast_read_norm in ('running', 'absrun') and str(args.fast_backward_per_forward) != '1':
+            parser.error(f"--fast_read_norm {args.fast_read_norm} assumes one fast write per forward; it is "
+                         "not defined with --fast_backward_per_forward other than 1.")
+        if args.fast_read_norm == 'absrun' and args.wipe_every != 1:
+            parser.error("--fast_read_norm absrun keeps the sequence's keys until the wipe; it is not "
+                         "defined with --wipe_every other than 1.")
     for name in ('fast_layers', 'decouple_fast_feedback', 'fast_write_from_readout'):
         try:
             parse_layer_list(getattr(args, name))

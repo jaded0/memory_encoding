@@ -83,7 +83,9 @@ def decoupled_fast_feedback(vocab_size, out_features, layer_index):
             * math.sqrt(2.0 / (vocab_size + out_features)))
 
 
-FAST_READ_NORMS = ('off', 'running', 'rms')
+FAST_READ_NORMS = ('off', 'running', 'rms', 'ln', 'absrun')
+# Modes that keep per-sequence state over the sequence's earlier reads (one write per forward).
+FAST_READ_NORMS_WITH_HISTORY = ('running', 'absrun')
 
 
 def fast_read_scale(mode, fast, slow, key_mass=None, input=None, coef=0.0, eps=1e-12):
@@ -96,15 +98,44 @@ def fast_read_scale(mode, fast, slow, key_mass=None, input=None, coef=0.0, eps=1
       bounds (in expectation over the mask) the total key-query weight the read sums its stored
       values with, so above 1 the read becomes a weighted average of the stored values, as in
       normalized linear attention; below 1 it is left alone.
-    rms: min(1, rms(S x) / rms(F x)): the fast part is never louder than the slow part."""
+    absrun: 1 / max(1, n), n = coef * key_mass, where key_mass [B, 1] is already the decayed sum
+      of the absolute key-query scores sum_s w_s |x_s . x| (fast_abs_score_mass). The same floor
+      as running, with the exact score magnitude in place of running's element-wise bound
+      sum_j |x_s,j| |x_j| >= |x_s . x|, so only stored keys that actually match the query count.
+    rms: min(1, rms(S x) / rms(F x)): the fast part is never louder than the slow part.
+    ('ln' is not a scale; see fast_read_layer_norm.)"""
     if mode == 'running':
         n = coef * (key_mass * input.abs()).sum(dim=1, keepdim=True)
         return 1.0 / n.clamp_min(1.0)
+    if mode == 'absrun':
+        return 1.0 / (coef * key_mass).clamp_min(1.0)
     if mode == 'rms':
         fast_rms = fast.pow(2).mean(dim=1, keepdim=True).sqrt()
         slow_rms = slow.pow(2).mean(dim=1, keepdim=True).sqrt()
         return (slow_rms / fast_rms.clamp_min(eps)).clamp(max=1.0)
     raise ValueError(f"--fast_read_norm {mode!r}: expected one of {FAST_READ_NORMS}")
+
+
+FAST_READ_LN_EPS = 1e-5
+
+
+def fast_read_layer_norm(fast):
+    """--fast_read_norm ln: LayerNorm of the fast read alone, per batch row over the layer's
+    outputs, (F x - mean) / sqrt(var + 1e-5), with no gain or bias (as --layer_norm's
+    trunk_layer_norm). F x = 0 (an empty fast store, e.g. the first step of a sequence) reads 0.
+    Unlike the scale modes it sets the fast read's size instead of capping it: any non-negligible
+    F x reads back with rms ~1 per unit, so a faint read is amplified and a loud one quieted."""
+    return F.layer_norm(fast, fast.shape[-1:], eps=FAST_READ_LN_EPS)
+
+
+def fast_abs_score_mass(keys, key_weights, input):
+    """--fast_read_norm absrun's normalizer before its coefficient, [B, 1]: sum_s w_s |x_s . x| over
+    the keys stored this sequence (keys [B, S, in], or None for none yet, then 0), with w_s
+    (key_weights [S]) the decay the fast entries have applied to step s's write by now."""
+    if keys is None:
+        return input.new_zeros(input.shape[0], 1)
+    scores = torch.bmm(keys, input.unsqueeze(2)).squeeze(2)  # [B, S]
+    return (scores.abs() * key_weights).sum(dim=1, keepdim=True)
 
 
 def dfa_per_sample_gradient(projected_error, input):
@@ -440,10 +471,14 @@ class EphemeralLinear(nn.Linear):
         self.fast_write_from_readout = False
         # --fast_read_norm (set by EphemeralRNN.set_fast_read_norm on layers with fast entries):
         # 'off' keeps the one-bmm forward exactly; otherwise forward splits the read into S x + F x
-        # and rescales F x by fast_read_scale. fast_key_mass is 'running''s decayed sum of |x|.
+        # and rescales F x by fast_read_scale (or, for 'ln', normalizes it). fast_key_mass is
+        # 'running''s decayed sum of |x|; fast_keys [B, S, in] and fast_key_weights [S] are
+        # 'absrun''s stored keys of the sequence's earlier steps and their decay weights.
         self.fast_read_norm = 'off'
         self.fast_read_coef = 0.0
         self.register_buffer('fast_key_mass', None, persistent=False)
+        self.register_buffer('fast_keys', None, persistent=False)
+        self.register_buffer('fast_key_weights', None, persistent=False)
         self.in_traces = nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
         self.out_traces = nn.Parameter(torch.zeros(batch_size, out_features), requires_grad=requires_grad)
 
@@ -568,6 +603,7 @@ class EphemeralLinear(nn.Linear):
             self.per_sample_weights.data.masked_fill_(self.ephemeral_mask.unsqueeze(0), 0)
             if self.fast_key_mass is not None:
                 self.fast_key_mass.zero_()
+            self.fast_keys = self.fast_key_weights = None
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
         self._retained_outputs = []
@@ -639,21 +675,38 @@ class EphemeralLinear(nn.Linear):
         return output
 
     def _normalized_read(self, input, input_unsq):
-        """--fast_read_norm: S x + scale * F x, [B, out] (bias added by forward). The writes are
-        unchanged. 'running' then folds this step's |x| into the key mass the way the fast entries
-        take this step's write: add, then forget, so the next read's normalizer covers exactly the
-        writes its F holds (one write per forward; EphemeralRNN refuses the other step paths)."""
+        """--fast_read_norm: S x + scale * F x, or S x + LN(F x) for 'ln', [B, out] (bias added by
+        forward). The writes are unchanged. 'running' and 'absrun' then fold this step's key into
+        their normalizer the way the fast entries take this step's write: add, then forget, so the
+        next read's normalizer covers exactly the writes its F holds (one write per forward;
+        EphemeralRNN refuses the other step paths)."""
         weights, mask = self.per_sample_weights, self.ephemeral_mask.unsqueeze(0)
         fast = torch.bmm(weights.masked_fill(~mask, 0), input_unsq).squeeze(2)
         slow = torch.bmm(weights.masked_fill(mask, 0), input_unsq).squeeze(2)
+        if self.fast_read_norm == 'ln':
+            return slow + fast_read_layer_norm(fast)
+        if self.fast_read_norm in FAST_READ_NORMS_WITH_HISTORY:
+            alpha = self.fused_plasticity()
+            alpha = alpha if isinstance(alpha, float) else float(alpha[self.ephemeral_mask].mean())
+            coef = self.fast_read_coef * alpha
+            key = input.detach()
         if self.fast_read_norm == 'running':
             if self.fast_key_mass is None or self.fast_key_mass.shape != input.shape:
                 self.fast_key_mass = torch.zeros_like(input)
-            alpha = self.fused_plasticity()
-            alpha = alpha if isinstance(alpha, float) else float(alpha[self.ephemeral_mask].mean())
-            scale = fast_read_scale('running', fast, slow, self.fast_key_mass, input,
-                                    self.fast_read_coef * alpha)
-            self.fast_key_mass = (1 - self.forget_rate) * (self.fast_key_mass + input.detach().abs())
+            scale = fast_read_scale('running', fast, slow, self.fast_key_mass, input, coef)
+            self.fast_key_mass = (1 - self.forget_rate) * (self.fast_key_mass + key.abs())
+        elif self.fast_read_norm == 'absrun':
+            if self.fast_keys is not None and self.fast_keys.shape[0] != input.shape[0]:
+                self.fast_keys = self.fast_key_weights = None
+            mass = fast_abs_score_mass(self.fast_keys, self.fast_key_weights, input)
+            scale = fast_read_scale('absrun', fast, slow, mass, input, coef)
+            new_weight = key.new_ones(1)
+            if self.fast_keys is None:
+                self.fast_keys, self.fast_key_weights = key.unsqueeze(1), new_weight
+            else:
+                self.fast_keys = torch.cat([self.fast_keys, key.unsqueeze(1)], dim=1)
+                self.fast_key_weights = torch.cat([self.fast_key_weights, new_weight])
+            self.fast_key_weights = (1 - self.forget_rate) * self.fast_key_weights
         else:
             scale = fast_read_scale(self.fast_read_norm, fast, slow)
         return slow + scale * fast
@@ -931,7 +984,7 @@ class EphemeralRNN(torch.nn.Module):
         last trunk layer's fast writes follow the exact readout gradient (readout_direction_error,
         "aimed write"), scaled by --fast_write_from_readout_scale.
         fast_read_norm / fast_read_norm_lr: --fast_read_norm (see set_fast_read_norm); 'running'
-        needs the learning rate."""
+        and 'absrun' need the learning rate."""
         super(EphemeralRNN, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -1046,26 +1099,27 @@ class EphemeralRNN(torch.nn.Module):
 
     def set_fast_read_norm(self, mode, learning_rate=None):
         """--fast_read_norm on every layer with ephemeral entries (the trunk layers --fast_layers
-        keeps, and i2h): 'off' (default, the one-bmm forward), 'running' or 'rms' (fast_read_scale).
-        Forward-only: the DFA writes, the slow step and every update path are unchanged. 'running'
-        tracks one write per forward, so it needs the DFA updater with one fast step per character."""
+        keeps, and i2h): 'off' (default, the one-bmm forward), 'running', 'absrun' or 'rms'
+        (fast_read_scale), or 'ln' (fast_read_layer_norm). Forward-only: the DFA writes, the slow
+        step and every update path are unchanged. 'running' and 'absrun' track one write per
+        forward, so they need the DFA updater with one fast step per character."""
         if mode not in FAST_READ_NORMS:
             raise ValueError(f"--fast_read_norm {mode!r}: expected one of {FAST_READ_NORMS}")
         if mode != 'off' and self.updater != 'dfa':
             raise ValueError("--fast_read_norm supports only the DFA updater")
-        if mode == 'running':
+        if mode in FAST_READ_NORMS_WITH_HISTORY:
             if self.fast_iterations != 1 or self.fast_subsample != 1:
-                raise ValueError("--fast_read_norm running assumes one fast write per forward; it is not "
+                raise ValueError(f"--fast_read_norm {mode} assumes one fast write per forward; it is not "
                                  "defined with --fast_backward_per_forward other than 1")
             if learning_rate is None:
-                raise ValueError("--fast_read_norm running needs the learning rate")
+                raise ValueError(f"--fast_read_norm {mode} needs the learning rate")
         self.fast_read_norm = mode
         for layer in [*self.linear_layers, self.i2h]:
             fast = bool(layer.ephemeral_mask.any())
             layer.fast_read_norm = mode if fast else 'off'
             layer.fast_read_coef = (float(learning_rate) * float(layer.ephemeral_mask.float().mean())
-                                    if fast and mode == 'running' else 0.0)
-            layer.fast_key_mass = None
+                                    if fast and mode in FAST_READ_NORMS_WITH_HISTORY else 0.0)
+            layer.fast_key_mass = layer.fast_keys = layer.fast_key_weights = None
 
     def enable_fused_update(self, compile=True):
         """--fused_update: train.py's DFA step goes through fused_dfa_step. compile=False runs the
