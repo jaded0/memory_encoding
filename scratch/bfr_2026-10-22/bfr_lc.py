@@ -1,5 +1,7 @@
 """Batch BFR LC/SIX scoring on ORC (agent A, 2026-10-22), adapted from f8ln_2026-10-19/qsum.py (Batch Q).
-Usage (on ORC): python bfr_lc.py JOBID > bfr_lc.jsonl
+Usage (on ORC): python bfr_lc.py JOBID [TASK=RESUMEJOB[,RESUMEJOB2...] ...] > bfr_lc.jsonl
+  e.g. python bfr_lc.py 14613310 1=14648594 4=14654958   (resume logs of timed-out tasks; later jobs override earlier
+  ones from their first printed iteration on, since a resume restarts from the last 25k checkpoint and re-prints that stretch)
 Per run: 500-it train loss trajectory from the slurm log, onset = first of five adjacent 500-it windows > 5 (any time; early if <= 30k),
 first window > 1e3; final_eval.json (heldout.py, 128 batches) observed/strict/no_fast; for 3-layer runs, from checkpoint_00150000 and
 _00600000: the readout's squared-norm share in range(B_2) (B_2 = linear_layers.2.feedback_weights) and trunk-2 slow top SV."""
@@ -8,6 +10,7 @@ import torch
 torch.set_num_threads(4)
 base = os.path.expanduser('~/bfr_2026-10-22')
 job = sys.argv[1]
+resumes = {int(a.split('=')[0]): a.split('=')[1].split(',') for a in sys.argv[2:]}
 seeds5 = (620101, 620203, 620307, 620411, 620509)
 tasks = [(t, f'BFR-LC-{m}-s{s}', 3) for t, (m, s) in enumerate([(m, s) for m in ('ln', 'absrun') for s in seeds5])]
 tasks += [(10 + i, f'BFR-SIX-{m}-s{s}', 6) for i, (m, s) in enumerate([(m, s) for m in ('ln', 'absrun') for s in seeds5[:3]])]
@@ -43,13 +46,21 @@ def al(path):
 for t, n, layers in tasks:
     log = f'{base}/logs/bfr_{job}_{t}.out'
     if not os.path.exists(log): continue
-    L = losses(log); d = dict(L)
+    L = losses(log); logs = [log]; resumed_from = []
+    for rj in resumes.get(t, []):
+        rlog = f'{base}/logs/bfr_{rj}_{t}.out'
+        if not os.path.exists(rlog): continue
+        R = losses(rlog)
+        if R: L = [x for x in L if x[0] < R[0][0]] + R; resumed_from.append(R[0][0])
+        logs.append(rlog)
+    d = dict(L)
     row = dict(run=n, task=t, prints=len(L), last_iter=L[-1][0] if L else None, onset=onset(L), late_onset=onset(L, 30001),
                first_gt1e3=next((i for i, v in L if not math.isfinite(v) or v > 1e3), None),
                early_windows_gt5=sum(1 for i, v in L if i <= 30000 and (not math.isfinite(v) or v > 5)),
                maxloss=max((v for _, v in L if math.isfinite(v)), default=None),
                loss_at={k: d.get(k) for k in (5000, 30000, 100000, 150000, 200000, 300000, 400000, 500000, 600000) if k in d},
-               train_exit=re.findall(r'TRAIN EXIT (\d+)', open(log, errors='replace').read()))
+               train_exit=[e for lg in logs for e in re.findall(r'TRAIN EXIT (\d+)', open(lg, errors='replace').read())],
+               logs=[os.path.basename(lg) for lg in logs], resumed_from=resumed_from)
     fe = f'{base}/runs/{n}/final_eval.json'
     if os.path.exists(fe):
         h = json.load(open(fe)); row['eval_iter'] = h['iteration']
