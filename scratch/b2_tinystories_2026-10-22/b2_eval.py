@@ -407,9 +407,10 @@ def horizon(args):
            "arm_config": {k: config.get(k) for k in ("plasticity", "fast_layers", "layer_norm", "seed")}}
     gain = ce["off"]["all"] - ce["on"]["all"]
     res["H"] = {str(r): (ce["off"]["all"] - ce[f"wipe{r}"]["all"]) / gain if gain else float("nan") for r in periods}
+    res["seconds"] = time.time() - t0
     with open(args.out + ".json", "w") as handle:
         json.dump(res, handle, indent=1)
-    print(json.dumps(res["ce"]["all"]), json.dumps(res["H"]), f"{time.time() - t0:.0f}s")
+    print(json.dumps({p: round(ce[p]["all"], 4) for p in protocols}), json.dumps(res["H"]), f"{res['seconds']:.0f}s")
 
 
 def synth(args):
