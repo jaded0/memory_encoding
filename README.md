@@ -677,6 +677,11 @@ python train.py --updater bptt --model_type ephemeral
 - `--layer_norm`: affine-free LayerNorm on each trunk layer's post-GELU activations (both models)
 - `--resume` / `--resume_checkpoint PATH`: Resume from `latest_checkpoint.pth`, or from an explicit checkpoint
 - `--batch_size`: Number of sequences processed together
+- `--max_seq_len N`: keep only the first N characters of every training sequence (0, the default, keeps
+  whole sequences). The crop happens in the collate, after the rows are drawn, so the data order and
+  every random number are unchanged. It is for TinyStories, where a batch of 16 is otherwise padded to its
+  longest story (median story 787 characters, mean batch maximum about 1,900, so about half of each
+  batch is padding). A resume refuses a changed value.
 - `--seed`: Seed Python, NumPy, Torch, dataset shuffling, and DataLoader sampling (unset = drawn from the OS; see below)
 - `--deterministic`: Require deterministic Torch operations
 - `--heldout_eval_every N`, `--heldout_batches K`: held-out, frozen-slow-weight recall every N iterations (0 = off; see "Held-out evaluation")
@@ -1007,7 +1012,10 @@ Run the network-free assertion suite from the repository root:
 CUDA_VISIBLE_DEVICES="" python -m pytest tests/ -q
 ```
 
-`pytest` is not in `environment.yml`; install it with `pip install pytest`.
+`environment.yml` pins every package to the versions of the `hebby` env on ORC (2026-10-22), pytest
+included. The golden traces check the Torch version string, so run the suite in that env: a pip wheel
+of the same Torch (`2.5.1+cu121`, as on omen and deckard) fails `tests/test_characterization.py` on
+the version alone.
 
 The suite includes fixed-input golden traces through the real `train.train()`
 path for DFA, backprop, and BPTT (and for the SimpleRNN baseline under DFA), a finite-update smoke test for all three

@@ -273,14 +273,24 @@ class OneHotCollate:
 
     Produces exactly what utils.collate_fn produced from stored one-hot rows: int64 indices
     padded with 0 and float32 one-hot padded with all-zero rows.
+
+    max_len > 0 (train.py --max_seq_len) keeps only each row's first max_len characters, text
+    and tensor alike, before padding. It acts after the sampler has drawn the rows, so the data
+    order and every random number are unchanged; 0 (the default) keeps whole rows.
     """
 
-    def __init__(self, n_characters):
+    def __init__(self, n_characters, max_len=0):
+        if max_len < 0:
+            raise ValueError(f"max_len must be >= 0 (0 = whole rows), got {max_len}")
         self.n_characters = n_characters
+        self.max_len = max_len
 
     def __call__(self, batch):
         texts = [item['text'] for item in batch]
         indices = [torch.tensor(item['tensor'], dtype=torch.long) for item in batch]
+        if self.max_len:
+            texts = [text[:self.max_len] for text in texts]
+            indices = [line[:self.max_len] for line in indices]
         tensors = pad_sequence(indices, batch_first=True)
         onehot_tensors = pad_sequence(
             [one_hot(line, num_classes=self.n_characters).float() for line in indices], batch_first=True
@@ -289,7 +299,7 @@ class OneHotCollate:
 
 
 # Load dataset
-def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True, seed=None):
+def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True, seed=None, max_seq_len=0):
     if is_synthetic(dataset_name):
         dataset = load_from_disk(f"synth_datasets/{dataset_name}")[dataset_keys[dataset_name]]
         print(f"loaded dataset {dataset_name}")
@@ -302,7 +312,7 @@ def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True, seed=No
     if kv_switch.is_switch(dataset_name):
         # Streams: rows stay in stored (stream-major) order; StreamSampler shuffles streams, and
         # each batch row follows one stream sequence by sequence.
-        collate = OneHotCollate(initialize_charset(dataset_name)[3])
+        collate = OneHotCollate(initialize_charset(dataset_name)[3], max_seq_len)
         return make_stream_dataloader(list(dataset), kv_switch.stream_length(dataset_name), batch_size,
                                       seed=seed, collate_fn=collate)
 
@@ -315,7 +325,7 @@ def load_and_preprocess_data(dataset_name, batch_size=4, drop_last=True, seed=No
     # Create a DataLoader
     if is_synthetic(dataset_name):
         dataset = list(dataset)
-    collate = OneHotCollate(initialize_charset(dataset_name)[3])
+    collate = OneHotCollate(initialize_charset(dataset_name)[3], max_seq_len)
     return make_dataloader(dataset, batch_size, drop_last=drop_last, seed=seed, collate_fn=collate)
 
 
