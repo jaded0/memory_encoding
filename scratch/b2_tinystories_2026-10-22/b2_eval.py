@@ -5,6 +5,7 @@ Pre-registered in PREREG_fastlayers.md, "Batch B2". Run from a memory_encoding c
     python b2_eval.py tiny  --checkpoint C --names names.json --stories 4096 --out OUT   (measures a-d)
     python b2_eval.py curve --checkpoint C --stories 256 --out OUT                        (held-out CE only)
     python b2_eval.py synth --checkpoint C --batches 64 --out OUT                         (key PR on its own task)
+    python b2_eval.py horizon --checkpoint C --stories 1024 --wipe_every 4,8,16,32,64,128 --out OUT   (round 2)
 
 Every protocol freezes the slow weights and starts each sequence from wiped fast entries (heldout.py):
   ON     every step writes the fast entries with the true next character (heldout.py "observed").
@@ -12,6 +13,10 @@ Every protocol freezes the slow weights and starts each sequence from wiped fast
   RESET  for a mention starting at s: the fast entries are zeroed at s - 32 (R), then written as in ON. With
          recurrence off and frozen slow weights nothing else carries over, so this equals running the snippet
          text[s-32 : end of mention] from a fresh wipe, which is how it is computed.
+  WIPE R (round 2, horizon mode) ON, but the fast entries are zeroed before every step i > 0 with i % R == 0, so a
+         prediction sees at most R characters of fast-written context (R - 1 - (i % R) fewer on average). Only the
+         fast entries are zeroed; slow entries stay as they are. R = 1 equals OFF and R >= the length equals ON,
+         bit for bit (tests/test_b2_horizon.py).
 
 Keys: the input x_t of each trunk layer (layer.in_traces after the forward), what its fast entries are written
 with and read by. PR = (sum l)^2 / sum l^2 of the second moment of unit-norm keys (uncentered: the 09-30
@@ -49,10 +54,27 @@ def load_model(path, device):
     return model, config, charset, next_iter - 1
 
 
+def wipe_fast(model):
+    """Zero every fast entry (trunk, i2h, i2o) and leave the slow entries alone: the wipe_fast part of
+    EphemeralLinear.start_sequence_wipe without its batch mean of the slow entries."""
+    for layer in (*model.linear_layers, model.i2h, model.i2o):
+        if layer.is_additive:
+            layer.fast_state.data.zero_()
+            continue
+        layer.weight.data.masked_fill_(layer.ephemeral_mask, 0)
+        layer.per_sample_weights.data.masked_fill_(layer.ephemeral_mask.unsqueeze(0), 0)
+        if layer.fast_key_mass is not None:
+            layer.fast_key_mass.zero_()
+        layer.fast_keys = layer.fast_key_weights = None
+        if layer.order2_fast is not None:
+            layer.order2_fast.zero_()
+
+
 @torch.no_grad()
-def run_pass(model, onehot, config, write, keys=False):
+def run_pass(model, onehot, config, write, keys=False, wipe_every=0):
     """One batch [B, T, V] from a fresh wipe. Returns per-step losses [B, T-1] (target t+1 predicted at step t)
-    and, if keys, a list per trunk layer of [T-1, B, D] inputs."""
+    and, if keys, a list per trunk layer of [T-1, B, D] inputs. wipe_every R > 0 zeroes the fast entries before
+    every step i > 0 with i % R == 0 (the WIPE R protocol)."""
     from ephemeral_model import dfa_output_error
     from utils import model_input
     criterion = torch.nn.CrossEntropyLoss(reduction="none")
@@ -62,6 +84,8 @@ def run_pass(model, onehot, config, write, keys=False):
     losses = []
     collected = [[] for _ in model.linear_layers] if keys else None
     for i in range(steps):
+        if wipe_every and i and i % wipe_every == 0:
+            wipe_fast(model)
         output, hidden = model(model_input(onehot, i, config["input_mode"], config["pe_matrix"]), hidden)
         if keys:
             for store, layer in zip(collected, model.linear_layers):
@@ -338,6 +362,54 @@ def summarize_pairs(pairs):
     return out
 
 
+CLASSES = (("all", lambda c: c >= 0), ("nonletter", lambda c: c == 0), ("novel_word_letter", lambda c: c == 1),
+           ("repeat_word_letter", lambda c: c == 2))
+
+
+def horizon(args):
+    """Round 2 (PREREG_fastlayers.md, "Batch B2 round 2"): held-out CE under ON, OFF and WIPE R for each R, by
+    position class. On the first batch it also checks WIPE 1 == OFF bit for bit."""
+    device = args.device
+    model, config, charset, iteration = load_model(args.checkpoint, device)
+    c2i = {c: i for i, c in enumerate(charset)}
+    batch = config["batch_size"]
+    texts = load_validation(args.stories, args.length, args.val_file)
+    periods = [int(x) for x in args.wipe_every.split(",")]
+    protocols = ["on", "off"] + [f"wipe{r}" for r in periods]
+    sums = {p: {name: 0.0 for name, _ in CLASSES} for p in protocols}
+    counts = {name: 0 for name, _ in CLASSES}
+    t0 = time.time()
+    for start in range(0, len(texts), batch):
+        chunk = texts[start:start + batch]
+        hot, valid = onehot_batch(chunk, c2i, len(charset), args.length, batch, device)
+        cls = np.full((batch, args.length - 1), -1, dtype=np.int8)
+        for row, text in enumerate(chunk):
+            c = position_classes(text)
+            cls[row, :len(c) - 1] = c[1:]  # class of the predicted character
+        masks = {name: sel(cls) for name, sel in CLASSES}
+        for name, m in masks.items():
+            counts[name] += int(m.sum())
+        for p in protocols:
+            r = int(p[4:]) if p.startswith("wipe") else 0
+            losses = (run_pass(model, hot, config, write=(p != "off"), wipe_every=r) * valid[:, 1:]).cpu().numpy()
+            if p == "off" and start == 0:
+                check = (run_pass(model, hot, config, write=True, wipe_every=1) * valid[:, 1:]).cpu().numpy()
+                assert np.array_equal(check, losses), "WIPE 1 differs from OFF"
+            for name, m in masks.items():
+                sums[p][name] += float(losses[m].sum())
+        if start // batch % 8 == 0:
+            print(f"stories {start + len(chunk)}/{len(texts)} {time.time() - t0:.0f}s", flush=True)
+    ce = {p: {name: sums[p][name] / counts[name] for name, _ in CLASSES} for p in protocols}
+    res = {"checkpoint": args.checkpoint, "iteration": iteration, "stories": len(texts), "length": args.length,
+           "wipe_every": periods, "n": counts, "ce": ce,
+           "arm_config": {k: config.get(k) for k in ("plasticity", "fast_layers", "layer_norm", "seed")}}
+    gain = ce["off"]["all"] - ce["on"]["all"]
+    res["H"] = {str(r): (ce["off"]["all"] - ce[f"wipe{r}"]["all"]) / gain if gain else float("nan") for r in periods}
+    with open(args.out + ".json", "w") as handle:
+        json.dump(res, handle, indent=1)
+    print(json.dumps(res["ce"]["all"]), json.dumps(res["H"]), f"{time.time() - t0:.0f}s")
+
+
 def synth(args):
     from heldout import load_heldout_batches
     device = args.device
@@ -372,7 +444,7 @@ def synth(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["tiny", "curve", "synth", "dumpval"])
+    parser.add_argument("mode", choices=["tiny", "curve", "synth", "dumpval", "horizon"])
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--out", required=True, help="output prefix")
     parser.add_argument("--names", default=None)
@@ -380,6 +452,7 @@ def main():
     parser.add_argument("--length", type=int, default=512)
     parser.add_argument("--batches", type=int, default=64)
     parser.add_argument("--val_file", default=None, help="JSON list of filtered validation stories (dumpval)")
+    parser.add_argument("--wipe_every", default="4,8,16,32,64,128", help="horizon: comma-separated wipe periods R")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
     if args.mode == "dumpval":
@@ -387,6 +460,8 @@ def main():
             json.dump(load_validation(args.stories, 10**9), handle)
     elif args.mode == "synth":
         synth(args)
+    elif args.mode == "horizon":
+        horizon(args)
     else:
         if args.mode == "curve":
             args.names = None
