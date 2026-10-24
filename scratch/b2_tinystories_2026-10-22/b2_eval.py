@@ -56,17 +56,19 @@ def load_model(path, device):
 
 def wipe_fast(model):
     """Zero every fast entry (trunk, i2h, i2o) and leave the slow entries alone: the wipe_fast part of
-    EphemeralLinear.start_sequence_wipe without its batch mean of the slow entries."""
+    EphemeralLinear.start_sequence_wipe without its batch mean of the slow entries. getattr because the B2 runtime
+    copies (2bc949a) predate --fast_structure, the read-norm key mass and --order2_layers."""
     for layer in (*model.linear_layers, model.i2h, model.i2o):
-        if layer.is_additive:
+        if getattr(layer, "is_additive", False):
             layer.fast_state.data.zero_()
             continue
         layer.weight.data.masked_fill_(layer.ephemeral_mask, 0)
         layer.per_sample_weights.data.masked_fill_(layer.ephemeral_mask.unsqueeze(0), 0)
-        if layer.fast_key_mass is not None:
+        if getattr(layer, "fast_key_mass", None) is not None:
             layer.fast_key_mass.zero_()
-        layer.fast_keys = layer.fast_key_weights = None
-        if layer.order2_fast is not None:
+        if hasattr(layer, "fast_keys"):
+            layer.fast_keys = layer.fast_key_weights = None
+        if getattr(layer, "order2_fast", None) is not None:
             layer.order2_fast.zero_()
 
 
