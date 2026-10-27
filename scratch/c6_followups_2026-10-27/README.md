@@ -4,7 +4,7 @@ Prepared 2026-10-26/27 night by the C6 prep agent on omen. Approved by Jaden 202
 
 ## What's ready
 
-Branch `c6-followups` (base origin/main 364a07f). Commit: see "Branch and commit" at the end.
+Branch `c6-followups` (base origin/main 364a07f). Commit 71347cc (see the end).
 
 - **No model code change was needed.** `--fast_layers 0` already composes with every `--fast_structure`. A trunk layer outside `--fast_layers` gets ephemeral_fraction 0, and any layer with fraction 0 is "exclusive" (all-slow), whatever the structure. `tests/test_fast_layers_structure.py` (new, 7 tests, 20 subtests) pins this for exclusive, additive_masked and additive_dense on a 3-layer trunk. It covers layer typing, where the writes land, the fused (eager) step against the unfused one, the CLI with checkpoint and resume, the loop tracer, and `load_eval.zero_fast` on the slow layers. The default path is untouched (no file outside `tests/`, `scratch/` and one README line changed).
 - **Note on "layer 0 only":** `--fast_layers 0` keeps `i2h`'s fast weights, because i2h is not a trunk layer. That makes it the training-time twin of load_eval's read-time `only0`, which also keeps i2h. Making i2h slow too would need a new flag (open question 1).
@@ -70,4 +70,4 @@ If fairshare is tight, submit follow-up 6 first. Its extensions answer the 5-see
 
 ## Branch and commit
 
-BRANCH_COMMIT
+`c6-followups` at **71347cc** (code, tests, launchers, scorer; the following commit only writes this hash). Pushed to origin, not merged. ORC `~/c6fu_2026-10-27/code` holds a staging copy of 9b1fd1f (identical launch path); `setup_orc.sh` replaces it at launch.
