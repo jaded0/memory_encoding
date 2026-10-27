@@ -279,17 +279,34 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
                 
                 # Zero gradients before backward pass
                 rnn.zero_grad()
-                
+
+                # --backprop_step_parity: each sequence's copy takes its own loss's gradient (the
+                # batch sum, not the mean), and alpha is applied once, in apply_update, as under
+                # DFA. Off: the mean (1/B) and scale_ephemeral_grads below (alpha twice).
+                parity = config.get('backprop_step_parity', False)
+                if parity:
+                    output.retain_grad()
                 # Compute gradients through the entire network (true backprop)
-                total_loss = step_loss.mean() if step_loss.dim() > 0 else step_loss
+                if step_loss.dim() == 0:
+                    total_loss = step_loss
+                else:
+                    total_loss = step_loss.sum() if parity else step_loss.mean()
                 total_loss.backward(retain_graph=False)
 
                 # --grad_norm_clip: each sequence's raw gradient, before alpha and the clamps.
                 if config.get('grad_norm_clip', 0) > 0:
                     rnn.clip_grad_norm_per_sequence(config['grad_norm_clip'])
 
-                # Scale the ephemeral weights' gradients
-                rnn.scale_ephemeral_grads(config["plasticity"])
+                if parity:
+                    # The biases are shared, so their step stays the batch mean, as DFA's.
+                    rnn.average_bias_grads(batch_size)
+                    # --decouple_fast_feedback: the listed layers' fast entries take the DFA
+                    # write through B_fast from the output error dL_b/d(output) (output.grad
+                    # under the summed loss) instead of their backprop gradient. A no-op when off.
+                    rnn.override_fast_gradients(output.grad)
+                else:
+                    # Scale the ephemeral weights' gradients
+                    rnn.scale_ephemeral_grads(config["plasticity"])
                 
                 # Store gradient norms for logging
                 if state.get('log_norms_now', False):
@@ -638,7 +655,16 @@ def build_parser():
     parser.add_argument('--decouple_fast_feedback', type=str, default='',
                         help='Ephemeral DFA: comma list of trunk layers whose fast writes project the '
                              'output error through their own fixed random feedback matrix B_fast; their '
-                             'slow learning keeps the usual one. "2" with --n_layers 3 is the "DC2" arm.')
+                             'slow learning keeps the usual one. "2" with --n_layers 3 is the "DC2" arm. '
+                             'Under --updater backprop (needs --backprop_step_parity) the slow entries '
+                             'train by backprop and the listed layers\' fast entries take the same B_fast '
+                             'DFA write ("0,1,2" is the host-agnostic C2 arm).')
+    parser.add_argument('--backprop_step_parity', type=str2bool, nargs='?', const=True, default=False,
+                        help='Ephemeral + per-step backprop: give each sequence\'s weight copy its own '
+                             'loss\'s gradient (backward on the batch sum, not the mean; biases keep the '
+                             'batch mean) and apply alpha once, so the step is lr*alpha*g on the fast '
+                             'entries and lr*g on the slow ones, the same form as DFA\'s. Off (default): '
+                             'lr*alpha^2/B and lr/B. See README "Backprop step parity".')
     parser.add_argument('--fast_write_from_readout', type=str, default='',
                         help='Ephemeral DFA: the last trunk layer (give its index) writes its fast entries '
                              'along the exact readout gradient instead of its DFA error, rescaled to '
@@ -868,10 +894,19 @@ def check_argument_combinations(args, parser):
                          "with the interval metrics).")
     if args.fast_layers and args.model_type != 'ephemeral':
         parser.error("--fast_layers needs --model_type ephemeral.")
+    if args.backprop_step_parity and (args.model_type != 'ephemeral' or args.updater != 'backprop'):
+        parser.error("--backprop_step_parity supports only --model_type ephemeral --updater backprop "
+                     "(BPTT's fast writes never reach a forward pass; the rnn baseline has one shared "
+                     "weight, whose batch-mean step already matches its DFA step).")
+    if args.decouple_fast_feedback and args.updater == 'backprop' and not args.backprop_step_parity:
+        parser.error("--decouple_fast_feedback under --updater backprop needs --backprop_step_parity "
+                     "(without it every fast step carries alpha^2/B).")
+    if args.fast_write_from_readout and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
+        parser.error("--fast_write_from_readout supports only --model_type ephemeral --updater dfa.")
     if args.decouple_fast_feedback or args.fast_write_from_readout:
-        if args.model_type != 'ephemeral' or args.updater != 'dfa':
-            parser.error("--decouple_fast_feedback and --fast_write_from_readout support only "
-                         "--model_type ephemeral --updater dfa.")
+        if args.model_type != 'ephemeral' or args.updater not in ('dfa', 'backprop'):
+            parser.error("--decouple_fast_feedback supports only --model_type ephemeral with --updater "
+                         "dfa or backprop.")
         if args.grad_norm_clip > 0:
             parser.error("--decouple_fast_feedback and --fast_write_from_readout are not defined with "
                          "--grad_norm_clip (which error would the clip norm and scale?). See "
@@ -1173,6 +1208,7 @@ def main():
             "fast_layers": args.fast_layers,
             "fast_structure": args.fast_structure,
             "decouple_fast_feedback": args.decouple_fast_feedback,
+            "backprop_step_parity": args.backprop_step_parity,
             "fast_write_from_readout": args.fast_write_from_readout,
             "fast_write_from_readout_scale": args.fast_write_from_readout_scale,
             "order2_layers": args.order2_layers,
