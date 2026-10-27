@@ -21,6 +21,7 @@ BASE=${BASE:-$HOME/s12_2026-10-27}
 CKPT_EVERY=${CKPT_EVERY:-25000}  # smoke tests only: N_ITERS must be a multiple (latest_checkpoint.pth is saved on these)
 source ~/.bashrc >/dev/null 2>&1; source ~/miniforge3/etc/profile.d/conda.sh 2>/dev/null
 conda activate hebby
+set -eo pipefail
 t=${SLURM_ARRAY_TASK_ID:-0}
 seeds5=(620101 620203 620307 620411 620509)
 seed=${seeds5[$t]}; name=S12-LC-lnDC2-s$seed

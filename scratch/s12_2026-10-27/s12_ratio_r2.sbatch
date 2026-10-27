@@ -17,9 +17,10 @@
 BASE=${BASE:-$HOME/s12_2026-10-27}; B=${BFR:-$HOME/bfr_2026-10-22}
 source ~/.bashrc >/dev/null 2>&1; source ~/miniforge3/etc/profile.d/conda.sh 2>/dev/null
 conda activate hebby
+set -eo pipefail
 O=$B/ratios_r2; mkdir -p $O
 one() {  # code dir, checkpoint, output name
-  [ -f "$2" ] || { echo "MISSING $2"; return; }
+  [ -f "$2" ] || { echo "MISSING $2"; return 1; }
   [ -s $O/$3.json ] && return
   (cd $1 && python scratch/bfr_2026-10-22/bfr_ratio.py --checkpoint $2 --batches 16 --json $O/$3.json > /dev/null)
   echo "$3 EXIT $?"

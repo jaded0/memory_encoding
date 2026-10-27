@@ -88,6 +88,10 @@ Follow-up 2's one allowed smoke eval: `smoke_null_manticore.sh`, `ln_null_eval.p
 as designed: swap/noise norm = own norm at trunk 1/2 (31.9, 32.1), trunk 0 donor read 0 at 394 own-nonzero reads (unseen one-hot keys).
 At 128 batches a KR checkpoint takes ~3 min on the 2080 Ti.
 
+ORC dry run (2026-10-27): `stage_orc.sh origin/s12-followups` staged `~/s12_2026-10-27/{code,code_kr}` at `fe7a5e8` (printed `STAGED fe7a5e8…`;
+later commits touch only this README). `sbatch --test-only` accepted all five sbatch files; its start estimate for `s12_lndc2_lc` was
+2026-11-03 on cs-1-4 (the cs queue is deep; 51 of our jobs were queued or running), so expect a wait.
+
 ## Open questions for Jaden
 
 1. Follow-up 1: 600k first (prereg'd), or straight to 1.2M? The launcher does either; BFR2's D1-D3 transfer unchanged to 600k-1.2M.
@@ -95,5 +99,8 @@ At 128 batches a KR checkpoint takes ~3 min on the 2080 Ti.
 3. Follow-up 2's donor is the *next* held-out episode under strict. An alternative donor is the same episode's state from a different
    (shuffled) key set; I chose a real episode because it keeps the fast state's statistics exactly. `swap_raw` vs `swap` differ only at trunk-layer-0
    steps whose own read is 0 (one-hot keys not seen yet). Fine?
-4. Disclosure: the one allowed smoke eval of follow-up 2 (plain ln s1414 30k, 32 batches) gave strict 1.00, no_fast 0.00, swap 0.13, noise 0.02
+4. Placement if the ORC queue stays a week deep: follow-up 2 can run on manticore instead. `~/bfr_kr_2026-10-22/orc_ckpt/` already holds the
+   KR 10k/30k and LC 150k/600k checkpoints; the BFR2 ones (KR 60k/100k, LC 1.2M; 25 files, ~8 GB) would need pulling. Follow-up 3's KR part
+   fits deckard (2 per A6000, ~1 h each). Follow-ups 1 and 3-LC are A100-sized and stay on ORC.
+5. Disclosure: the one allowed smoke eval of follow-up 2 (plain ln s1414 30k, 32 batches) gave strict 1.00, no_fast 0.00, swap 0.13, noise 0.02
    before the prereg was finished; the draft excludes that checkpoint from scoring.

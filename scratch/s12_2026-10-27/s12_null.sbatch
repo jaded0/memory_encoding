@@ -20,11 +20,12 @@
 BASE=${BASE:-$HOME/s12_2026-10-27}; B=${BFR:-$HOME/bfr_2026-10-22}
 source ~/.bashrc >/dev/null 2>&1; source ~/miniforge3/etc/profile.d/conda.sh 2>/dev/null
 conda activate hebby
+set -eo pipefail
 t=${SLURM_ARRAY_TASK_ID:-0}
 O=$BASE/null; mkdir -p $O
 nvidia-smi --query-gpu=name --format=csv,noheader
 one() {  # checkpoint, output name
-  [ -f "$1" ] || { echo "MISSING $1"; return; }
+  [ -f "$1" ] || { echo "MISSING $1"; return 1; }
   [ -s $O/$2.json ] && { echo "skip $2"; return; }
   python -u scratch/s12_2026-10-27/ln_null_eval.py --checkpoint $1 --batches ${BATCHES:-128} --json $O/$2.json > $O/$2.log 2>&1
   echo "$2 EXIT $?"
