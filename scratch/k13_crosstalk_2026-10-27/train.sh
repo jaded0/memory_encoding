@@ -15,6 +15,7 @@ case "$arm" in
   par2) flags=(--order2_layers 1,2);;
   par1) flags=(--order2_layers 1,2 --order2_map order1);;
   rep2) flags=(--order2_layers 1,2 --order2_mode replace);;
+  spar) flags=(--order2_layers 1,2 --order2_map sparse --order2_sparse_m 273 --order2_sparse_k 17);;
   *) echo "unknown arm: $arm" >&2; exit 2;;
 esac
 d="$root/$data-$arm-s$seed"

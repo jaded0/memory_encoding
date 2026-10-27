@@ -445,6 +445,18 @@ Stability interventions, all ephemeral + DFA only and off by default:
   - `--order2_map order1` is the control: `φ(z) = [1, z]` (17 features), kernel `(1 + t c)/(1 + t)`,
     the first-order truncation on the same projection, so `order2` minus `order1` isolates the
     second-order term from "a projection plus extra fast memory".
+  - `--order2_map sparse` (2026-10-27) uses the same z, then a fixed Gaussian expansion
+    R `[m,d]`, keeping the k largest entries **by magnitude, with their signs and amplitudes**.
+    Normalize the surviving vector to unit norm and multiply by `sqrt(fraction)*|x|`;
+    self-match is `fraction*|x|²`, just as for order1/order2. Zero/projected-null keys
+    give zero; generic nonzero keys have exactly k nonzeros. Temperature cancels.
+    `--order2_sparse_m 273` size-matches order two at d16; `--order2_sparse_k 17`
+    (~6.2% density) balances collisions against tiny unstable supports. These defaults
+    were fixed before screening, not selected from it. Signed selection avoids a
+    ReLU-induced positive overlap floor. R has an independent seed/layer RNG stream,
+    is checkpointed, has no learned weights; cost is linear in m at fixed d.
+    All existing maps/off paths are unchanged. The full-input m4096 variant is
+    kernel-screening only, not a training flag.
   - `--order2_mode parallel` (default) keeps the linear fast entries; `replace` never writes them
     (their write error is zero, so they stay at the wipe's zero) and `G` is the layer's only fast
     read. The slow entries are the same in both.

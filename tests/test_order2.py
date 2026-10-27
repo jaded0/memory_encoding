@@ -19,7 +19,7 @@ import torch
 import torch.nn.functional as F
 
 from ephemeral_model import (EphemeralRNN, order2_feature_size, order2_features, order2_kernel_norm,
-                             order2_projection)
+                             order2_projection, order2_sparse_expansion)
 from reproducibility import seed_everything
 from tests import scratch_flags_reference as ref
 from train import build_model, parse_args, train
@@ -88,6 +88,50 @@ class Order2Test(unittest.TestCase):
         self.assertEqual(layer.order2_fast.shape, (ref.BATCH_SIZE, layer.out_features, 273))
         self.assertIsNone(model.linear_layers[0].order2_fast)
 
+    def test_sparse_shape_support_scale_and_seed(self):
+        torch.manual_seed(81)
+        state = torch.get_rng_state().clone()
+        p = order2_projection(40, 16, 9, 1)
+        r = order2_sparse_expansion(16, 273, 9, 1)
+        self.assertTrue(torch.equal(state, torch.get_rng_state()))
+        self.assertTrue(torch.equal(r, order2_sparse_expansion(16, 273, 9, 1)))
+        self.assertFalse(torch.equal(r, order2_sparse_expansion(16, 273, 10, 1)))
+        self.assertFalse(torch.equal(r, order2_sparse_expansion(16, 273, 9, 2)))
+        x = torch.randn(7, 40)
+        for k in (8, 17, 34):
+            f = order2_features(x, p, 'sparse', 4., .1, sparse_expansion=r, sparse_k=k)
+            self.assertEqual(f.shape, (7, order2_feature_size('sparse', 16)))
+            self.assertTrue(bool(((f != 0).sum(1) == k).all()))
+            torch.testing.assert_close(f.square().sum(1), .1*x.square().sum(1))
+            torch.testing.assert_close(f, order2_features(x, p, 'sparse', 1., .1,
+                                                        sparse_expansion=r, sparse_k=k))
+            self.assertTrue(bool((order2_features(torch.zeros_like(x), p, 'sparse', 4., .1,
+                                                  sparse_expansion=r, sparse_k=k) == 0).all()))
+
+    def test_sparse_checkpoint_config_roundtrip(self):
+        args = parse_args(['--model_type', 'ephemeral', '--updater', 'dfa', '--order2_layers', '1,2',
+                           '--order2_map', 'sparse', '--order2_sparse_m', '59', '--order2_sparse_k', '7',
+                           '--hidden_size', '8', '--num_layers', '3', '--batch_size', '2', '--seed', '9'])
+        config = dict(vars(args), n_hidden=8, n_layers=3, pe_matrix=None)
+        with contextlib.redirect_stdout(io.StringIO()):
+            model = build_model(config, ref.CHARSET, len(ref.CHARSET))
+        self.assertEqual(model.linear_layers[1].order2_fast.shape[-1], 59)
+        checkpoint = {'code_version': CHECKPOINT_CODE_VERSION, 'config': config,
+                      'model_state_dict': model.state_dict(), 'iter': 1}
+        with contextlib.redirect_stdout(io.StringIO()):
+            restored = build_model(config, ref.CHARSET, len(ref.CHARSET))
+            load_checkpoint('x.pth', restored, config, checkpoint=checkpoint)
+        same_state(self, model.state_dict(), restored.state_dict())
+        for key in ('order2_sparse_m', 'order2_sparse_k'):
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
+                load_checkpoint('x.pth', restored, dict(config, **{key: config[key]+1}), checkpoint=checkpoint)
+        # Missing new defaults in older order1/order2 configs are backward compatible.
+        default = dict(config, order2_sparse_m=273, order2_sparse_k=17)
+        checkpoint['config'] = {k: v for k, v in default.items() if k not in
+                                ('order2_sparse_m', 'order2_sparse_k')}
+        with contextlib.redirect_stdout(io.StringIO()):
+            load_checkpoint('x.pth', restored, default, checkpoint=checkpoint)
+
     def test_write_is_the_fast_error_times_psi_then_forget(self):
         for mode in ('parallel', 'replace'):
             model = build(order2_layers=[2], order2_mode=mode)
@@ -113,6 +157,7 @@ class Order2Test(unittest.TestCase):
     def test_unfused_fused_and_norm_logging_paths_agree(self):
         for kwargs in ({"order2_layers": [1, 2]}, {"order2_layers": [2], "order2_mode": "replace"},
                        {"order2_layers": [1], "order2_map": "order1"},
+                       {"order2_layers": [1, 2], "order2_map": "sparse"},
                        {"order2_layers": [2], "decouple_fast_feedback": [2]}):
             with self.subTest(**kwargs):
                 unfused, fused, logged = build(**kwargs), build(**kwargs), build(**kwargs)
@@ -211,6 +256,8 @@ class Order2Test(unittest.TestCase):
 
     def test_invalid_combinations_are_refused(self):
         for kwargs in ({"order2_layers": [3]}, {"order2_layers": [1], "order2_map": "order3"},
+                       {"order2_layers": [1], "order2_map": "sparse", "order2_sparse_k": 274},
+                       {"order2_layers": [1], "order2_map": "sparse", "order2_sparse_k": 0},
                        {"order2_layers": [1], "order2_mode": "both"},
                        {"order2_layers": [1], "order2_temperature": 0},
                        {"order2_layers": [1], "updater": "backprop"},

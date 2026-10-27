@@ -136,7 +136,7 @@ def fast_abs_score_mass(keys, key_weights, input):
         return input.new_zeros(input.shape[0], 1)
     scores = torch.bmm(keys, input.unsqueeze(2)).squeeze(2)  # [B, S]
     return (scores.abs() * key_weights).sum(dim=1, keepdim=True)
-ORDER2_MAPS = ('order2', 'order1')
+ORDER2_MAPS = ('order2', 'order1', 'sparse')
 ORDER2_MODES = ('parallel', 'replace')
 
 
@@ -154,13 +154,22 @@ def order2_kernel_norm(order, temperature):
     return 1 + temperature + temperature ** 2 / 2 if order == 'order2' else 1 + temperature
 
 
-def order2_feature_size(order, dim):
+def order2_sparse_expansion(dim, m, seed, layer_index):
+    """Independent fixed Gaussian expansion; never advances the model's RNG stream."""
+    generator = torch.Generator().manual_seed((int(seed) % 2**31) * 101 + 731337 + int(layer_index))
+    return torch.randn(m, dim, generator=generator)
+
+
+def order2_feature_size(order, dim, sparse_m=273):
     """The number of features order2_features gives: 1 + d + d^2 (order2, Based's second-order Taylor
     map: 273 for d = 16) or 1 + d (order1)."""
+    if order == 'sparse':
+        return sparse_m
     return 1 + dim + dim * dim if order == 'order2' else 1 + dim
 
 
-def order2_features(x, projection, order, temperature, fraction, eps=1e-12):
+def order2_features(x, projection, order, temperature, fraction, eps=1e-12,
+                    sparse_expansion=None, sparse_k=17):
     """The features psi(x), [B, F], a layer's order-two fast matrix reads and writes with.
 
     z = sqrt(t) * P x / |P x| (t = --order2_temperature), so z.z' = t * c with c the cosine of the
@@ -175,6 +184,14 @@ def order2_features(x, projection, order, temperature, fraction, eps=1e-12):
     A zero input gives zero features."""
     u = x @ projection.t()
     z = u * (math.sqrt(temperature) / u.norm(dim=1, keepdim=True).clamp_min(eps))
+    if order == 'sparse':
+        # Signed magnitude selection avoids a ReLU overlap floor. Temperature cancels
+        # on normalization. Zero/projected-null inputs stay zero (not k fake entries).
+        expanded = z @ sparse_expansion.t()
+        indices = expanded.abs().topk(sparse_k, dim=1).indices
+        phi = torch.zeros_like(expanded).scatter(1, indices, expanded.gather(1, indices))
+        return (phi / phi.norm(dim=1, keepdim=True).clamp_min(eps)
+                * (math.sqrt(fraction) * x.norm(dim=1, keepdim=True)))
     parts = [torch.ones_like(z[:, :1]), z]
     if order == 'order2':
         parts.append((z.unsqueeze(2) * z.unsqueeze(1)).flatten(1) * _INV_SQRT2)
@@ -616,6 +633,8 @@ class EphemeralLinear(nn.Linear):
         self.order2_fraction = 0.0
         self.order2_trace = None
         self.register_buffer('order2_proj', None)
+        self.register_buffer('order2_sparse_expansion', None)
+        self.order2_sparse_k = 17
         self.register_buffer('order2_fast', None)
         self.in_traces = nn.Parameter(torch.zeros(batch_size, in_features), requires_grad=requires_grad)
         self.out_traces = nn.Parameter(torch.zeros(batch_size, out_features), requires_grad=requires_grad)
@@ -868,7 +887,9 @@ class EphemeralLinear(nn.Linear):
             # --order2_layers: + G psi(x), the order-two fast read (parallel to the linear one, or,
             # under 'replace', the only fast read: the linear fast entries are then never written).
             self.order2_trace = order2_features(input.detach(), self.order2_proj, self.order2,
-                                                self.order2_temperature, self.order2_fraction)
+                                                self.order2_temperature, self.order2_fraction,
+                                                sparse_expansion=self.order2_sparse_expansion,
+                                                sparse_k=self.order2_sparse_k)
             output = output + torch.bmm(self.order2_fast, self.order2_trace.unsqueeze(2)).squeeze(2)
 
         # Optionally add a bias if needed.
@@ -1253,7 +1274,7 @@ class EphemeralRNN(torch.nn.Module):
         fast_write_from_readout_scale=1.0, fast_read_norm='off', fast_read_norm_lr=None,
         fast_structure='exclusive',
         order2_layers=None, order2_map='order2', order2_mode='parallel', order2_temperature=4.0,
-        order2_dim=16, order2_seed=0
+        order2_dim=16, order2_seed=0, order2_sparse_m=273, order2_sparse_k=17
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -1418,9 +1439,10 @@ class EphemeralRNN(torch.nn.Module):
         self.order2_layers = None
         if order2_layers is not None:
             self.set_order2(order2_layers, order2_map, order2_mode, order2_temperature, order2_dim,
-                            order2_seed)
+                            order2_seed, order2_sparse_m, order2_sparse_k)
 
-    def set_order2(self, layers, order='order2', mode='parallel', temperature=4.0, dim=16, seed=0):
+    def set_order2(self, layers, order='order2', mode='parallel', temperature=4.0, dim=16, seed=0,
+                   sparse_m=273, sparse_k=17):
         """--order2_layers: each listed trunk layer gets a second fast matrix G [B, out, F], read as
         G psi(x) next to its slow and linear fast read, with psi = order2_features of a fixed random
         projection to `dim` numbers (order2: 1 + d + d^2 features; order1, the control: 1 + d).
@@ -1437,6 +1459,8 @@ class EphemeralRNN(torch.nn.Module):
             raise ValueError(f"--order2_map {order!r}: expected one of {ORDER2_MAPS}")
         if mode not in ORDER2_MODES:
             raise ValueError(f"--order2_mode {mode!r}: expected one of {ORDER2_MODES}")
+        if order == 'sparse' and not 1 <= sparse_k <= sparse_m:
+            raise ValueError("--order2_sparse_k must satisfy 1 <= k <= --order2_sparse_m")
         if not temperature > 0 or int(dim) < 1:
             raise ValueError("--order2_temperature must be > 0 and --order2_dim >= 1")
         if any(not 0 <= i < self.num_layers for i in layers) or not layers:
@@ -1459,8 +1483,11 @@ class EphemeralRNN(torch.nn.Module):
             layer.order2_temperature = float(temperature)
             layer.order2_fraction = float(layer.ephemeral_mask.float().mean())
             layer.order2_proj = order2_projection(layer.in_features, int(dim), seed, index).to(device)
+            if order == 'sparse':
+                layer.order2_sparse_expansion = order2_sparse_expansion(int(dim), sparse_m, seed, index).to(device)
+                layer.order2_sparse_k = sparse_k
             layer.order2_fast = torch.zeros(layer.batch_size, layer.out_features,
-                                            order2_feature_size(order, int(dim)), device=device)
+                                            order2_feature_size(order, int(dim), sparse_m), device=device)
         self.order2_layers = layers
 
     def order2_targets(self):

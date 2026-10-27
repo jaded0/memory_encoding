@@ -62,7 +62,7 @@ def selectivity(store, others):
 
 
 @torch.no_grad()
-def run(path, nb, device, temps):
+def run(path, nb, device, temps, kernel_observer=None):
     model, config, it = load(path, device)
     layers = list(model.linear_layers)
     L = len(layers)
@@ -137,6 +137,8 @@ def run(path, nb, device, temps):
                         cos = torch.nn.functional.cosine_similarity(Xs, xq.unsqueeze(0), dim=1).cpu().numpy()
                         si = written.index(s)
                         oi = [j for j in range(len(written)) if j != si]
+                        if kernel_observer is not None:
+                            kernel_observer(k, Xs, xq, si, oi, swap_proj[k], frac[k], seed)
                         r["cos_sq"], r["cos_oth"] = float(cos[si]), float(np.mean(cos[oi]))
                         # Uncentered unit-key second-moment PR (same definition as B2).
                         unit = torch.nn.functional.normalize(Xs, dim=1)

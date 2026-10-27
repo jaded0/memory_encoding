@@ -526,7 +526,9 @@ def build_model(config, charset, n_characters):
             order2_mode=config.get('order2_mode', 'parallel'),
             order2_temperature=config.get('order2_temperature', 4.0),
             order2_dim=config.get('order2_dim', 16),
-            order2_seed=config.get('seed') or 0)
+            order2_seed=config.get('seed') or 0,
+            order2_sparse_m=config.get('order2_sparse_m', 273),
+            order2_sparse_k=config.get('order2_sparse_k', 17))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -698,7 +700,7 @@ def build_parser():
                              '--order2_dim projection of the layer input, scaled so a perfect key match reads '
                              'as large as on the linear fast entries. Written with the layer\'s own DFA fast '
                              'error. Empty (default) = off, bit for bit. See README "Order-two fast read".')
-    parser.add_argument('--order2_map', type=str, default='order2', choices=['order2', 'order1'],
+    parser.add_argument('--order2_map', type=str, default='order2', choices=['order2', 'order1', 'sparse'],
                         help='--order2_layers feature map: order2 (1, z, z z^T / sqrt 2: 273 features at d 16) '
                              'or order1 (1, z: the size-matched first-order control on the same projection).')
     parser.add_argument('--order2_mode', type=str, default='parallel', choices=['parallel', 'replace'],
@@ -709,6 +711,10 @@ def build_parser():
                              'projected cosine c (the softmax temperature analogue).')
     parser.add_argument('--order2_dim', type=int, default=16,
                         help='--order2_layers: the projection size d.')
+    parser.add_argument('--order2_sparse_m', type=int, default=273,
+                        help='Sparse map fixed expansion width (273 matches order2 at d16).')
+    parser.add_argument('--order2_sparse_k', type=int, default=17,
+                        help='Sparse map: retain k signed entries with largest magnitude (default 17).')
     parser.add_argument('--layer_norm', type=str2bool, nargs='?', const=True, default=False,
                         help='Both models: LayerNorm (no learnable gain or bias) on each trunk layer\'s '
                              'activations, after the GELU, so the next layer (and its DFA input trace) '
@@ -934,6 +940,8 @@ def check_argument_combinations(args, parser):
         except ValueError as exc:
             parser.error(str(exc))
     if args.order2_layers:
+        if args.order2_map == 'sparse' and not 1 <= args.order2_sparse_k <= args.order2_sparse_m:
+            parser.error('--order2_sparse_k must satisfy 1 <= k <= --order2_sparse_m.')
         if args.model_type != 'ephemeral' or args.updater != 'dfa':
             parser.error("--order2_layers supports only --model_type ephemeral --updater dfa.")
         if args.grad_norm_clip > 0:
@@ -1216,6 +1224,8 @@ def main():
             "order2_mode": args.order2_mode,
             "order2_temperature": args.order2_temperature,
             "order2_dim": args.order2_dim,
+            "order2_sparse_m": args.order2_sparse_m,
+            "order2_sparse_k": args.order2_sparse_k,
             "fast_weight_clamp": args.fast_weight_clamp,
             "wipe_every": args.wipe_every,
             "fused_update_active": config["fused_update_active"],

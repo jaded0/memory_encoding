@@ -456,7 +456,8 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
                            loaded_config.get('fast_structure', 'exclusive')))
     # --order2_layers and its settings change the forward pass and the fast state (absent: off).
     order2_defaults = {'order2_layers': '', 'order2_map': 'order2', 'order2_mode': 'parallel',
-                       'order2_temperature': 4.0, 'order2_dim': 16}
+                       'order2_temperature': 4.0, 'order2_dim': 16,
+                       'order2_sparse_m': 273, 'order2_sparse_k': 17}
     if config.get('order2_layers') or loaded_config.get('order2_layers'):
         mismatches.extend((key, config.get(key, default), loaded_config.get(key, default))
                           for key, default in order2_defaults.items()
