@@ -1328,8 +1328,12 @@ class EphemeralRNN(torch.nn.Module):
         fast_layers = None if fast_layers is None else set(fast_layers)
         decouple_fast_feedback = set(decouple_fast_feedback or ())
         fast_write_from_readout = set(fast_write_from_readout or ())
-        if (decouple_fast_feedback or fast_write_from_readout) and updater != 'dfa':
-            raise ValueError("--decouple_fast_feedback and --fast_write_from_readout need the DFA updater")
+        if fast_write_from_readout and updater != 'dfa':
+            raise ValueError("--fast_write_from_readout needs the DFA updater")
+        # Under per-step backprop, B_fast writes the fast entries and backprop trains the slow ones
+        # (train.py also requires --backprop_step_parity). BPTT never reads a fast write.
+        if decouple_fast_feedback and updater not in ('dfa', 'backprop'):
+            raise ValueError("--decouple_fast_feedback needs the DFA or per-step backprop updater")
         if decouple_fast_feedback & fast_write_from_readout:
             raise ValueError("a layer's fast writes take either --decouple_fast_feedback or "
                              "--fast_write_from_readout, not both")
@@ -1909,6 +1913,15 @@ class EphemeralRNN(torch.nn.Module):
             layer.scale_ephemeral_grads(plasticity)
         self.i2h.scale_ephemeral_grads(plasticity)
         self.i2o.scale_ephemeral_grads(plasticity)
+
+    @torch.no_grad()
+    def average_bias_grads(self, batch_size):
+        """--backprop_step_parity: backward() ran on the batch-summed loss, so each bias gradient
+        is the sum of the sequences' shares; divide it by the batch size so the shared bias steps
+        with their batch mean, as DFA's bias does (dfa_bias_update)."""
+        for layer in self.trained_layers():
+            if layer.bias is not None and layer.bias.grad is not None:
+                layer.bias.grad.div_(batch_size)
 
 
     def get_all_norms(self):

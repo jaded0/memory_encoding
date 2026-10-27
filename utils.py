@@ -406,6 +406,8 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
         'optimizer': 'sgd',
         # --dfa_fprime changes what every DFA step writes; absent in older checkpoints (off).
         'dfa_fprime': False,
+        # --backprop_step_parity changes every backprop step's size; absent in older checkpoints (off).
+        'backprop_step_parity': False,
     }
     mismatches = [
         (key, config.get(key, default), loaded_config.get(key, default))

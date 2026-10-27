@@ -154,10 +154,11 @@ class FastLayerFlagsTest(unittest.TestCase):
         for kwargs in (dict(fast_layers=[3]), dict(decouple_fast_feedback=[2], fast_write_from_readout=[2]),
                        dict(fast_layers=[0, 1], decouple_fast_feedback=[2]),
                        dict(fast_write_from_readout=[1]), dict(fast_write_from_readout=[2], layer_norm=True),
-                       dict(decouple_fast_feedback=[2], updater="backprop")):
+                       dict(decouple_fast_feedback=[2], updater="bptt")):
             with self.subTest(**{k: str(v) for k, v in kwargs.items()}), self.assertRaises(ValueError):
                 build(**kwargs)
         for argv in (["--decouple_fast_feedback", "2", "--grad_norm_clip", "1"],
+                     ["--decouple_fast_feedback", "2", "--updater", "backprop"],
                      ["--fast_write_from_readout", "2", "--updater", "backprop"],
                      ["--fast_layers", "0,1", "--model_type", "rnn"],
                      ["--fast_layers", "a"]):

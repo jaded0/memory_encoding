@@ -354,7 +354,8 @@ Stability interventions, all ephemeral + DFA only and off by default:
   "aimed write"; only for the last trunk layer read directly by `i2o`). `heldout.py
   --fast_write_from_readout_scale` overrides the scale of a checkpoint (the code_v2 runs of
   2026-10-13 set it with `SCRATCH_RG_SCALE`, which their checkpoints do not record).
-  These two need `--updater dfa` and no `--grad_norm_clip` (see "Clipping with the fast-write
+  These two need `--updater dfa` (`--decouple_fast_feedback` also runs under per-step backprop
+  with `--backprop_step_parity`; see "Backprop step parity") and no `--grad_norm_clip` (see "Clipping with the fast-write
   flags" below). Every step path (unfused, fused, windowed, split, held-out fast-only, the loop
   tracer) uses the same fast-write error, so print steps no longer need `SCRATCH_FORCE_FUSED`;
   `tests/test_fast_layer_flags.py` checks the port against the code_v2 snapshot.
@@ -508,6 +509,53 @@ must never be modified in place during a step. `tests/test_dfa_error_signals.py`
 
 The entries that differ between columns are explained, with evidence, in the next section.
 
+### Backprop step parity (`--backprop_step_parity`) and B_fast writes under backprop
+
+**Where α² and 1/B come from (default, unchanged).** Under per-step backprop the hidden state is
+detached, and sequence b's loss L_b depends only on its own weight copy W_b, so for the batch-mean
+loss `∂(mean_b L_b)/∂W_b = g_b / B`, with `g_b = ∂L_b/∂W_b` the sequence's own gradient
+(`train.py`, `step_loss.mean()`). Then `scale_ephemeral_grads(plasticity)` multiplies the masked
+entries of that gradient by α, and `apply_update` → `ephemeral_update` multiplies them by the
+`plasticity` tensor again (α on the mask, 1 elsewhere). So each copy steps by
+
+    fast:  ΔW_b = −lr · α² / B · g_b        slow:  ΔW_b = −lr / B · g_b
+
+while DFA, which takes each sequence's own error (`grad_outputs=ones` on the unreduced loss) and
+applies α once, in `ephemeral_update`, steps by `−lr·α·g_b` and `−lr·g_b` (g_b its DFA
+pseudo-gradient). Backprop's fast step is therefore α/B times DFA's at the same flags: 625× at
+α 1e4, B 16. The shared biases already match: autograd's bias gradient under the mean loss is the
+batch mean of the sequences' shares, which is DFA's bias step (`dfa_bias_update`).
+
+**`--backprop_step_parity`** (ephemeral + `--updater backprop` only; default off, and off the
+golden traces are byte-identical). `backward()` runs on the batch *sum* of the per-sequence
+losses, so each copy's gradient is its own `g_b`; `scale_ephemeral_grads` is skipped, so α is
+applied once, in `apply_update`; and the bias gradients (now the sum of the shares) are divided by
+B (`EphemeralRNN.average_bias_grads`), keeping the batch-mean bias step. The step is then
+`−lr·α·g_b` on the fast entries and `−lr·g_b` on the slow ones, DFA's form. `--grad_norm_clip`
+clips each sequence's own raw gradient, before the bias division. `--ephemeral_update_clamp`,
+`--weight_clamp`, `--fast_weight_clamp` and forgetting act as under DFA. With parity on, logged
+gradient norms are the raw gradient's (off, the fast entries' include one α). A resume refuses a
+checkpoint with a different setting. BPTT is refused: its fast writes never reach a forward pass
+(Known issues), and it has its own 1/B. `tests/test_backprop_step_parity.py` pins both step forms
+on a tiny model, and checks that with parity on the readout step and a B_fast fast write equal the
+DFA path's from the same weights (off, the readout step is 1/B of DFA's).
+
+**`--decouple_fast_feedback L` under backprop (the host-agnostic arm; needs
+`--backprop_step_parity`).** The slow entries and biases of every layer train by backprop; the
+listed trunk layers' fast entries take DC2's write instead of their backprop gradient:
+`−lr·α·(B_fast,L e_b) x_bᵀ` on the mask, with `e_b = ∂L_b/∂output` (the output's gradient under
+the summed loss, the same as DFA's `output_error`) and `B_fast,L` the same fixed matrix DC2 draws
+(`decoupled_fast_feedback`, seed 918273 + L). The write goes through `override_fast_gradients`,
+the same code the DFA step uses. The fast state is a constant to the slow gradient: the weights are
+leaves written outside autograd and the hidden state is detached, so the slow gradient at step t
+is that of L_t at the weights as they stand, earlier writes included, and nothing differentiates
+through a write. Unlisted layers keep backprop's gradient-valued fast writes, so the arm with no
+gradient-valued fast write lists every trunk layer that has fast entries (`0,1,2` with
+`--num_layers 3`). `i2h` is not a trunk layer: per-step backprop gives it no gradient, so its fast
+entries are never written (with `--enable_recurrence false` it is not read either).
+`--fast_write_from_readout` stays DFA only, and `--grad_norm_clip` is refused, as under DFA.
+Held-out evaluation (`heldout.py`) still needs a DFA checkpoint.
+
 ## Known issues / behaviours under review
 
 Planned, decided-but-unimplemented work (baseline architecture matching and hyperparameter
@@ -532,6 +580,9 @@ the 2026-09 change that added DFA to the SimpleRNN baseline.
   `'none'` at `train.py:327-329`). This was a deliberate choice at the time, and it helped
   the loss numbers. Combined with α², backprop's per-sequence ephemeral step is α/B times
   DFA's at the same `--learning_rate` and `--plasticity`.
+- **Opt-in fix (2026-10-27, C2):** `--backprop_step_parity` removes both factors from per-step
+  backprop (see "Backprop step parity"). The default stays the old step until the paired C2 runs
+  decide it; BPTT is unchanged.
 - **Forked state and emission with direct DFA to `i2h` (2026-09).** The shared deep
   representation feeds separate current-output and recurrent-state heads. This preserves a
   direct route from ephemeral features to emission and lets memory state specialize separately.
