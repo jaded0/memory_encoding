@@ -62,3 +62,8 @@ its 580-second timeout while materializing the 10-million-row training split,
 before model initialization. Full launches use all rows. Evidence and final commit are in
 the vault's `P3 launched.md`. Earlier prep-only 1000-iteration smoke results
 were disclosed in the pre-registration; they are not hypothesis outcomes.
+On manticore, bind the 2080 Ti by UUID
+`CUDA_VISIBLE_DEVICES=GPU-498f1b83-a33b-4322-01fe-e28a35c3ba89` (nvidia-smi
+GPU 1): CUDA's default ordinal 1 instead selects the 1080 Ti. An additional
+67-second subset smoke on that 1080 Ti passed the unfused fallback; the required
+GPU-1 smoke separately checks the compiled path.
