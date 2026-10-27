@@ -1,9 +1,10 @@
 #!/bin/bash
 # Launch with a managed systemd user service; see README.md. One or two lanes only.
 # Each lane is sequential; failures are recorded without preventing other arms running.
-set -euo pipefail
+set -eo pipefail
 source ~/miniforge3/etc/profile.d/conda.sh
 conda activate hebby
+set -u
 export CUDA_VISIBLE_DEVICES=${GPU:-0}
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-4} MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
 export SG_THREADS=${SG_THREADS:-4}
