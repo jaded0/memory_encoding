@@ -56,6 +56,9 @@ python scratch/p3_2026-10-27/p3_sg.py RUN/checkpoint_00050000.pth RUN/checkpoint
 CPU full suite, default/golden identity, gained-step parity/history/resume tests,
 and analytical SG control-parity/log-split tests are required before merging.
 A <=10-minute full-width compiled g4 smoke runs on manticore GPU 1 with 200
-iterations and two batches per evaluation; evidence and final commit are in
+iterations and two batches per evaluation, using 4096 training rows and 128
+validation/test rows from the real dataset. The initial full-data attempt hit
+its 580-second timeout while materializing the 10-million-row training split,
+before model initialization. Full launches use all rows. Evidence and final commit are in
 the vault's `P3 launched.md`. Earlier prep-only 1000-iteration smoke results
 were disclosed in the pre-registration; they are not hypothesis outcomes.
