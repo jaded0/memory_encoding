@@ -150,6 +150,11 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
     all_labels = []
 
     for i in range(onehot_line_tensor.size()[1] - 1):
+        # Block boundaries count predicted characters, exactly as b2_eval WIPE R.
+        # Do not consolidate slow copies or reset recurrent hidden state here.
+        train_wipe_chars = config.get('train_wipe_chars', 0)
+        if train_wipe_chars and i and i % train_wipe_chars == 0:
+            rnn.wipe_fast_state()
         # For BPTT, we keep gradients flowing through time by NOT detaching hidden state
         if updater != 'bptt':
             hidden = hidden.detach()
@@ -637,6 +642,10 @@ def build_parser():
                         help='EphemeralRNN: clamp only the ephemeral (fast) entries to [-v, v] after each '
                              'update, after --weight_clamp (0 = off). Ignored by the rnn baseline, which '
                              'has no fast entries.')
+    parser.add_argument('--train_wipe_chars', type=int, default=0,
+                        help='Ephemeral DFA only: wipe only fast state before every N-th character '
+                             'step within each sequence (0 = off). No slow consolidation or hidden '
+                             'reset. Unlike --wipe_every, N counts characters, not sequences.')
     parser.add_argument('--wipe_every', type=int, default=1,
                         help='EphemeralRNN: zero the fast entries at the start of every N-th sequence only '
                              '(1 = every sequence, the default). The slow entries are still averaged over '
@@ -952,6 +961,10 @@ def check_argument_combinations(args, parser):
             parse_layer_list(getattr(args, name))
         except ValueError:
             parser.error(f"--{name} must be a comma list of layer indices, like 0,1.")
+    if args.train_wipe_chars < 0:
+        parser.error("--train_wipe_chars must be nonnegative.")
+    if args.train_wipe_chars and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
+        parser.error("--train_wipe_chars requires --model_type ephemeral --updater dfa.")
     if args.wipe_every < 1:
         parser.error("--wipe_every must be at least 1.")
     if args.wipe_every > 1 and args.model_type != 'ephemeral':
@@ -1218,6 +1231,7 @@ def main():
             "order2_dim": args.order2_dim,
             "fast_weight_clamp": args.fast_weight_clamp,
             "wipe_every": args.wipe_every,
+            "train_wipe_chars": args.train_wipe_chars,
             "fused_update_active": config["fused_update_active"],
             "n_hidden": args.hidden_size,
             "n_layers": args.num_layers,

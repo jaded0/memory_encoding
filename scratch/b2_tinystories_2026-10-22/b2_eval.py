@@ -12,11 +12,17 @@ Every protocol freezes the slow weights and starts each sequence from wiped fast
   OFF    no fast weights (they stay at their wiped zeros); with recurrence off this is a character bigram model.
   RESET  for a mention starting at s: the fast entries are zeroed at s - 32 (R), then written as in ON. With
          recurrence off and frozen slow weights nothing else carries over, so this equals running the snippet
-         text[s-32 : end of mention] from a fresh wipe, which is how it is computed.
+         text[s-32 : end of mention] from a fresh wipe. With recurrence on, replay the full story prefix and
+         wipe only fast entries at s - 32, preserving the hidden state (including earlier fast-write effects).
   WIPE R (round 2, horizon mode) ON, but the fast entries are zeroed before every step i > 0 with i % R == 0, so a
          prediction sees at most R characters of fast-written context (R - 1 - (i % R) fewer on average). Only the
-         fast entries are zeroed; slow entries stay as they are. R = 1 equals OFF and R >= the length equals ON,
-         bit for bit (tests/test_b2_horizon.py).
+         fast entries are zeroed; slow entries and hidden state stay as they are. R = 1 == OFF is asserted only
+         with recurrence off. Hidden state can carry context beyond a fast wipe, so R does not bound total
+         recurrent context. R >= the length equals ON bit for bit (tests/test_b2_horizon.py).
+
+SimpleRNN/BPTT checkpoints have no fast updates: ON, OFF and RESET all retain ordinary hidden recurrence,
+but reset hidden state at each story/pass. Fast-key PR is unavailable (reported as empty per-protocol objects
+in tiny mode, or an empty pr object in synth mode).
 
 Keys: the input x_t of each trunk layer (layer.in_traces after the forward), what its fast entries are written
 with and read by. PR = (sum l)^2 / sum l^2 of the second moment of unit-norm keys (uncentered: the 09-30
@@ -54,10 +60,17 @@ def load_model(path, device):
     return model, config, charset, next_iter - 1
 
 
+def has_fast_weights(model):
+    """SimpleRNN checkpoints have neither fast state nor a fast-only updater."""
+    return callable(getattr(model, "fast_only_dfa_step", None))
+
+
 def wipe_fast(model):
     """Zero every fast entry (trunk, i2h, i2o) and leave the slow entries alone: the wipe_fast part of
     EphemeralLinear.start_sequence_wipe without its batch mean of the slow entries. getattr because the B2 runtime
     copies (2bc949a) predate --fast_structure, the read-norm key mass and --order2_layers."""
+    if not has_fast_weights(model):
+        return
     for layer in (*model.linear_layers, model.i2h, model.i2o):
         if getattr(layer, "is_additive", False):
             layer.fast_state.data.zero_()
@@ -73,20 +86,23 @@ def wipe_fast(model):
 
 
 @torch.no_grad()
-def run_pass(model, onehot, config, write, keys=False, wipe_every=0):
+def run_pass(model, onehot, config, write, keys=False, wipe_every=0, wipe_at=None):
     """One batch [B, T, V] from a fresh wipe. Returns per-step losses [B, T-1] (target t+1 predicted at step t)
     and, if keys, a list per trunk layer of [T-1, B, D] inputs. wipe_every R > 0 zeroes the fast entries before
-    every step i > 0 with i % R == 0 (the WIPE R protocol)."""
+    every step i > 0 with i % R == 0 (the WIPE R protocol). wipe_at is a single fast-only RESET boundary;
+    neither wipe resets hidden. SimpleRNN never writes fast entries and returns [] for requested fast keys."""
     from ephemeral_model import dfa_output_error
     from utils import model_input
     criterion = torch.nn.CrossEntropyLoss(reduction="none")
-    model.start_sequence_wipe()
+    fast = has_fast_weights(model)
+    if fast:
+        model.start_sequence_wipe()
     hidden = model.initHidden(onehot.shape[0])
     steps = onehot.shape[1] - 1
     losses = []
-    collected = [[] for _ in model.linear_layers] if keys else None
+    collected = [[] for _ in model.linear_layers] if keys and fast else []
     for i in range(steps):
-        if wipe_every and i and i % wipe_every == 0:
+        if (wipe_every and i and i % wipe_every == 0) or i == wipe_at:
             wipe_fast(model)
         output, hidden = model(model_input(onehot, i, config["input_mode"], config["pe_matrix"]), hidden)
         if keys:
@@ -94,7 +110,7 @@ def run_pass(model, onehot, config, write, keys=False, wipe_every=0):
                 store.append(layer.in_traces.data.clone())
         loss, error = dfa_output_error(output, onehot[:, i + 1], criterion)
         losses.append(loss.detach())
-        if write:
+        if write and fast:
             model.fast_only_dfa_step(error, config["learning_rate"], config["ephemeral_update_clamp"],
                                      config.get("grad_norm_clip", 0))
     out = torch.stack(losses, 1)
@@ -237,7 +253,7 @@ def tiny(args):
     length = args.length
     texts = load_validation(args.stories, length, args.val_file)
     names = set(json.load(open(args.names))["names"]) if args.names else set()
-    n_layers = len(model.linear_layers)
+    n_layers = len(model.linear_layers) if has_fast_weights(model) else 0
     dim = model.linear_layers[0].in_features
     want_keys = args.mode == "tiny"
     corpus = {p: [CorpusPR(dim, device) for _ in range(n_layers)] for p in ("on", "off")} if want_keys else None
@@ -279,9 +295,14 @@ def tiny(args):
     loss_on = np.concatenate(loss_on)
     loss_off = np.concatenate(loss_off)
 
-    # RESET snippets: text[s - R : e] from a fresh wipe, ON writes; one snippet per mention.
+    # RESET snippets are equivalent only without recurrence. Recurrent RESET replays the full prefix,
+    # batching mentions with the same reset boundary so wipe_fast never touches another row's state.
     if pairs:
         jobs = [(i, which) for i, rec in enumerate(pairs) for which in (1, 2)]
+        if getattr(model, "enable_recurrence", False):
+            reset_mentions(model, config, texts, pairs, jobs, c2i, len(charset), batch, device)
+            print(f"reset full prefixes {len(jobs)} {time.time() - t0:.0f}s", flush=True)
+            jobs = []
         for js in range(0, len(jobs), batch):
             part = jobs[js:js + batch]
             snippets, spans = [], []
@@ -294,7 +315,8 @@ def tiny(args):
             losses = (run_pass(model, hot, config, write=True) * valid[:, 1:]).cpu().numpy()
             for row, ((i, which), (s, e)) in enumerate(zip(part, spans)):
                 pairs[i][f"reset{which}"] = mention_surprisal(losses[row], s, e, offset=s - R)
-        print(f"reset snippets {len(jobs)} {time.time() - t0:.0f}s", flush=True)
+        if jobs:
+            print(f"reset snippets {len(jobs)} {time.time() - t0:.0f}s", flush=True)
 
     # ---- summaries
     cls = np.zeros_like(loss_on, dtype=np.int8) - 1
@@ -303,7 +325,10 @@ def tiny(args):
     res = {"checkpoint": args.checkpoint, "iteration": iteration, "stories": len(texts), "length": length,
            "arm_config": {k: config.get(k) for k in ("learning_rate", "plasticity", "fast_layers", "layer_norm",
                                                        "fast_read_norm", "decouple_fast_feedback", "seed",
-                                                       "max_seq_len", "ephemeral_fraction", "forget_rate")}}
+                                                       "max_seq_len", "ephemeral_fraction", "forget_rate",
+                                                       "model_type", "updater", "enable_recurrence",
+                                                       "train_wipe_chars", "optimizer", "grad_norm_clip",
+                                                       "residual_connection")}}
     ce = {}
     for name, sel in (("all", cls >= 0), ("nonletter", cls == 0), ("novel_word_letter", cls == 1),
                       ("repeat_word_letter", cls == 2)):
@@ -339,6 +364,26 @@ def tiny(args):
     print(json.dumps(res["ce"]["all"]), f"{time.time() - t0:.0f}s")
 
 
+def reset_mentions(model, config, texts, pairs, jobs, c2i, n_characters, batch, device):
+    """Score recurrent RESET mentions from story-start hidden state, not snippet-start hidden state.
+
+    Stop after each mention (later characters cannot affect its causal predictions). Grouping by boundary
+    allows the existing all-row fast wipe, including every supported fast-state representation, unchanged.
+    """
+    groups = {}
+    for i, which in jobs:
+        s, _ = pairs[i][f"m{which}"]
+        groups.setdefault(s - R, []).append((i, which))
+    for boundary, group in groups.items():
+        for js in range(0, len(group), batch):
+            part = group[js:js + batch]
+            prefixes = [texts[pairs[i]["story"]][:pairs[i][f"m{which}"][1]] for i, which in part]
+            hot, valid = onehot_batch(prefixes, c2i, n_characters, max(map(len, prefixes)), batch, device)
+            losses = (run_pass(model, hot, config, write=True, wipe_at=boundary) * valid[:, 1:]).cpu().numpy()
+            for row, (i, which) in enumerate(part):
+                pairs[i][f"reset{which}"] = mention_surprisal(losses[row], *pairs[i][f"m{which}"])
+
+
 def summarize_pairs(pairs):
     out = {}
     for kind in ("name", "control"):
@@ -370,7 +415,8 @@ CLASSES = (("all", lambda c: c >= 0), ("nonletter", lambda c: c == 0), ("novel_w
 
 def horizon(args):
     """Round 2 (PREREG_fastlayers.md, "Batch B2 round 2"): held-out CE under ON, OFF and WIPE R for each R, by
-    position class. On the first batch it also checks WIPE 1 == OFF bit for bit."""
+    position class. Without recurrence, the first batch also checks WIPE 1 == OFF bit for bit.
+    With recurrence, report a fast-only intervention without imposing the OFF equivalence."""
     device = args.device
     model, config, charset, iteration = load_model(args.checkpoint, device)
     c2i = {c: i for i, c in enumerate(charset)}
@@ -394,7 +440,7 @@ def horizon(args):
         for p in protocols:
             r = int(p[4:]) if p.startswith("wipe") else 0
             losses = (run_pass(model, hot, config, write=(p != "off"), wipe_every=r) * valid[:, 1:]).cpu().numpy()
-            if p == "off" and start == 0:
+            if p == "off" and start == 0 and not getattr(model, "enable_recurrence", False):
                 check = (run_pass(model, hot, config, write=True, wipe_every=1) * valid[:, 1:]).cpu().numpy()
                 assert np.array_equal(check, losses), "WIPE 1 differs from OFF"
             for name, m in masks.items():
@@ -404,7 +450,9 @@ def horizon(args):
     ce = {p: {name: sums[p][name] / counts[name] for name, _ in CLASSES} for p in protocols}
     res = {"checkpoint": args.checkpoint, "iteration": iteration, "stories": len(texts), "length": args.length,
            "wipe_every": periods, "n": counts, "ce": ce,
-           "arm_config": {k: config.get(k) for k in ("plasticity", "fast_layers", "layer_norm", "seed")}}
+           "arm_config": {k: config.get(k) for k in ("plasticity", "fast_layers", "layer_norm", "seed",
+                                                      "model_type", "updater", "enable_recurrence",
+                                                      "train_wipe_chars", "forget_rate")}}
     gain = ce["off"]["all"] - ce["on"]["all"]
     res["H"] = {str(r): (ce["off"]["all"] - ce[f"wipe{r}"]["all"]) / gain if gain else float("nan") for r in periods}
     res["seconds"] = time.time() - t0
@@ -418,7 +466,7 @@ def synth(args):
     device = args.device
     model, config, charset, iteration = load_model(args.checkpoint, device)
     batches = load_heldout_batches(config["dataset"], config["batch_size"], args.batches, device)
-    n_layers = len(model.linear_layers)
+    n_layers = len(model.linear_layers) if has_fast_weights(model) else 0
     dim = model.linear_layers[0].in_features
     corpus = [CorpusPR(dim, device) for _ in range(n_layers)]
     episode = {l: ([], []) for l in range(n_layers)}

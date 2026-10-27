@@ -435,6 +435,9 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
             mismatches.append((key, config.get(key), loaded_config[key]))
     # --max_seq_len changes what every training sequence is (a checkpoint from before the flag
     # trained on whole sequences, 0).
+    if config.get('train_wipe_chars', 0) != loaded_config.get('train_wipe_chars', 0):
+        mismatches.append(('train_wipe_chars', config.get('train_wipe_chars', 0),
+                           loaded_config.get('train_wipe_chars', 0)))
     if config.get('max_seq_len', 0) != loaded_config.get('max_seq_len', 0):
         mismatches.append(('max_seq_len', config.get('max_seq_len', 0), loaded_config.get('max_seq_len', 0)))
     # --slow_update_every changes when the slow weights learn, so a run cannot switch it on resume

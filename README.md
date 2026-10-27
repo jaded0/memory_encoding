@@ -114,6 +114,18 @@ the mask load test and proposal C6. `tests/test_fast_structure.py` pins the beha
 fast weights in trunk layer 0 and `i2h` only), through the fused step, the CLI resume, the loop tracer
 and the mask load test's read-time ablation.
 
+### Within-story training wipes (`--train_wipe_chars N`)
+
+`--train_wipe_chars N` (default **0**, off) is an ephemeral-DFA-only block wipe before
+character steps `i > 0` with `i % N == 0`, counting from each story's start. It zeroes
+only fast state (including fast normalization/structured caches), without averaging slow
+batch copies, resetting recurrent hidden state, or resetting time counters. Unlike
+`--wipe_every`, this counts **characters**, not sequences. Resuming with a different
+period is refused. Held-out evaluation does not implicitly apply the training wipe;
+use `b2_eval.py horizon --wipe_every ...` to measure it separately. The default leaves
+the existing training operations unchanged. B2 follow-up scripts and fairness choices
+are in `scratch/b2_followups_2026-10-27/README.md`.
+
 ### Keeping fast weights across sequences (`--wipe_every N`)
 
 `--wipe_every N` (default 1, every sequence) zeroes the fast entries only at the start of every
@@ -899,6 +911,15 @@ the step has to be added to `dfa_layer_step` too. The bit-identity test fails if
 diverge.
 
 ### Held-out evaluation (`--heldout_eval_every`, `heldout.py`)
+
+The separate B2 evaluator (`scratch/b2_tinystories_2026-10-22/b2_eval.py`) also accepts
+SimpleRNN/BPTT checkpoints: it freezes all weights, preserves configured hidden recurrence,
+and reports no fast-key PR. ON/OFF/RESET then have identical predictions. Every story/pass
+starts with fresh hidden state. For recurrent fast models, OFF disables fast writes, not
+recurrence; RESET replays the full story prefix and wipes only fast entries at mention start
+minus 32, retaining hidden state. WIPE R likewise never clears hidden state, so its horizon
+is a fast-state intervention, not a bound on total recurrent context. The WIPE 1 == OFF
+assertion is checked only without recurrence; the original recurrence-off snippet path is unchanged.
 
 Off by default. It scores a DFA EphemeralRNN on episodes it did not train on, with its slow
 weights frozen, so the score measures what the fast weights remember. Each episode starts as a
