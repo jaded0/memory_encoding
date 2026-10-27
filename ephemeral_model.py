@@ -1956,6 +1956,24 @@ class EphemeralRNN(torch.nn.Module):
         self.i2h.start_sequence_wipe(wipe_fast)
         self.i2o.start_sequence_wipe(wipe_fast)
 
+    def wipe_fast_state(self):
+        """Mid-sequence fast-only wipe: no slow consolidation, hidden reset or time reset.
+
+        Used by --train_wipe_chars. In contrast, start_sequence_wipe averages the slow
+        copies across the batch and must never be used for a within-story wipe.
+        """
+        for layer in (*self.linear_layers, self.i2h, self.i2o):
+            if layer.is_additive:
+                layer.fast_state.data.zero_()
+            else:
+                layer.weight.data.masked_fill_(layer.ephemeral_mask, 0)
+                layer.per_sample_weights.data.masked_fill_(layer.ephemeral_mask.unsqueeze(0), 0)
+                if layer.fast_key_mass is not None:
+                    layer.fast_key_mass.zero_()
+                layer.fast_keys = layer.fast_key_weights = None
+                if layer.order2_fast is not None:
+                    layer.order2_fast.zero_()
+
     def set_plasticity(self, value):
         """Sets the ephemeral plasticity (alpha) in all EphemeralLinear layers (used on resume)."""
         print(f"Setting plasticity from checkpoint resume: {value}")
