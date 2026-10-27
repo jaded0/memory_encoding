@@ -20,6 +20,6 @@ t=$SLURM_ARRAY_TASK_ID
 seeds=(620101 620203 620307)
 seed=${seeds[$t]}
 echo "task $t -> Rbreak-F9-s$seed"; nvidia-smi --query-gpu=name --format=csv,noheader
-cd ~/f9s7_2026-10-27/code
+cd ~/f9s7_2026-10-27/code_v2data   # synth_datasets -> ~/memory_encoding_data/current (the 3pal data V2 trained on)
 mkdir -p $HOME/.cache/inductor_f9s7; export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d $HOME/.cache/inductor_f9s7/XXXX)
 bash scratch/f9_s7_2026-10-27/run_arm.sh F9 $seed 600000 ../runs

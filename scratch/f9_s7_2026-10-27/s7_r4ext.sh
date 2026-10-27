@@ -11,11 +11,11 @@
 # 8 batches, and the V2/F9 divergence guard (--early_stop_window 100; R4 used the default 10 at print 2500).
 # SRC, RUNDIR and ITERS override the source, run directory and 600000 (smoke tests only).
 # A second invocation continues from the run's own latest_checkpoint.pth.
-set -u
 GPU=$1
 src=${SRC:-$HOME/overnight_2026-10-01/runs/INT2_R4/latest_checkpoint.pth}
 d=${RUNDIR:-$HOME/f9s7_2026-10-27/runs/R4ext-s3141}; mkdir -p $d ../logs
 source ~/miniforge3/etc/profile.d/conda.sh; conda activate hebby
+set -u   # after conda activate (its MKL hook reads unset variables)
 export CUDA_VISIBLE_DEVICES=$GPU WANDB_MODE=disabled HF_DATASETS_OFFLINE=1 CUBLAS_WORKSPACE_CONFIG=:4096:8
 export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/inductor_r4ext_XXXXXX")
 [ -f $d/source_INT2_R4_300k.pth ] || cp -p $src $d/source_INT2_R4_300k.pth

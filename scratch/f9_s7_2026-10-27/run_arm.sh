@@ -10,6 +10,7 @@
 # longest excursion that recovered in this recipe is ~29 windows (battery A1 plain s620411, 5k-19k), and V2's onset
 # rule needs 5 windows, so the guard cannot stop a run before its onset is recorded or end a recoverable excursion.
 # A NaN/inf loss always stops train.py. The code commit is read from CODE_COMMIT (written by stage_code.sh).
+# SAVE_FREQ overrides the 25k checkpoint interval (smoke tests only).
 # Resumable: re-running continues from <run>/latest_checkpoint.pth unless the guard already stopped the run.
 set -u
 arm=$1; seed=$2; iters=$3; runs=$4
@@ -30,7 +31,7 @@ else
     --plasticity 10000 --ephemeral_fraction .2 --forget_rate .01 --weight_clamp $clamp --enable_recurrence False \
     --residual_connection False --layer_norm False --positional_encoding_dim 0 --track false \
     --deterministic true --fused_update True --optimizer sgd --grad_norm_clip 0 --print_freq 500 \
-    --early_stop_window 100 --checkpoint_save_freq 25000 --checkpoint_keep_every 50000 --seed $seed --resume true \
+    --early_stop_window 100 --checkpoint_save_freq ${SAVE_FREQ:-25000} --checkpoint_keep_every 50000 --seed $seed --resume true \
     --n_iters $iters --heldout_eval_every 50000 --heldout_batches 8 \
     --checkpoint_dir $d $extra >> $d/train.log 2>&1
   echo "TRAIN EXIT $?" | tee -a $d/train.log
