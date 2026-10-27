@@ -230,8 +230,10 @@ class SimpleRNNProtocolTest(unittest.TestCase):
         expected = b2_eval.run_pass(self.model, self.hot, CONFIG, write=False)
         b2_eval.run_pass(self.model, self.hot.flip(1), CONFIG, write=True)
         self.assertTrue(torch.equal(expected, b2_eval.run_pass(self.model, self.hot, CONFIG, write=False)))
-        self.assertTrue(torch.equal(expected, b2_eval.run_pass(self.model, self.hot.flip(0), CONFIG,
-                                                              write=True).flip(0)))
+        # Permuting batch rows can change CPU GEMM rounding by one float32 ULP;
+        # identical-order repeat passes above must still be bit-identical.
+        torch.testing.assert_close(expected, b2_eval.run_pass(self.model, self.hot.flip(0), CONFIG,
+                                                             write=True).flip(0), rtol=0, atol=1e-6)
         self.model.enable_recurrence = False
         self.assertFalse(torch.equal(expected, b2_eval.run_pass(self.model, self.hot, CONFIG, write=False)))
 
