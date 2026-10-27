@@ -16,9 +16,10 @@ The proposals page and canonical PREREG were read only, never edited.
   Jaden approved retrain, but main session must reread his log before launch.
 * **B**: REC-NOFAST, REC-DEEP, RNN-BPTT; 5 seeds × 20k each.
   **Needs Jaden's explicit yes.** All have recurrence on. True RNN baseline is
-  SimpleRNN/BPTT, Adam lr1e-4, clip1, residual, as fixed in README.
+  SimpleRNN/BPTT, Adam lr1e-4, clip1, residual, **LN=false**, as fixed in README.
 * `arms.sh` is the single recipe table; tests parse every arm through train.parse_args.
-  Shared B2 H1024×3, B16, TinyStories crop512, LN, last_one, deterministic.
+  Shared B2 H1024×3, B16, TinyStories crop512, last_one, deterministic; LN in DFA
+  arms only (the RNN uses the fixed README baseline, without LN).
 * `--wipe_every` on main counts **sequences**. New default-off
   `--train_wipe_chars` counts within-story **characters**, wiping only fast state,
   never consolidating slow weights or resetting hidden/time counters. Resume changes refused.
@@ -32,7 +33,7 @@ state): V73, H1024, d1097, **4,818,024** weights+biases each. Ephemeral fast slo
 replace slow slots; their B16 dynamic copies, masks, feedback, traces/plasticity are
 extra working/storage overhead, not extra forward slots. REC-NOFAST leaves its .2
 masked slots zero and therefore has fewer adaptable slots; RNN has all slots slow
-trainable. RNN also has prescribed Adam/residual/clamp differences. This conservative
+trainable. RNN also has prescribed Adam/LN/residual/clamp differences. This conservative
 comparison does not claim equal slow parameter count or a clean updater-only ablation.
 
 ## Stage inputs (no training yet)
@@ -125,8 +126,9 @@ remain in the unchanged evaluator output schemas for the full prediction scoreca
 Prefer **ORC A100**, one arm per GPU; arrays capped at3. Historical B2 at the
 same size/data/20k costs **6–7 GPU-h/train**: A15 trains =90–105, plus final,
 curves, horizon and old-control evaluation roughly15–30 => **105–135 GPU-h**.
-Part B is provisional **110–220 GPU-h** including recurrence/BPTT and slower
-full-prefix RESET evaluation; update using measured production-node throughput.
+Part B is provisional **80–130 GPU-h**:10 DFA trains60–70,5 BPTT trains5–15,
+plus15–45 for recurrent/full-prefix evaluation. The corrected BPTT smoke runs
+2.16 it/s on omen versus DFA .30–.34; update using production-node throughput.
 These are resource reservations, not a claim smoke predicts convergence.
 On omen (mobile4090) the full512 smoke is roughly .3 it/s: ≥17 GPU-h per20k arm,
 so it is a smoke/overflow host, not the preferred production placement. The old
@@ -145,6 +147,12 @@ comparisons; report observed runtime and peak memory alongside CE.
   Committed `smoke_evidence.json` is the lightweight timings/memory/status record;
   scores are not used to select arms. Reproduce with staged sample JSON:
   `B2FU_SMOKE_ROOT=/tmp/opencode/b2fu-smoke bash scratch/b2_followups_2026-10-27/smoke.sh`.
+* **Disclosed correction:** the first RNN smoke accidentally inherited B2 DFA's
+  `layer_norm=true` rather than the README fixed RNN recipe. It failed with a
+  nonfinite loss before the first10-iteration print, no usable checkpoint. The
+  preserved log is `logs/RNN-BPTT-LN-FAILED.log`. The final RNN arm is explicitly
+  **LN=false** (DFA remains LN=true), with a separate bounded smoke. The prereg
+  discloses this post-smoke recipe correction; numbered predictions were not changed.
 * CPU suite has the **pre-existing golden fixture environment mismatch**:
   fixture torch2.5.1 vs installed2.5.1+cu121. Origin/main has the same failure.
   Removing only the version suffix in a one-off process exposes a tiny existing
@@ -152,7 +160,11 @@ comparisons; report observed runtime and peak memory alongside CE.
   no tolerances changed. Stronger check: **all seven default characterization
   traces are byte-identical to origin/main**, 343,122 bytes, in the same env.
 * New flag and recurrent-evaluator/launcher CPU tests pass; exact final suite
-  counts and GPU evidence are in the vault ready note. bash -n and diff --check pass.
+  count: **439 passed,10 skipped,425 subtests passed,1 pre-existing fixture failure**.
+  All six final GPU arms pass:309/333/328/332/321/55seconds including both evals.
+  Peak reserved CUDA1722MiB for DFA,466MiB for BPTT; allocation cap .25 kept
+  these well below5GB. bash -n and diff --check pass. `smoke_evidence.json` retains
+  the failed LN attempt as well as all successful final-arm evidence.
 
 ## Open questions for Jaden / main session
 

@@ -30,4 +30,12 @@ for arm in ('DEEP-W16', 'DEEP-F03', 'DEEP-F10', 'REC-NOFAST', 'REC-DEEP', 'RNN-B
                 'last_interval_iters_per_sec': float(re.findall(r'iters_per_sec: ([\d.]+)', text)[-1]),
                 'tiny_stories': final['stories'], 'tiny_length': final['length'],
                 'horizon_periods': horizon['wipe_every'], 'status': 'passed'}
+failed = args.root / 'logs' / 'RNN-BPTT-LN-FAILED.log'
+if failed.exists():
+    assert 'Non-finite loss (nan)' in failed.read_text()
+    out['initial_RNN_BPTT_LN_attempt'] = {
+        'status': 'failed', 'layer_norm': True,
+        'reason': 'nonfinite loss before first 10-iteration print; no usable checkpoint',
+        'resolution': 'corrected to fixed README baseline layer_norm=false; no prediction changes',
+        'log': str(failed)}
 args.out.write_text(json.dumps(out, indent=2) + '\n')

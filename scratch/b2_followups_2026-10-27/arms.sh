@@ -19,7 +19,7 @@ arm_args() {
     REC-DEEP) FLAGS+=(--enable_recurrence true);;
     RNN-BPTT) FLAGS+=(--model_type rnn --updater bptt --enable_recurrence true
       --optimizer adam --learning_rate .0001 --grad_norm_clip 1 --residual_connection true
-      --weight_clamp 0 --fused_update false);;
+      --weight_clamp 0 --layer_norm false --fused_update false);;
     *) echo "Unknown arm $1" >&2; return 2;;
   esac
 }

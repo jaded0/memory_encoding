@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-27",
+  "host": "omen",
+  "gpu": "RTX 4090 mobile, 16376 MiB",
+  "training_recipe": "H1024 x 3, B16, crop512, 100 iterations, seed7901; real TinyStories sample",
+  "evaluation_recipe": "b2_eval tiny and horizon, 16 validation stories, length64, R=1,16,64",
+  "allocator_fraction_limit": 0.25,
+  "maximum_per_arm_wall_seconds": 590,
+  "DEEP-W16": {"status": "passed", "seconds_train_plus_two_evals": 309, "iterations": 100, "reserved_peak_mib": 1722, "allocated_peak_mib": 1194.7, "last_interval_iters_per_sec": 0.3371},
+  "DEEP-F03": {"status": "passed", "seconds_train_plus_two_evals": 333, "iterations": 100, "reserved_peak_mib": 1722, "allocated_peak_mib": 1194.7, "last_interval_iters_per_sec": 0.3146},
+  "DEEP-F10": {"status": "passed", "seconds_train_plus_two_evals": 328, "iterations": 100, "reserved_peak_mib": 1722, "allocated_peak_mib": 1194.7, "last_interval_iters_per_sec": 0.3269},
+  "REC-NOFAST": {"status": "passed", "seconds_train_plus_two_evals": 332, "iterations": 100, "reserved_peak_mib": 1722, "allocated_peak_mib": 1194.7, "last_interval_iters_per_sec": 0.3017},
+  "REC-DEEP": {"status": "passed", "seconds_train_plus_two_evals": 321, "iterations": 100, "reserved_peak_mib": 1722, "allocated_peak_mib": 1194.7, "last_interval_iters_per_sec": 0.3332},
+  "RNN-BPTT": {"status": "passed", "seconds_train_plus_two_evals": 55, "iterations": 100, "reserved_peak_mib": 466, "allocated_peak_mib": 429.6, "last_interval_iters_per_sec": 2.1604},
+  "initial_RNN_BPTT_LN_attempt": {
+    "status": "failed",
+    "layer_norm": true,
+    "reason": "nonfinite loss before first 10-iteration print; no usable checkpoint",
+    "resolution": "corrected to fixed README baseline layer_norm=false; predictions unchanged",
+    "log": "/tmp/opencode/b2fu-smoke/logs/RNN-BPTT-LN-FAILED.log"
+  },
+  "cpu_tests": {"passed": 439, "failed": 1, "skipped": 10, "subtests_passed": 425, "failure": "pre-existing golden fixture torch version mismatch; reproduced on origin/main"},
+  "default_identity": {
+    "base": "a4970cfc625a1d7012c9854c7763d583402bf0e6",
+    "trace_count": 7,
+    "byte_identical": true,
+    "bytes": 343122,
+    "baseline_and_new_sha256": "450c9767640ddebd5cf5bdf0b8e6dbd72bd0c60adc08838e1909808fe1b1657e"
+  },
+  "local_artifacts": "/tmp/opencode/b2fu-smoke/",
+  "production_launches": 0,
+  "orc_test_only": "blocked: keyboard-interactive SSH authentication"
+}

@@ -32,6 +32,7 @@ class B2FollowupLaunchersTest(unittest.TestCase):
                 self.assertEqual(args.grad_norm_clip, 1)
                 self.assertEqual(args.learning_rate, .0001)
                 self.assertTrue(args.residual_connection)
+                self.assertFalse(args.layer_norm)  # fixed README baseline, not B2's DFA stabilizer
 
     def test_production_launcher_requires_approval(self):
         for arm in ('DEEP-W16', 'REC-DEEP'):
