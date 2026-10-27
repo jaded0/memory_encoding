@@ -22,6 +22,42 @@ from ephemeral_model import order2_features, order2_sparse_expansion
 from kr_load_tasks import CHARSET, generate_sample
 
 
+def make_observer(o2, layers=(1, 2)):
+    """Return (callback, records); callback observes only, never alters fast state.
+
+    The default preserves the original screen. Callers can request L0 as well.
+    """
+    rows, expansions = {}, {}
+
+    def observe(layer, xs, xq, si, oi, proj, fraction, seed):
+        if layer not in layers or not oi:
+            return
+        x = torch.cat((xs, xq[None]))
+        maps = {'linear': x}
+        for order in ('order1', 'order2'):
+            maps[order] = order2_features(x, proj, order, 4., fraction)
+        for wide, m, ks in ((False, 273, (8, 17, 34)), (True, 4096, (64, 256))):
+            dim = x.shape[1] if wide else 16
+            key = (layer, wide)
+            if key not in expansions:
+                expansions[key] = order2_sparse_expansion(dim, m, seed, layer).to(x)
+            p = torch.eye(dim, device=x.device, dtype=x.dtype) if wide else proj
+            for k in ks:
+                name = f'sparse_{"full" if wide else "z16"}_m{m}_k{k}'
+                maps[name] = order2_features(x, p, 'sparse', 4., fraction,
+                                             sparse_expansion=expansions[key], sparse_k=k)
+        for name, features in maps.items():
+            kv = (features[:-1] @ features[-1]).cpu().numpy()
+            cos = F.cosine_similarity(features[:-1], features[-1:], dim=1).cpu().tolist()
+            rows.setdefault(f'L{layer}', {}).setdefault(name, []).append({
+                'ratio': o2.ratio(abs(kv[si]), np.abs(kv[oi])),
+                'selectivity': o2.selectivity(kv[si], kv[oi]),
+                'store_cosine': cos[si], 'wrong_cosines': [cos[j] for j in oi],
+                'store_kernel': float(kv[si]), 'wrong_kernels': kv[oi].tolist()})
+
+    return observe, rows
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('checkpoint')
@@ -48,35 +84,7 @@ def main():
             yield texts, F.one_hot(ids, len(CHARSET)).float()
 
     o2.read_checkpoint, o2.load_heldout_batches = unfused, batches
-    rows, expansions = {}, {}
-
-    def observe(layer, xs, xq, si, oi, proj, fraction, seed):
-        if layer not in (1, 2):
-            return
-        x = torch.cat((xs, xq[None]))
-        maps = {'linear': x}
-        for order in ('order1', 'order2'):
-            maps[order] = order2_features(x, proj, order, 4., fraction)
-        for wide, m, ks in ((False, 273, (8, 17, 34)), (True, 4096, (64, 256))):
-            dim = x.shape[1] if wide else 16
-            key = (layer, wide)
-            if key not in expansions:
-                expansions[key] = order2_sparse_expansion(dim, m, seed, layer).to(x)
-            # Identity projection bypasses P, but uses exactly the same normalized
-            # signed-top-k algorithm; never changes the model or fast writes.
-            p = torch.eye(dim, device=x.device, dtype=x.dtype) if wide else proj
-            for k in ks:
-                name = f'sparse_{"full" if wide else "z16"}_m{m}_k{k}'
-                maps[name] = order2_features(x, p, 'sparse', 4., fraction,
-                                             sparse_expansion=expansions[key], sparse_k=k)
-        for name, features in maps.items():
-            kv = (features[:-1] @ features[-1]).cpu().numpy()
-            cos = F.cosine_similarity(features[:-1], features[-1:], dim=1).cpu().tolist()
-            rows.setdefault(f'L{layer}', {}).setdefault(name, []).append({
-                'ratio': o2.ratio(abs(kv[si]), np.abs(kv[oi])),
-                'selectivity': o2.selectivity(kv[si], kv[oi]),
-                'store_cosine': cos[si], 'wrong_cosines': [cos[j] for j in oi],
-                'store_kernel': float(kv[si]), 'wrong_kernels': kv[oi].tolist()})
+    observe, rows = make_observer(o2)
 
     start = time.monotonic()
     baseline = o2.run(args.checkpoint, 8, 'cuda', [4.], kernel_observer=observe)

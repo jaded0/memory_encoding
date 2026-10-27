@@ -467,6 +467,27 @@ Stability interventions, all ephemeral + DFA only and off by default:
     `--fast_read_norm`, backprop and BPTT are refused. Off (default, empty) is the original model, bit
     for bit (`tests/test_order2.py`).
 
+### Two-character MQAR: overlapping, spread keys (K13bigkey)
+
+`python bench_tasks.py mqar2_4_q4 mqar2_8_q4 mqar2_16_q4 mqar2_32_q4`
+generates seeded train/validation/test tasks with their own shared `BIGKEY_CHARSET`.
+Each table slot is two letters from a-j followed immediately by a digit, e.g.
+`ab3cd7`; each query is `?ab3`. Keys are distinct pairs (100 possible); values are
+independent digits. Always train with **`--input_mode last_two`**: at the step
+predicting a value, layer0 sees the exact same two-letter key at store and query.
+Keys sharing exactly one same-slot letter have input cosine .5; unrelated pairs
+have cosine0. This is structured crosstalk rather than mqarw's orthogonal one-hots.
+Two-letter composition increases key count, not input rank to100: the full set's
+uncentered unit-key PR is about18.18 (rank19), so scaling claims must respect that limit.
+
+`mqar2gap_K_q1` replaces all unqueried table slots with `...`, preserving query
+delay. Larger Q retains all queried slots, so it is not a one-item control.
+Heldout observed/strict/no_fast scoring uses exact table-value source indices;
+lags are capped at57 for training metric buckets, not for source metadata. Core
+hash splitting keeps tables disjoint across splits. Defaults/legacy tasks do not
+change. See `scratch/k13_bigkey_2026-10-27/README.md` for preregistration, bounded
+local smoke, approved lin-only pilot and fail-closed confirmatory launch commands.
+
 The settings may be introduced at a resume boundary for causal interventions. Their defaults
 preserve the original update exactly; `tests/test_drift_interventions.py` covers the error,
 scaling, CLI and fused/unfused paths.

@@ -42,6 +42,14 @@ Layout and scoring are mqar's (2K table characters, then '?' key value per query
 of queries of an episode are read from its text, so a mixture needs nothing else. In a batch the
 shorter episodes are padded with zero rows, which write nothing.
 
+Two-character MQAR (2026-10-27): mqar2_<K>[_q<Q>] draws K distinct pairs from a-j
+times a-j, with independent digit values. Table slots are pair+digit (3 characters),
+queries '?' + pair + digit (4 characters). Use input_mode last_two: store/query
+keys then match exactly while pairs sharing one same-slot letter have cosine .5.
+mqar2gap_<K>[_q<Q>] replaces unqueried table slots with '...'; default Q=1 there,
+versus Q=K for mqar2. Both use their own shared BIGKEY_CHARSET, core hashing and
+the same lag cap as mqarw. There are 100 pairs, rank19, not100 independent axes.
+
 Generate: python bench_tasks.py [names ...] [--seed 0] (default: mqar_4, mod3_8, parity_8, selcopy_3_9).
 Each split has its own random stream from (seed, name, split), like kv_tasks.
 """
@@ -59,23 +67,38 @@ DEFAULT_SEED = kv_tasks.DEFAULT_SEED
 BLANK = DISTRACTOR
 WIDE_KEYS = string.ascii_lowercase + string.ascii_uppercase  # 52 keys; a-j are mqar's KEYS
 WIDE_CHARSET = CHARSET + WIDE_KEYS[len(KEYS):]  # kv_tasks' 23 symbols keep their indices
-FAMILIES = ("mqar", "count", "selcopy", "mqarw")
+BIGKEY_CHARSET = " abcdefghij0123456789?."
+BIGKEY_KEYS = tuple(a + b for a in KEYS for b in KEYS)
+BIGKEY_LOADS = (4, 8, 16, 32)
+FAMILIES = ("mqar", "count", "selcopy", "mqarw", "mqar2", "mqar2gap")
 _NAMES = {
     "mqar": re.compile(r"^mqar_(\d+)(?:_q(\d+))?$"),
     "count": re.compile(r"^(?:parity|mod([3-9]))_(\d+)$"),
     "selcopy": re.compile(r"^selcopy_(\d+)_(\d+)$"),
     "mqarw": re.compile(r"^mqarw_(?:(\d+)|r(\d+)_(\d+))(?:_q(\d+))?$"),
+    "mqar2": re.compile(r"^mqar2_(\d+)(?:_q(\d+))?$"),
+    "mqar2gap": re.compile(r"^mqar2gap_(\d+)(?:_q(\d+))?$"),
 }
 # The load sweep (2026-10-22): the training mixture, and fixed loads K with min(K, 8) queries.
 WIDE_LOADS = (1, 2, 4, 8, 12, 16, 24, 32, 40, 48, 52)
 REGISTERED = ("mqar_2", "mqar_4", "mqar_8", "mod3_4", "mod3_8", "mod3_12", "parity_4", "parity_8",
               "parity_12", "selcopy_3_9", "selcopy_4_12", "mqarw_r1_52_q8",
-              *(f"mqarw_{k}_q{min(k, 8)}" for k in WIDE_LOADS))
+              *(f"mqarw_{k}_q{min(k, 8)}" for k in WIDE_LOADS),
+              *(f"mqar2_{k}_q4" for k in BIGKEY_LOADS),
+              *(f"mqar2gap_{k}_q1" for k in BIGKEY_LOADS))
 
 
 def parse_name(name):
     """(family, params) for a benchmark task name, else None. mqar: (K, Q); count: (modulus, L);
     selcopy: (N, T)."""
+    for family in ("mqar2", "mqar2gap"):
+        match = _NAMES[family].match(name)
+        if match:
+            k = int(match.group(1))
+            q = int(match.group(2) or (1 if family == "mqar2gap" else k))
+            if not 1 <= q <= k <= len(BIGKEY_KEYS):
+                raise ValueError(f"{name}: need 1 <= Q <= K <= {len(BIGKEY_KEYS)}")
+            return family, (k, q)
     match = _NAMES["mqar"].match(name)
     if match:
         k = int(match.group(1))
@@ -115,6 +138,8 @@ def parse_name(name):
 
 def charset(name):
     """The character set of a benchmark task: WIDE_CHARSET for mqarw, else kv_tasks' CHARSET."""
+    if any(_NAMES[f].match(name) for f in ("mqar2", "mqar2gap")):
+        return BIGKEY_CHARSET
     return WIDE_CHARSET if _NAMES["mqarw"].match(name) else CHARSET
 
 
@@ -128,6 +153,14 @@ def registered_names():
 
 def generate_sample(rng, family, params):
     """One episode string, drawn with rng (a random.Random)."""
+    if family in ("mqar2", "mqar2gap"):
+        k, q = params
+        keys = rng.sample(BIGKEY_KEYS, k)
+        values = [rng.choice(VALUES) for _ in range(k)]
+        queries = rng.sample(range(k), q)
+        table = "".join(key + value if family == "mqar2" or i in queries else "..."
+                        for i, (key, value) in enumerate(zip(keys, values)))
+        return table + "".join(QUERY + keys[i] + values[i] for i in queries)
     if family == "mqar":
         k, q = params
         keys = rng.sample(KEYS, k)
@@ -183,6 +216,11 @@ def episode(text, name):
     answer is stored at (parity/mod: the first bit, which only sets the lag bucket)."""
     family, params = parse_name(name)
     query_at = text.index(QUERY)
+    if family in ("mqar2", "mqar2gap"):
+        table = {text[i:i + 2]: i + 2 for i in range(0, query_at, 3)
+                 if text[i:i + 3] != "..."}
+        return {"answers": {i + 3: table[text[i + 1:i + 3]]
+                            for i in range(query_at, len(text.rstrip(PAD)), 4)}}
     if family == "mqar":
         k, q = params
         return {"answers": {2 * k + 3 * j + 2: _mqar_source(text, k, j) for j in range(q)}}
@@ -212,7 +250,7 @@ WIDE_LAG_CAP = 57
 def recall_targets(text, name):
     """({target index: lag}, None), lag = target - source - 1, as metrics.recall_targets (mqarw:
     min(lag, WIDE_LAG_CAP))."""
-    cap = WIDE_LAG_CAP if _NAMES["mqarw"].match(name) else None
+    cap = WIDE_LAG_CAP if any(_NAMES[f].match(name) for f in ("mqarw", "mqar2", "mqar2gap")) else None
     return {answer: answer - source - 1 if cap is None else min(answer - source - 1, cap)
             for answer, source in episode(text, name)["answers"].items()}, None
 
@@ -234,7 +272,7 @@ def generate_dataset(name, seed=DEFAULT_SEED, sizes=None, out_dir="synth_dataset
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Generate benchmark synth_datasets (mqar, parity/mod, selcopy).")
+    parser = argparse.ArgumentParser(description="Generate benchmark synth_datasets (mqar/w/2, parity/mod, selcopy).")
     parser.add_argument("names", nargs="*", default=["mqar_4", "mod3_8", "parity_8", "selcopy_3_9"])
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--out_dir", default="synth_datasets")
@@ -242,7 +280,8 @@ def main(argv=None):
     for name in args.names:
         if not is_bench(name):
             parser.error(f"{name} is not a benchmark task name (mqar_<K>[_q<Q>], parity_<L>, mod<m>_<L>, "
-                         "selcopy_<N>_<T>, mqarw_<K>[_q<Q>], mqarw_r<A>_<B>[_q<Q>])")
+                         "selcopy_<N>_<T>, mqarw_<K>[_q<Q>], mqarw_r<A>_<B>[_q<Q>], "
+                         "mqar2_<K>[_q<Q>], mqar2gap_<K>[_q<Q>])")
         generate_dataset(name, args.seed, out_dir=args.out_dir)
 
 
