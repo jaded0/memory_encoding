@@ -12,9 +12,11 @@
 #SBATCH --job-name=k13b-pilot
 #SBATCH --array=0-3%4
 #SBATCH --output=logs/%x_%A_%a.out
-set -euo pipefail
+set -eo pipefail
+set +u  # ORC's MKL activation reads optional MKL_INTERFACE_LAYER without a default.
 source "$HOME/.bashrc" >/dev/null 2>&1
 conda activate hebby
+set -u
 : "${K13B_CODE:?clean checkout}" "${K13B_COMMIT:?expected commit}"
 ks=(4 8 16 32)
 t=${SLURM_ARRAY_TASK_ID:?}

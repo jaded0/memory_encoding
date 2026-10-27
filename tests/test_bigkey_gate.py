@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -179,3 +180,14 @@ def test_train_exit_marker_and_failed_rebuild_clear_stale_approval(pilot):
 def test_bash_syntax():
     for filename in ("train.sh", "pilot.sbatch", "confirm.sbatch"):
         subprocess.run(["bash", "-n", str(ROOT / "scratch/k13_bigkey_2026-10-27" / filename)], check=True)
+
+
+@pytest.mark.parametrize("filename", ["pilot.sbatch", "confirm.sbatch"])
+def test_conda_activation_allows_unset_mkl_environment(tmp_path, filename):
+    # Reproduce ORC's activate.d hook without sourcing real workstation credentials.
+    (tmp_path / '.bashrc').write_text('conda() { echo "$MKL_INTERFACE_LAYER"; }\n')
+    script = (ROOT / 'scratch/k13_bigkey_2026-10-27' / filename).read_text()
+    activation = script.split(': "${K13B_CODE', 1)[0]
+    env = dict(os.environ, HOME=str(tmp_path))
+    env.pop('MKL_INTERFACE_LAYER', None)
+    subprocess.run(['bash', '-u', '-c', activation], env=env, check=True, capture_output=True)

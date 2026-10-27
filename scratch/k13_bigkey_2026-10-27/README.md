@@ -30,7 +30,8 @@ GPU0 only, unfused1080Ti; smoke allocator25% (<3GiB), analysis30% (<4GiB).
 Three-iteration full-width/B16/K32 training smoke finished with peak allocated
 1,222,862,336bytes. Tiny local data is plumbing evidence, not convergence evidence.
 Generate standard datasets fresh on ORC; never copy the smoke synth_datasets there.
-Initial full suite447 passed/443 subtests; final results live in the vault handoff.
+Full suite484 passed/443 subtests before the ORC activation regression tests;
+final results live in the vault handoff. Analysis smoke passed in11.01s at739.5MiB.
 
 ## Exact approved pilot launch (ORC)
 
@@ -107,3 +108,13 @@ For collection use rsync from ORC (checkpoints are large; JSON/log files suffice
 first review). Read final_eval.json's `heldout_strict/recall_acc`; average each arm's
 five seeds, report paired seed differences, counts positive, all invalid/failure rows.
 The earlier o2 collector is not assumed to understand the new task or analysis schema.
+Use the dedicated summary (missing/invalid rows are never silently dropped):
+
+```bash
+python scratch/k13_bigkey_2026-10-27/summarize.py "$PILOT_ROOT" --mode pilot
+python scratch/k13_bigkey_2026-10-27/summarize.py "$CONFIRM_ROOT" --mode confirm
+```
+
+ORC environment caveat: conda's MKL activate hook reads an optional unset variable.
+Both sbatch scripts deliberately disable nounset during activation, then restore it.
+This was found during CPU dataset preparation, before any GPU allocation/submission.

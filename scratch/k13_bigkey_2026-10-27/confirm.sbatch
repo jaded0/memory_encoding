@@ -15,9 +15,11 @@
 #SBATCH --job-name=k13b-confirm
 #SBATCH --array=0-24%4
 #SBATCH --output=logs/%x_%A_%a.out
-set -euo pipefail
+set -eo pipefail
+set +u  # ORC's MKL activation reads optional MKL_INTERFACE_LAYER without a default.
 source "$HOME/.bashrc" >/dev/null 2>&1
 conda activate hebby
+set -u
 : "${K13B_CODE:?clean checkout}" "${K13B_COMMIT:?expected commit}"
 : "${K13B_GATE_MANIFEST:?explicitly approved frozen gate manifest}"
 cd "$K13B_CODE"
