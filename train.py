@@ -503,6 +503,7 @@ def build_model(config, charset, n_characters):
             fast_write_from_readout_scale=config.get('fast_write_from_readout_scale', 1.0),
             fast_read_norm=config.get('fast_read_norm', 'off'),
             fast_read_norm_lr=config.get('learning_rate'),
+            absrun_floor=config.get('absrun_floor', 0.0),
             fast_structure=config.get('fast_structure', 'exclusive'),
             order2_layers=parse_layer_list(config.get('order2_layers', '')),
             order2_map=config.get('order2_map', 'order2'),
@@ -665,6 +666,11 @@ def build_parser():
                              'sum of absolute key-query scores sum_s |x_s . x|; rms: cap rms(F x) at rms(S x); '
                              'ln: LayerNorm (no gain or bias) of F x alone. Off (default) is the one-bmm forward, '
                              'bit for bit. See README "Fast read normalization".')
+    parser.add_argument('--absrun_floor', type=float, default=0.0, metavar='C',
+                        help='With --fast_read_norm absrun, DIAGNOSTIC (2026-10-27, S12 follow-up 3): divide '
+                             'the fast read by max(1, n / C) instead of max(1, n), a weaker divisor for C > 1 '
+                             '(n = absrun\'s decayed |k.q| sum times lr*alpha*fraction). 0 (default) is off: '
+                             'absrun unchanged, bit for bit. See README "Fast read normalization".')
     parser.add_argument('--order2_layers', type=str, default='',
                         help='Ephemeral DFA (2026-10-22, video experiment 5): comma list of trunk layers that '
                              'get an order-two fast matrix G, read as G psi(x) next to the layer\'s other '
@@ -876,6 +882,8 @@ def check_argument_combinations(args, parser):
             parser.error("--decouple_fast_feedback and --fast_write_from_readout are not defined with "
                          "--grad_norm_clip (which error would the clip norm and scale?). See "
                          "'Clipping with the fast-write flags' in README.md.")
+    if args.absrun_floor < 0 or (args.absrun_floor and args.fast_read_norm != 'absrun'):
+        parser.error("--absrun_floor needs a value > 0 and --fast_read_norm absrun (0 is off).")
     if args.fast_read_norm != 'off':
         if args.model_type != 'ephemeral' or args.updater != 'dfa':
             parser.error("--fast_read_norm supports only --model_type ephemeral --updater dfa.")

@@ -604,6 +604,9 @@ class EphemeralLinear(nn.Linear):
         # 'absrun''s stored keys of the sequence's earlier steps and their decay weights.
         self.fast_read_norm = 'off'
         self.fast_read_coef = 0.0
+        # --absrun_floor c (2026-10-27, S12 follow-up 3): 'absrun' divides by max(1, n / c) instead
+        # of max(1, n). 0 (default) leaves the original absrun path untouched.
+        self.fast_read_absrun_floor = 0.0
         self.register_buffer('fast_key_mass', None, persistent=False)
         self.register_buffer('fast_keys', None, persistent=False)
         self.register_buffer('fast_key_weights', None, persistent=False)
@@ -905,6 +908,8 @@ class EphemeralLinear(nn.Linear):
             if self.fast_keys is not None and self.fast_keys.shape[0] != input.shape[0]:
                 self.fast_keys = self.fast_key_weights = None
             mass = fast_abs_score_mass(self.fast_keys, self.fast_key_weights, input)
+            if self.fast_read_absrun_floor:
+                coef = coef / self.fast_read_absrun_floor  # --absrun_floor c: max(1, n / c)
             scale = fast_read_scale('absrun', fast, slow, mass, input, coef)
             new_weight = key.new_ones(1)
             if self.fast_keys is None:
@@ -1251,7 +1256,7 @@ class EphemeralRNN(torch.nn.Module):
         readout_nlms=False, slow_nlms=False, readout_slow_lr_scale=1.0, trunk_slow_lr_scale=1.0,
         fast_layers=None, decouple_fast_feedback=None, fast_write_from_readout=None,
         fast_write_from_readout_scale=1.0, fast_read_norm='off', fast_read_norm_lr=None,
-        fast_structure='exclusive',
+        absrun_floor=0.0, fast_structure='exclusive',
         order2_layers=None, order2_map='order2', order2_mode='parallel', order2_temperature=4.0,
         order2_dim=16, order2_seed=0
     ):
@@ -1281,6 +1286,7 @@ class EphemeralRNN(torch.nn.Module):
         "aimed write"), scaled by --fast_write_from_readout_scale.
         fast_read_norm / fast_read_norm_lr: --fast_read_norm (see set_fast_read_norm); 'running'
         and 'absrun' need the learning rate.
+        absrun_floor: --absrun_floor c, 'absrun' divides by max(1, n / c); 0 (default) is off.
         fast_structure: --fast_structure (parse_fast_structure) for the trunk layers that have fast
         entries and i2h; i2o is always the slow-only head. The additive structures take the
         per-step DFA path (unfused or --fused_update, held-out evaluation, the loop tracer); the
@@ -1410,7 +1416,7 @@ class EphemeralRNN(torch.nn.Module):
         self.fused_layer_step = None  # set by enable_fused_update (--fused_update)
         self.fused_additive_step = None  # likewise, for additive layers (--fast_structure)
         set_dfa_fprime(self, dfa_fprime)
-        self.set_fast_read_norm(fast_read_norm, fast_read_norm_lr)
+        self.set_fast_read_norm(fast_read_norm, fast_read_norm_lr, absrun_floor)
         self.order2_layers = None
         if order2_layers is not None:
             self.set_order2(order2_layers, order2_map, order2_mode, order2_temperature, order2_dim,
@@ -1478,12 +1484,13 @@ class EphemeralRNN(torch.nn.Module):
             if layer.order2 is not None:
                 layer.order2_write(error if fast is None else fast, learning_rate, update_clamp, forget)
 
-    def set_fast_read_norm(self, mode, learning_rate=None):
+    def set_fast_read_norm(self, mode, learning_rate=None, absrun_floor=0.0):
         """--fast_read_norm on every layer with ephemeral entries (the trunk layers --fast_layers
         keeps, and i2h): 'off' (default, the one-bmm forward), 'running', 'absrun' or 'rms'
         (fast_read_scale), or 'ln' (fast_read_layer_norm). Forward-only: the DFA writes, the slow
         step and every update path are unchanged. 'running' and 'absrun' track one write per
-        forward, so they need the DFA updater with one fast step per character."""
+        forward, so they need the DFA updater with one fast step per character. absrun_floor c > 0
+        (--absrun_floor, 'absrun' only) weakens absrun's divisor to max(1, n / c); 0 is off."""
         if mode not in FAST_READ_NORMS:
             raise ValueError(f"--fast_read_norm {mode!r}: expected one of {FAST_READ_NORMS}")
         if mode != 'off' and self.updater != 'dfa':
@@ -1494,12 +1501,17 @@ class EphemeralRNN(torch.nn.Module):
                                  "defined with --fast_backward_per_forward other than 1")
             if learning_rate is None:
                 raise ValueError(f"--fast_read_norm {mode} needs the learning rate")
+        absrun_floor = float(absrun_floor or 0.0)
+        if absrun_floor < 0 or (absrun_floor and mode != 'absrun'):
+            raise ValueError(f"--absrun_floor {absrun_floor}: needs a value > 0 and --fast_read_norm absrun "
+                             "(0 is off)")
         self.fast_read_norm = mode
         for layer in [*self.linear_layers, self.i2h]:
             fast = bool(layer.ephemeral_mask.any())
             layer.fast_read_norm = mode if fast else 'off'
             layer.fast_read_coef = (float(learning_rate) * float(layer.ephemeral_mask.float().mean())
                                     if fast and mode in FAST_READ_NORMS_WITH_HISTORY else 0.0)
+            layer.fast_read_absrun_floor = absrun_floor if fast else 0.0
             layer.fast_key_mass = layer.fast_keys = layer.fast_key_weights = None
 
     def enable_fused_update(self, compile=True):
