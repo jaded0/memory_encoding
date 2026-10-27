@@ -702,7 +702,7 @@ def build_parser():
                              'error. Empty (default) = off, bit for bit. See README "Order-two fast read".')
     parser.add_argument('--order2_map', type=str, default='order2', choices=['order2', 'order1', 'sparse'],
                         help='--order2_layers feature map: order2 (1, z, z z^T / sqrt 2: 273 features at d 16) '
-                             'or order1 (1, z: the size-matched first-order control on the same projection).')
+                             'or order1 (1, z: first-order control), or sparse (fixed expansion, signed top-k).')
     parser.add_argument('--order2_mode', type=str, default='parallel', choices=['parallel', 'replace'],
                         help='--order2_layers: parallel keeps the layer\'s linear fast entries; replace never '
                              'writes them, so G is the layer\'s only fast read.')

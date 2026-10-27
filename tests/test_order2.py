@@ -102,6 +102,8 @@ class Order2Test(unittest.TestCase):
             f = order2_features(x, p, 'sparse', 4., .1, sparse_expansion=r, sparse_k=k)
             self.assertEqual(f.shape, (7, order2_feature_size('sparse', 16)))
             self.assertTrue(bool(((f != 0).sum(1) == k).all()))
+            self.assertTrue(torch.equal(f, order2_features(x, p, 'sparse', 4., .1,
+                                                         sparse_expansion=r, sparse_k=k)))
             torch.testing.assert_close(f.square().sum(1), .1*x.square().sum(1))
             torch.testing.assert_close(f, order2_features(x, p, 'sparse', 1., .1,
                                                         sparse_expansion=r, sparse_k=k))
@@ -126,7 +128,10 @@ class Order2Test(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(RuntimeError):
                 load_checkpoint('x.pth', restored, dict(config, **{key: config[key]+1}), checkpoint=checkpoint)
         # Missing new defaults in older order1/order2 configs are backward compatible.
-        default = dict(config, order2_sparse_m=273, order2_sparse_k=17)
+        default = dict(config, order2_map='order1', order2_sparse_m=273, order2_sparse_k=17)
+        with contextlib.redirect_stdout(io.StringIO()):
+            restored = build_model(default, ref.CHARSET, len(ref.CHARSET))
+        checkpoint['model_state_dict'] = restored.state_dict()
         checkpoint['config'] = {k: v for k, v in default.items() if k not in
                                 ('order2_sparse_m', 'order2_sparse_k')}
         with contextlib.redirect_stdout(io.StringIO()):
@@ -253,6 +258,11 @@ class Order2Test(unittest.TestCase):
         self.assertFalse(torch.equal(order2_projection(10, 4, 7, 1), order2_projection(10, 4, 7, 2)))
         self.assertTrue(any("order2_fast" in key for key in on.state_dict()))
         self.assertTrue(any("order2_proj" in key for key in on.state_dict()))
+        sparse = build(order2_layers=[0, 1, 2], order2_map='sparse')
+        for a, b in zip(off.trained_layers(), sparse.trained_layers()):
+            self.assertTrue(torch.equal(a.per_sample_weights, b.per_sample_weights))
+            self.assertTrue(torch.equal(a.ephemeral_mask, b.ephemeral_mask))
+            self.assertTrue(torch.equal(a.feedback_weights, b.feedback_weights))
 
     def test_invalid_combinations_are_refused(self):
         for kwargs in ({"order2_layers": [3]}, {"order2_layers": [1], "order2_map": "order3"},
@@ -271,6 +281,8 @@ class Order2Test(unittest.TestCase):
                 build(**kwargs)
         base = ['--model_type', 'ephemeral', '--updater', 'dfa', '--order2_layers', '1,2']
         for argv in (['--grad_norm_clip', '1'], ['--updater', 'backprop'], ['--model_type', 'rnn'],
+                     ['--order2_map', 'sparse', '--order2_sparse_m', '0'],
+                     ['--order2_map', 'sparse', '--order2_sparse_k', '274'],
                      ['--slow_update_every', '2'], ['--fast_read_norm', 'rms'],
                      ['--order2_temperature', '-1'], ['--order2_map', 'x'],
                      ['--fast_structure', 'additive_dense']):
