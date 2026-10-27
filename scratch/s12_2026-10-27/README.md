@@ -1,5 +1,18 @@
 # S12 ready: the four approved S12 follow-ups (prep, 2026-10-26/27)
 
+## Launch review, 2026-10-27
+
+Follow-up 1 is fixed at the approved 600k; follow-up 3 uses the specified plain KR arm only.
+Review corrected `swap`: a zero donor read with a nonzero own read now uses seeded centred,
+norm-matched noise. The earlier smoke's swap numbers used the incomplete matching and are
+not results of the corrected protocol. Scoring preserves norm/fallback diagnostics. Null
+intervention gaps are not an identified causal memory/calibration decomposition.
+Launchers now fail on train/eval errors or missing requested checkpoints. `run_short_orc.sh`
+runs ratios then both null tasks directly on the checkpoint host; its DONE/FAILED markers
+support the shared watcher without an agent polling. The local plain-ln checkpoint subset
+uses `GPU=0 bash run_null_manticore.sh`. See the vault's `S12 launched.md` for authoritative
+launch IDs, commit, final smoke evidence, and scoring commands.
+
 Prep agent on manticore (GPU 1 for smoke tests). Nothing has been launched beyond the smoke tests below. Spec: proposals page
 `### S12 ·`, "Follow-ups: all approved by Jaden 2026-10-26". Background: [[ephemeral weights bounded fast read BFR 2026-10-22]],
 [[ephemeral weights BFR2 ln durability 2026-10-23]]. Pre-registration draft: `~/Documents/brain/ephemeral-lowrank/queue_2026-10-27/prereg_drafts/S12.md`
