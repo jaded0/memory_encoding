@@ -7,7 +7,7 @@ Prep agent on manticore (GPU 1 for smoke tests). Nothing has been launched beyon
 
 ## What's ready
 
-- **Branch `s12-followups`**, based on origin/main 364a07f and pushed. Code commit `ebec980`; launch from the branch head (COMMIT_HEAD below).
+- **Branch `s12-followups`**, based on origin/main 364a07f and pushed. Code commit `ebec980` (flag, eval script, tests); launchers/README in later commits. Launch from the branch head; `stage_orc.sh` writes the commit it staged to `code/COMMIT`, and every run log prints it.
 - **`--absrun_floor c`** (follow-up 3; `--fast_read_norm absrun` only): absrun divides by `max(1, n / c)` instead of `max(1, n)`. 0 (default)
   is off and leaves absrun bit for bit; `c = 1` is the same divisor. Refused with any other mode or a negative value. Reaches the model from
   the config, so `heldout.py` and resumes read it from the checkpoint. README "Fast read normalization" has the entry.
@@ -40,7 +40,7 @@ Prep agent on manticore (GPU 1 for smoke tests). Nothing has been launched beyon
 ## Launch (ORC; after Jaden's go)
 
 ```
-# once, on manticore from a checkout with the branch fetched (already done for COMMIT_HEAD; re-run with FORCE=1 only before any run starts):
+# once, on manticore from a checkout with the branch fetched (already staged by the prep agent at the branch head; FORCE=1 only before any run starts):
 bash scratch/s12_2026-10-27/stage_orc.sh origin/s12-followups
 # then on ORC:
 cd ~/s12_2026-10-27/code/scratch/s12_2026-10-27
@@ -69,7 +69,24 @@ Ratios: `python code/scratch/bfr_2026-10-22/ratio_summary.py ~/bfr_2026-10-22/ra
 
 ## Smoke tests (manticore GPU 1, 2026-10-26/27)
 
-SMOKE_RESULTS
+Every launcher was run as the real sbatch file (bash, `SLURM_ARRAY_TASK_ID` set, `BASE=~/s12_smoke`, `N_ITERS=2000`, `CKPT_EVERY=1000`)
+by `smoke_manticore.sh` against a git archive of `ebec980` (the code is unchanged since), 3pal data = ORC's copy, KR data = RN's. All exit 0, each < 10 min:
+
+| launcher (task) | wall | train | final evals | checkpoint config |
+|---|---|---|---|---|
+| `s12_lndc2_lc` (0, s620101) | 395 s | 2000 its, loss 1.10 at 2k, no onset | heldout.py EXIT 0 (strict 0.55); ln_null_eval EXIT 0 (swap 0.11, noise 0.05, no_fast 0.00) | ln, DC2 '2' |
+| `s12_absfloor_lc` (0, c = 10) | 293 s | 2000 its, last10 1.84 | heldout EXIT 0; bfr_ratio EXIT 0 (trunk-2 eff/slow 2.6 at 2k) | absrun, floor 10.0 |
+| `s12_absfloor_lc` (3, c = 100) | 232 s | 2000 its, last10 1.81 | heldout EXIT 0; bfr_ratio EXIT 0 (eff/slow 3.9) | absrun, floor 100.0 |
+| `s12_absfloor_kr` (0, c = 10) | 306 s | 2000 its, no blowup | heldout EXIT 0; bfr_ratio EXIT 0 | absrun, floor 10.0 |
+| `s12_absfloor_kr` (3, c = 100) | 306 s | 2000 its, no blowup | heldout EXIT 0; bfr_ratio EXIT 0 | absrun, floor 100.0 |
+
+`s12_score.py lc` and `kr` read these outputs (logs copied to the `logs/<job>_<id>_<task>.out` layout) and `s12_score.py null` read the
+null smoke JSON: all rows parse. A 2k smoke says nothing about the predictions.
+
+Follow-up 2's one allowed smoke eval: `smoke_null_manticore.sh`, `ln_null_eval.py` on KR plain ln s1414 at 30k (round 1, a drifted seed),
+32 held-out batches, GPU 1, 42 s. strict 1.00, no_fast 0.00, swap 0.13, swap_raw 0.13, noise 0.02 (recall); per-layer norm checks
+as designed: swap/noise norm = own norm at trunk 1/2 (31.9, 32.1), trunk 0 donor read 0 at 394 own-nonzero reads (unseen one-hot keys).
+At 128 batches a KR checkpoint takes ~3 min on the 2080 Ti.
 
 ## Open questions for Jaden
 
