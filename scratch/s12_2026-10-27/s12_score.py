@@ -144,6 +144,8 @@ def score_null(dirs):
             for p in ('strict', 'no_fast', 'swap', 'swap_raw', 'noise'):
                 for k in ('recall_acc', 'loss', 'recall_loss', 'other_loss', 'first_answer_acc'):
                     if f'heldout_{p}/{k}' in h: row[f'{p}_{k}'] = h[f'heldout_{p}/{k}']
+            # Keep norm/support checks and fallback counts alongside the intervention gaps.
+            row.update({k: v for k, v in h.items() if k.startswith('null_')})
             print(json.dumps(row), flush=True)
 
 

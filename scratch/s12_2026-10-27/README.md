@@ -16,9 +16,11 @@ Prep agent on manticore (GPU 1 for smoke tests). Nothing has been launched beyon
   the scale is monotone in c; config plumbing; refusals.
 - **`ln_null_eval.py`** (follow-up 2): a valid no_fast for ln. At held-out time each ln layer's `LN(F x)` is replaced by
   - `swap`: `LN(F_d x)` from a donor episode (the next held-out batch row for row, run in lockstep under strict), rescaled to the own read's norm;
+    when the donor read is zero but the own read is nonzero, seeded centred Gaussian noise supplies the norm-matched fallback;
   - `swap_raw`: `LN(F_d x)` as is;
   - `noise`: centred Gaussian noise rescaled to the own read's norm, fresh per step (seeded).
-  It also recomputes heldout.py's strict and no_fast on the same batches, and writes heldout.py's JSON layout plus per-layer norm checks.
+  It also recomputes heldout.py's strict and no_fast on the same batches, and writes heldout.py's JSON layout plus per-layer norm checks and fallback counts (retained by scoring).
+  Differences are null-intervention gaps, not identified causal memory/calibration shares: nulling also changes activations and subsequent writes.
   Tests: `tests/test_ln_null_eval.py` (7). The main one: with the episode as its own donor, swap and swap_raw reproduce heldout.py's strict exactly.
 - **Full suite:** 424 passed (CPU, `CUDA_VISIBLE_DEVICES=`), including the golden/identity tests; baseline on 364a07f was 411.
 
@@ -88,6 +90,10 @@ Follow-up 2's one allowed smoke eval: `smoke_null_manticore.sh`, `ln_null_eval.p
 as designed: swap/noise norm = own norm at trunk 1/2 (31.9, 32.1), trunk 0 donor read 0 at 394 own-nonzero reads (unseen one-hot keys).
 At 128 batches a KR checkpoint takes ~3 min on the 2080 Ti.
 
+Review correction (2026-10-27): the smoke above used the old `swap`, which was not fully norm-matched at those 394 L0 reads.
+Corrected `swap` uses the seeded centred-noise fallback there; those smoke scores are not results of the corrected protocol.
+CPU regression tests: 28 passed (`test_ln_null_eval.py`, `test_absrun_floor.py`, `test_fast_read_norm.py`), including the L0 fallback and diagnostic retention.
+
 ORC dry run (2026-10-27): `stage_orc.sh origin/s12-followups` staged `~/s12_2026-10-27/{code,code_kr}` at `fe7a5e8` (printed `STAGED fe7a5e8…`;
 later commits touch only this README). `sbatch --test-only` accepted all five sbatch files; its start estimate for `s12_lndc2_lc` was
 2026-11-03 on cs-1-4 (the cs queue is deep; 51 of our jobs were queued or running), so expect a wait.
@@ -97,8 +103,8 @@ later commits touch only this README). `sbatch --test-only` accepted all five sb
 1. Follow-up 1: 600k first (prereg'd), or straight to 1.2M? The launcher does either; BFR2's D1-D3 transfer unchanged to 600k-1.2M.
 2. Follow-up 3, KR: plain absrun only (6 runs, the spec's ~6 GPU-h). Add the DC2 absrun arm too (+6 runs)? Round 1 had both.
 3. Follow-up 2's donor is the *next* held-out episode under strict. An alternative donor is the same episode's state from a different
-   (shuffled) key set; I chose a real episode because it keeps the fast state's statistics exactly. `swap_raw` vs `swap` differ only at trunk-layer-0
-   steps whose own read is 0 (one-hot keys not seen yet). Fine?
+   (shuffled) key set; I chose a real episode to retain real donor-state statistics. `swap_raw` vs `swap` can differ through rescaling,
+   own-zero gating, and the zero-donor noise fallback. Fine?
 4. Placement if the ORC queue stays a week deep: follow-up 2 can run on manticore instead. `~/bfr_kr_2026-10-22/orc_ckpt/` already holds the
    KR 10k/30k and LC 150k/600k checkpoints; the BFR2 ones (KR 60k/100k, LC 1.2M; 25 files, ~8 GB) would need pulling. Follow-up 3's KR part
    fits deckard (2 per A6000, ~1 h each). Follow-ups 1 and 3-LC are A100-sized and stay on ORC.

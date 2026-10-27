@@ -9,7 +9,8 @@ ln fast entries, or --layers):
   swap      LN(F_d x) rescaled to |LN(F x)|: the read from a *different* sequence's fast state F_d
             (a donor episode run in lockstep under --donor_protocol, default strict, so F_d holds a
             real held-out episode's writes at the same step), with the own read's norm per row/step
-            (0 where the own read is 0).
+             (0 where the own read is 0). A zero donor read with a nonzero own read uses seeded,
+             centred Gaussian noise rescaled to the own norm instead.
   swap_raw  LN(F_d x) as it comes (norm ~sqrt(out) wherever the donor read is nonzero, even where
             the own read is 0).
   noise     norm-matched Gaussian noise: e ~ N(0, I), centred over the outputs (LN's output has
@@ -22,8 +23,8 @@ The donor of batch k is batch k+1 (row for row; with one batch, the same batch r
 padded with zero (padding) steps or cut to the target's length.
 
 In the same call it runs heldout.py's own protocols (default strict and no_fast) on the same
-batches, so strict - swap / strict - noise is the memory and swap/noise - no_fast is the
-calibration share of no_fast's gap. Output: heldout.py's JSON layout (heldout_<protocol>/<metric>)
+batches. The differences are null-intervention gaps, not identified memory/calibration shares:
+nulling also changes intermediate activations and subsequent own writes. Output: heldout.py's JSON layout (heldout_<protocol>/<metric>)
 plus per-layer read-norm diagnostics (null_<protocol>/L<i>_...).
 
 Run from a code directory of main >= b26e88d (it imports train/heldout from the cwd and reads
@@ -62,7 +63,8 @@ class NullRead:
 
     def __init__(self, layer, kind, donor_layer=None, generator=None):
         self.layer, self.kind, self.donor_layer, self.generator = layer, kind, donor_layer, generator
-        # [reads with own > 0, sum |own|, sum |null| there, null > 0 where own = 0, null = 0 where own > 0]
+        # [reads with own > 0, sum |own|, sum |null| there, null > 0 where own = 0,
+        #  null = 0 where own > 0, swap noise fallbacks]
         self.stats = None
 
     def __call__(self, input, input_unsq):
@@ -71,11 +73,18 @@ class NullRead:
         slow = torch.bmm(weights.masked_fill(mask, 0), input_unsq).squeeze(2)
         own = fast_read_layer_norm(torch.bmm(weights.masked_fill(~mask, 0), input_unsq).squeeze(2))
         own_norm = own.norm(dim=1, keepdim=True)
+        fallback = torch.zeros_like(own_norm, dtype=torch.bool)
         if self.kind in ("swap", "swap_raw"):
             donor = self.donor_layer.per_sample_weights.masked_fill(~mask, 0)
             rep = fast_read_layer_norm(torch.bmm(donor, input_unsq).squeeze(2))
             if self.kind == "swap":
-                rep = rep * (own_norm / rep.norm(dim=1, keepdim=True).clamp_min(1e-30))
+                donor_norm = rep.norm(dim=1, keepdim=True)
+                fallback = (donor_norm == 0) & (own_norm > 0)
+                rep = rep * (own_norm / donor_norm.clamp_min(1e-30))
+                noise = torch.randn(own.shape, generator=self.generator, device=own.device, dtype=own.dtype)
+                noise = noise - noise.mean(dim=1, keepdim=True)
+                noise = noise * (own_norm / noise.norm(dim=1, keepdim=True).clamp_min(1e-30))
+                rep = torch.where(fallback, noise, rep)
         elif self.kind == "noise":
             noise = torch.randn(own.shape, generator=self.generator, device=own.device, dtype=own.dtype)
             noise = noise - noise.mean(dim=1, keepdim=True)
@@ -85,7 +94,8 @@ class NullRead:
         rep_norm = rep.norm(dim=1, keepdim=True)
         on = own_norm[:, 0] > 0
         step = torch.stack([on.sum(), (own_norm[:, 0] * on).sum(), (rep_norm[:, 0] * on).sum(),
-                            ((rep_norm[:, 0] > 0) & ~on).sum(), ((rep_norm[:, 0] == 0) & on).sum()]).double()
+                             ((rep_norm[:, 0] > 0) & ~on).sum(), ((rep_norm[:, 0] == 0) & on).sum(),
+                             fallback.sum()]).double()
         self.stats = step if self.stats is None else self.stats + step  # stays on the device: no sync per step
         return slow + rep
 
@@ -125,7 +135,7 @@ def evaluate_null(model, batches, config, dataset, kind, own_protocol="strict", 
     model.eval()
     donor = copy.deepcopy(model) if kind != "noise" else None
     device = batches[0][1].device
-    generator = torch.Generator(device=device).manual_seed(seed) if kind == "noise" else None
+    generator = torch.Generator(device=device).manual_seed(seed) if kind in ("noise", "swap") else None
     donor_layers = dict(ln_layers(donor, layers)) if donor is not None else {}
     reads = {name: NullRead(layer, kind, donor_layers.get(name), generator) for name, layer in targets}
     for name, layer in targets:
@@ -176,10 +186,11 @@ def evaluate_null(model, batches, config, dataset, kind, own_protocol="strict", 
         summary["first_answer_acc"] = first_hits / first_count
     stats = {}
     for name, read in reads.items():
-        n, own_sum, rep_sum, rep_on_off, rep_off_on = read.stats.tolist() if read.stats is not None else [0.0] * 5
+        n, own_sum, rep_sum, rep_on_off, rep_off_on, fallbacks = read.stats.tolist() if read.stats is not None else [0.0] * 6
         stats.update({f"{name}_own_norm_mean": own_sum / max(n, 1), f"{name}_null_norm_mean": rep_sum / max(n, 1),
                       f"{name}_own_nonzero_reads": n, f"{name}_null_nonzero_where_own_zero": rep_on_off,
-                      f"{name}_null_zero_where_own_nonzero": rep_off_on})
+                      f"{name}_null_zero_where_own_nonzero": rep_off_on,
+                      f"{name}_swap_noise_fallback_reads": fallbacks})
     return summary, stats
 
 
@@ -193,7 +204,7 @@ def main(argv=None):
     ap.add_argument("--own_protocol", default="strict", choices=["strict", "observed"])
     ap.add_argument("--donor_protocol", default="strict", choices=["strict", "observed"])
     ap.add_argument("--layers", default="all", help="'all', or a comma list of trunk layers to null (others keep their read)")
-    ap.add_argument("--seed", type=int, default=0, help="noise seed")
+    ap.add_argument("--seed", type=int, default=0, help="noise and swap fallback seed")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)

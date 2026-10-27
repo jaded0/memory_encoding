@@ -9,9 +9,12 @@
 - The model's state and methods are restored, the donor of a single batch is its rows rolled by one,
   a shorter donor is padded, and a model without ln reads is refused."""
 import contextlib
+import copy
 import importlib.util
 import io
+import json
 import os
+import tempfile
 import unittest
 
 import torch
@@ -108,11 +111,58 @@ class LnNullEvalTest(unittest.TestCase):
         strict = heldout.evaluate_protocols(model, data, config(), DATASET, ["strict"])
         summary, stats = ln_null_eval.evaluate_null(model, data, config(), DATASET, "swap")
         self.assertNotAlmostEqual(summary["loss"], strict["heldout_strict/loss"], places=4)
-        for name in ("L1", "L2"):
+        for name in ("L0", "L1", "L2"):
             self.assertAlmostEqual(stats[f"{name}_null_norm_mean"], stats[f"{name}_own_norm_mean"], places=4)
             self.assertEqual(stats[f"{name}_null_nonzero_where_own_zero"], 0)
+            self.assertEqual(stats[f"{name}_null_zero_where_own_nonzero"], 0)
         raw, _ = ln_null_eval.evaluate_null(model, data, config(), DATASET, "swap_raw")
         self.assertTrue(all(torch.isfinite(torch.tensor(list(raw.values())))))
+
+    def test_swap_zero_donor_l0_uses_seeded_centred_norm_matched_fallback(self):
+        model = build()
+        model.start_sequence_wipe()
+        layer = model.linear_layers[0]
+        donor = copy.deepcopy(layer)  # no donor writes: every fast read is zero
+        with torch.no_grad():
+            layer.per_sample_weights[0].add_(torch.randn_like(layer.per_sample_weights[0]) * layer.ephemeral_mask)
+        x = torch.ones(BATCH, layer.in_features)
+        w, m = layer.per_sample_weights, layer.ephemeral_mask
+        slow = torch.einsum('boi,bi->bo', w * ~m, x)
+        own = F.layer_norm(torch.einsum('boi,bi->bo', w * m, x), (layer.out_features,), eps=1e-5)
+
+        def run(seed):
+            read = ln_null_eval.NullRead(layer, "swap", donor, torch.Generator().manual_seed(seed))
+            return read(x, x.unsqueeze(2)) - slow, read.stats
+
+        a, stats = run(3)
+        b, _ = run(3)
+        c, _ = run(4)
+        torch.testing.assert_close(a, b, rtol=0, atol=0)
+        self.assertFalse(torch.equal(a[0], c[0]))
+        self.assertGreater(float(own[0].norm()), 0)
+        torch.testing.assert_close(a.mean(1), torch.zeros(BATCH), atol=1e-6, rtol=0)
+        torch.testing.assert_close(a.norm(dim=1), own.norm(dim=1), atol=1e-5, rtol=1e-5)
+        self.assertEqual(float(a[1].abs().sum()), 0)  # own-zero rows stay zero
+        self.assertEqual(float(stats[4]), 0)  # no missing read remains
+        self.assertEqual(float(stats[5]), 1)  # exactly one fallback
+
+    def test_null_scoring_retains_norm_and_fallback_diagnostics(self):
+        spec = importlib.util.spec_from_file_location(
+            "s12_score", os.path.join(HERE, "scratch", "s12_2026-10-27", "s12_score.py"))
+        scorer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scorer)
+        diagnostics = {"null_swap/L0_swap_noise_fallback_reads": 7,
+                       "null_swap/L0_null_zero_where_own_nonzero": 0,
+                       "null_swap/L0_own_norm_mean": 3.0}
+        with tempfile.TemporaryDirectory() as root:
+            with open(os.path.join(root, "null_test_30k.json"), "w") as f:
+                json.dump(dict(iteration=30000, episodes=2, **diagnostics), f)
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                scorer.score_null([root])
+            row = json.loads(output.getvalue())
+        for key, value in diagnostics.items():
+            self.assertEqual(row[key], value)
 
     def test_state_and_methods_are_restored(self):
         model = build()
