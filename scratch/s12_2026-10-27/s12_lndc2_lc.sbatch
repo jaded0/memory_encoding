@@ -18,6 +18,7 @@
 # 1.2M instead of 600k: change the default on the next line to 1200000 (12 h covers ~600-900k on an A100: 1.2M needs one resubmit).
 N_ITERS=${N_ITERS:-600000}
 BASE=${BASE:-$HOME/s12_2026-10-27}
+CKPT_EVERY=${CKPT_EVERY:-25000}  # smoke tests only: N_ITERS must be a multiple (latest_checkpoint.pth is saved on these)
 source ~/.bashrc >/dev/null 2>&1; source ~/miniforge3/etc/profile.d/conda.sh 2>/dev/null
 conda activate hebby
 t=${SLURM_ARRAY_TASK_ID:-0}
@@ -33,7 +34,7 @@ mkdir -p $HOME/.cache/inductor_s12; export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d $
 d=$BASE/runs/$name; mkdir -p $d
 python -u train.py $common --num_layers 3 --seed $seed --n_iters $N_ITERS --checkpoint_dir $d \
   --fast_read_norm ln --decouple_fast_feedback 2 \
-  --checkpoint_save_freq 25000 --checkpoint_keep_every 50000 --heldout_eval_every 50000 --heldout_batches 8
+  --checkpoint_save_freq $CKPT_EVERY --checkpoint_keep_every 50000 --heldout_eval_every 50000 --heldout_batches 8
 rc=$?; echo "TRAIN EXIT $rc"
 [ $rc -eq 0 ] || exit $rc
 python -u heldout.py --checkpoint $d/latest_checkpoint.pth --protocols observed strict no_fast --batches 128 --json $d/final_eval.json

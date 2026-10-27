@@ -17,6 +17,7 @@
 # Resubmitting resumes unfinished tasks (--resume true). After training: heldout.py, then bfr_ratio.py (trunk eff/slow) at 150k and the end.
 N_ITERS=${N_ITERS:-300000}
 BASE=${BASE:-$HOME/s12_2026-10-27}
+CKPT_EVERY=${CKPT_EVERY:-25000}  # smoke tests only: N_ITERS must be a multiple (latest_checkpoint.pth is saved on these)
 source ~/.bashrc >/dev/null 2>&1; source ~/miniforge3/etc/profile.d/conda.sh 2>/dev/null
 conda activate hebby
 t=${SLURM_ARRAY_TASK_ID:-0}
@@ -32,14 +33,16 @@ mkdir -p $HOME/.cache/inductor_s12; export TORCHINDUCTOR_CACHE_DIR=$(mktemp -d $
 d=$BASE/runs/$name; mkdir -p $d
 python -u train.py $common --num_layers 3 --seed $seed --n_iters $N_ITERS --checkpoint_dir $d \
   --fast_read_norm absrun --absrun_floor $c \
-  --checkpoint_save_freq 25000 --checkpoint_keep_every 50000 --heldout_eval_every 50000 --heldout_batches 8
+  --checkpoint_save_freq $CKPT_EVERY --checkpoint_keep_every 50000 --heldout_eval_every 50000 --heldout_batches 8
 rc=$?; echo "TRAIN EXIT $rc"
 [ $rc -eq 0 ] || exit $rc
 python -u heldout.py --checkpoint $d/latest_checkpoint.pth --protocols observed strict no_fast --batches 128 --json $d/final_eval.json
 echo "EVAL EXIT $?"
 mkdir -p $BASE/ratios
 for k in 150000 $N_ITERS; do
-  ck=$d/checkpoint_$(printf %08d $k).pth; [ -f $ck ] || continue
+  ck=$d/checkpoint_$(printf %08d $k).pth
+  [ -f $ck ] || [ $k != $N_ITERS ] || ck=$d/latest_checkpoint.pth  # the json records the true iteration
+  [ -f $ck ] || continue
   python scratch/bfr_2026-10-22/bfr_ratio.py --checkpoint $ck --batches 16 --json $BASE/ratios/ratio_${name}_$((k / 1000))k.json > /dev/null
   echo "RATIO $k EXIT $?"
 done

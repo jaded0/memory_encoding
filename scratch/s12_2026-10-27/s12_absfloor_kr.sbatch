@@ -16,6 +16,7 @@
 # 0-2: c = 10, 3-5: c = 100. Same flags as bfr_kr.sbatch's plain_absrun arm (Batch BFR), which it pairs with.
 N_ITERS=${N_ITERS:-30000}
 BASE=${BASE:-$HOME/s12_2026-10-27}
+CKPT_EVERY=${CKPT_EVERY:-10000}  # smoke tests only: N_ITERS must be a multiple (latest_checkpoint.pth is saved on these)
 source ~/.bashrc >/dev/null 2>&1; source ~/miniforge3/etc/profile.d/conda.sh 2>/dev/null
 conda activate hebby
 t=${SLURM_ARRAY_TASK_ID:-0}
@@ -30,7 +31,7 @@ python -u train.py --dataset long_range_memory_dataset --model_type ephemeral --
   --plasticity 10000 --ephemeral_fraction .2 --forget_rate .01 --weight_clamp 1 --enable_recurrence False \
   --residual_connection False --layer_norm False --positional_encoding_dim 0 --track false \
   --deterministic true --fused_update True --optimizer sgd --grad_norm_clip 0 --print_freq 100 \
-  --early_stop_window 0 --checkpoint_save_freq 10000 --checkpoint_keep_every 10000 --seed $seed --n_iters $N_ITERS \
+  --early_stop_window 0 --checkpoint_save_freq $CKPT_EVERY --checkpoint_keep_every 10000 --seed $seed --n_iters $N_ITERS \
   --heldout_eval_every 0 --checkpoint_dir $d --resume true --fast_read_norm absrun --absrun_floor $c >> $d/train.log 2>&1
 rc=$?; echo "EXIT $rc" >> $d/train.log
 python heldout.py --checkpoint $d/latest_checkpoint.pth --protocols observed strict no_fast --batches 128 \
@@ -38,7 +39,9 @@ python heldout.py --checkpoint $d/latest_checkpoint.pth --protocols observed str
 echo "EVAL EXIT $?"
 mkdir -p $BASE/ratios
 for k in 10000 $N_ITERS; do
-  ck=$d/checkpoint_$(printf %08d $k).pth; [ -f $ck ] || continue
+  ck=$d/checkpoint_$(printf %08d $k).pth
+  [ -f $ck ] || [ $k != $N_ITERS ] || ck=$d/latest_checkpoint.pth  # the json records the true iteration
+  [ -f $ck ] || continue
   python scratch/bfr_2026-10-22/bfr_ratio.py --checkpoint $ck --batches 16 --json $BASE/ratios/ratio_${name}_$((k / 1000))k.json > /dev/null
   echo "RATIO $k EXIT $?"
 done
