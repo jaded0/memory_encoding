@@ -1563,8 +1563,8 @@ class EphemeralRNN(torch.nn.Module):
             raise ValueError(f"--write_gain_power {power}: must be > 0 (0 is off)")
         if window < 1:
             raise ValueError(f"--write_gain_window {window}: must be >= 1")
-        if max_gain < 0:
-            raise ValueError(f"--write_gain_max {max_gain}: must be >= 0 (0 is no cap)")
+        if max_gain < 0 or not math.isfinite(max_gain):
+            raise ValueError(f"--write_gain_max {max_gain}: must be finite and >= 0 (0 is no cap)")
         if self.updater != 'dfa':
             raise ValueError("--write_gain_power supports only the DFA updater")
         if self.slow_update_every != 1 or self.fast_iterations != 1 or self.fast_subsample != 1:

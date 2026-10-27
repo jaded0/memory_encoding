@@ -927,7 +927,8 @@ def check_argument_combinations(args, parser):
             parser.error("--order2_layers is defined only for --fast_structure exclusive.")
         if args.order2_temperature <= 0 or args.order2_dim < 1:
             parser.error("--order2_temperature must be > 0 and --order2_dim >= 1.")
-    if args.write_gain_power < 0 or args.write_gain_window < 1 or args.write_gain_max < 0:
+    if (not math.isfinite(args.write_gain_power) or not math.isfinite(args.write_gain_max)
+            or args.write_gain_power < 0 or args.write_gain_window < 1 or args.write_gain_max < 0):
         parser.error("--write_gain_power and --write_gain_max must be >= 0 and --write_gain_window >= 1.")
     if args.write_gain_power > 0:
         if args.model_type != 'ephemeral' or args.updater != 'dfa':

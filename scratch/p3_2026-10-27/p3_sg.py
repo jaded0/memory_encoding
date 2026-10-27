@@ -5,7 +5,7 @@ and these are added per layer:
   ratio_p_raw    the store/median-other ratio of the RAW (ungained) write error norms |e_s|
   ratio_gain     the same for the write gain g_s = |p_s| / |e_s| (1 everywhere when the flag is off)
   log_gain_part  the gain's part of the log lead (the log value part = raw part + gain part)
-  store_largest_no_gain  the counterfactual of removing the gain (every term divided by its gain)
+  store_largest_no_gain  fixed-trajectory counterfactual (terms divided by gain; NOT an ungained replay)
   gain_by_role   median gain by the role of the step's input character
 and per checkpoint the flag's settings and the frozen running medians. With the gain on, |p_s| (the
 write the read sums, as before) is the gained error, so the closed form still matches the actual read.
@@ -139,6 +139,9 @@ def run(path, nb, device):
                                       if gained else {})}}
     for n, _ in named:
         off = min((0, 1), key=lambda o: float(np.median(chk[n][o])))
+        reconstruction_error = float(np.median(chk[n][off]))
+        if not np.isfinite(reconstruction_error) or reconstruction_error > 1e-4:
+            raise ValueError(f"{path}: {n} invalid closed-form reconstruction: {reconstruction_error}")
         res["layers"][n] = summarize(rows[n], rho, off, float(np.median(chk[n][off])), float(np.median(chk[n][1 - off])))
     return res
 

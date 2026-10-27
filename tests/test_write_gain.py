@@ -214,6 +214,8 @@ class WriteGainTest(unittest.TestCase):
 
     def test_invalid_combinations_are_refused(self):
         for kwargs in ({"write_gain_power": -1.0}, {"write_gain_power": 1.0, "write_gain_window": 0},
+                       {"write_gain_power": 1.0, "write_gain_max": float('nan')},
+                       {"write_gain_power": float('inf')},
                        {"write_gain_power": 1.0, "write_gain_max": -1.0},
                        {"write_gain_power": 1.0, "updater": "backprop"},
                        {"write_gain_power": 1.0, "slow_update_every": 2},
@@ -225,6 +227,7 @@ class WriteGainTest(unittest.TestCase):
                 build(**kwargs)
         base = ['--model_type', 'ephemeral', '--updater', 'dfa', '--write_gain_power', '2']
         for argv in (['--grad_norm_clip', '1'], ['--updater', 'backprop'], ['--model_type', 'rnn'],
+                     ['--write_gain_max', 'nan'], ['--write_gain_power', 'inf'],
                      ['--slow_update_every', '2'], ['--fast_backward_per_forward', '2'],
                      ['--order2_layers', '1'], ['--fast_structure', 'additive_dense'],
                      ['--write_gain_window', '0'], ['--write_gain_max', '-1'], ['--write_gain_power', '-1']):
