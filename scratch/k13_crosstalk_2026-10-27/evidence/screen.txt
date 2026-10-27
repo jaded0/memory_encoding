@@ -1,0 +1,12 @@
+D strict gap selective L1_PR L2_PR L1_abs_cos L2_abs_cos eligible
+4 0.8984 1.0000 1.0000 1.9794 1.4815 0.4569 0.5607 False
+8 0.5625 1.0000 1.0000 1.9020 1.3609 0.4518 0.6123 False
+16 0.4219 0.0000 1.0000 2.0119 1.2926 0.4385 0.6501 False
+32 0.3359 0.0000 1.0000 2.3465 1.3226 0.4133 0.6654 False
+{
+  "regime_verified": false,
+  "selected_load": null,
+  "launch_approved": false,
+  "n_iters": null,
+  "reason": "Frozen screening only; main session must fix budget and re-read Jaden's log."
+}

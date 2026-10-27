@@ -138,6 +138,12 @@ def run(path, nb, device, temps):
                         si = written.index(s)
                         oi = [j for j in range(len(written)) if j != si]
                         r["cos_sq"], r["cos_oth"] = float(cos[si]), float(np.mean(cos[oi]))
+                        # Uncentered unit-key second-moment PR (same definition as B2).
+                        unit = torch.nn.functional.normalize(Xs, dim=1)
+                        gram = unit @ unit.t()
+                        r["key_pr"] = float(gram.trace().square() / gram.square().sum().clamp_min(1e-30))
+                        r["cos_oth_abs"] = float(np.mean(np.abs(cos[oi])))
+                        r["cos_oth_p95"] = float(np.quantile(cos[oi], 0.95))
                         dots = (Xs @ xq).cpu().numpy()
                         r["lin_sel"] = selectivity(dots[si], dots[oi])
                         r["lin_ratio"] = ratio(abs(dots[si]), np.abs(dots[oi]))

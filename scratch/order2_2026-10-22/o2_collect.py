@@ -47,7 +47,7 @@ def onset(blocks, thr):
 def main(dirs):
     for d in dirs:
         name = os.path.basename(d.rstrip("/"))
-        m = re.match(r"(KR|mqar_\d+)-(\w+)-s(\d+)$", name)
+        m = re.match(r"(KR|mqar_\d+|long_range_memory_dataset_(?:load|gap)_\d+)-(\w+)-s(\d+)$", name)
         if not m:
             continue
         row = {"run": name, "task": m.group(1), "arm": m.group(2), "seed": int(m.group(3))}

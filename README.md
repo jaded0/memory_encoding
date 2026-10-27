@@ -1115,3 +1115,13 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Direct Feedback Alignment papers
 - Hebbian learning principles
 - Recurrent neural network training methods
+# KR load/gap datasets (K13r2, opt-in)
+
+`python kr_load_tasks.py long_range_memory_dataset_load_8 long_range_memory_dataset_gap_8`
+builds seeded `synth_datasets/` datasets, then select one with `--dataset NAME`.
+`load_D` inserts D random non-marker characters between store and query; `gap_D`
+uses D zeroes as a delay control. D is 0, 4, 8, 16, 32 or 48. Each episode has
+one recall target with chance 1/5 (`123,.`); the original KR generator is unchanged.
+Generation options: `--seed`, `--train-size`, `--validation-size`, `--test-size`, `--root`.
+K13r2 launchers are gated pending a verified interference regime; see
+`scratch/k13_crosstalk_2026-10-27/README.md`.

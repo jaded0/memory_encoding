@@ -12,6 +12,7 @@ import torch
 import bench_tasks
 import kv_switch
 import kv_tasks
+import kr_load_tasks
 from utils import get_charset
 
 
@@ -52,6 +53,8 @@ def recall_targets(text, dataset_name):
 def recall_chance(dataset_name):
     """Accuracy of guessing uniformly among the characters a recall target can take."""
     charset = get_charset(dataset_name)
+    if dataset_name in kr_load_tasks.registered_names():
+        return 1 / len(kr_load_tasks.PAYLOAD)
     if bench_tasks.is_bench(dataset_name):
         return bench_tasks.recall_chance(dataset_name)
     if kv_tasks.is_kv(dataset_name) or kv_switch.is_switch(dataset_name):

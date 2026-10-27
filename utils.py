@@ -7,6 +7,7 @@ import os
 import bench_tasks
 import kv_switch
 import kv_tasks
+import kr_load_tasks
 from reproducibility import restore_rng_state
 
 class _DatasetKeys(dict):
@@ -44,6 +45,7 @@ dataset_keys = _DatasetKeys({
 dataset_keys.update({name: "text" for name in kv_tasks.registered_names()})
 dataset_keys.update({name: "text" for name in bench_tasks.registered_names()})
 dataset_keys.update({name: "text" for name in kv_switch.registered_names()})
+dataset_keys.update({name: "text" for name in kr_load_tasks.registered_names()})
 
 def get_charset(dataset_name):
 
@@ -54,7 +56,7 @@ def get_charset(dataset_name):
     if "small" in dataset_name:
         set = "23. "
         return set
-    elif dataset_name == "long_range_memory_dataset" or any(tag in dataset_name for tag in ("palindrome_dataset", "resequence")):
+    elif dataset_name == "long_range_memory_dataset" or dataset_name in kr_load_tasks.registered_names() or any(tag in dataset_name for tag in ("palindrome_dataset", "resequence")):
     # if (dataset_name == "long_range_memory_dataset") or (dataset_name == "palindrome_dataset") or (dataset_name == "palindrome_dataset_vary_length") or "resequence" in dataset_name:
         set = "0?!123,. "
         # print(f"Using a custom charset for long_range_memory_dataset or palindrome_dataset, of length {len(set)}")

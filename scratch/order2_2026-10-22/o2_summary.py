@@ -93,8 +93,13 @@ def main(path):
     for task in tasks:
         outcome_table(runs, task)
         final = 100000 if task == "KR" else 200000
+        if task.startswith("long_range_memory_dataset_"):
+            final = max((int(it) for (t, _), seeds in runs.items() if t == task
+                         for row in seeds.values() for it in row.get("keys", {})), default=100000)
         geo = ["cos_sq", "cos_oth", "pcos_oth", "read_lin_key_ratio", "lin_ratio", "o1_t4_ratio", "o2_t4_ratio",
                "o2_t16_ratio", "lin_sel", "o1_t4_sel", "o2_t4_sel"]
+        if task.startswith("long_range_memory_dataset_"):
+            geo += ["key_pr", "cos_oth_abs", "cos_oth_p95"]
         key_table(runs, task, ["lin"], final, geo)
         key_table(runs, task, [a for a in ARMS if a != "lin"], final,
                   ["cos_oth", "read_lin_key_ratio", "read_G_key_ratio", "read_G_share", "o2_t4_ratio", "o1_t4_ratio"],

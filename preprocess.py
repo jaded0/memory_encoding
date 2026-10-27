@@ -35,6 +35,7 @@ from torch.nn.utils.rnn import pad_sequence
 import bench_tasks
 import kv_switch
 import kv_tasks
+import kr_load_tasks
 from reproducibility import ResumableRandomSampler, StreamSampler, make_torch_generator, seed_data_worker
 from utils import collate_fn, filter_text, get_charset, initialize_charset, text_to_indices
 
@@ -74,6 +75,7 @@ dataset_keys = _DatasetKeys({
 dataset_keys.update({name: "train" for name in kv_tasks.registered_names()})
 dataset_keys.update({name: "train" for name in bench_tasks.registered_names()})
 dataset_keys.update({name: "train" for name in kv_switch.registered_names()})
+dataset_keys.update({name: "train" for name in kr_load_tasks.registered_names()})
 
 # Bump whenever this file changes what a processed dataset contains. The saved name also
 # carries a hash of the charset and of the code of the utils.py preprocessing functions
