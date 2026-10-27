@@ -110,6 +110,9 @@ slow weight `S` and add a fast part `F` (DFA, ephemeral model only):
 History: the three-arm pilot of 2026-09-30 (vault `ephemeral-lowrank/three_arm_pilot.md`, branch
 `worktree-agent-a42eab09d5da49c3c`) introduced the flag; it was ported to `main` on 2026-10-22 for
 the mask load test and proposal C6. `tests/test_fast_structure.py` pins the behaviour.
+`tests/test_fast_layers_structure.py` pins `--fast_layers 0` with each structure (C6 follow-up 2:
+fast weights in trunk layer 0 and `i2h` only), through the fused step, the CLI resume, the loop tracer
+and the mask load test's read-time ablation.
 
 ### Keeping fast weights across sequences (`--wipe_every N`)
 
