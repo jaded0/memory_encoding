@@ -425,6 +425,13 @@ Stability interventions, all ephemeral + DFA only and off by default:
     held-out step, adds a key with no write), and it assumes one write per forward:
     `--fast_backward_per_forward` other than 1 is refused, and so is `--wipe_every` other than 1
     (the key list would grow across sequences).
+  - `--absrun_floor c` (added 2026-10-27, S12 follow-up 3; `absrun` only): divide by
+    `max(1, n / c)` instead of `max(1, n)`, a weaker divisor for `c > 1`: the read is left alone
+    until the decayed |k·q| mass reaches `c` instead of 1, and is then quieted `c` times less. In
+    Batch BFR `absrun` held the trunk-2 fast read at 2–3% of the slow read and LC strict at 0.55;
+    the flag asks whether that was over-suppression. 0 (default) is off and leaves `absrun` bit for
+    bit; `c = 1` is the same divisor. Any other `--fast_read_norm` with a nonzero value is refused
+    (`tests/test_absrun_floor.py`).
   - `ln`: `LN(F x) = (F x − mean) / sqrt(var + 1e-5)` per batch row over the layer's outputs, with
     **no gain or bias**, like `--layer_norm`'s `trunk_layer_norm`. A LayerNorm's affine is normally
     learned by backpropagating through the normalized output; here no gradient flows into the fast
