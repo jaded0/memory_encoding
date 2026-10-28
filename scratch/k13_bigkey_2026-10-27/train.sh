@@ -7,8 +7,9 @@ data=${1:?dataset}; n=${2:?iterations}; arm=${3:?arm}; seed=${4:?seed}; root=${5
 cd "$K13B_CODE"
 [[ $(git rev-parse HEAD) == "$K13B_COMMIT" ]]
 [[ -z $(git status --porcelain) ]] || { echo 'Refusing dirty checkout' >&2; exit 2; }
-nvidia-smi --query-gpu=name --format=csv,noheader | grep -qi A100 || {
-  echo 'Expected A100; refusing different hardware' >&2; exit 2;
+# Moved to deckard 2026-10-28 (Jaden: ORC queue est. start Oct 30): K13B_GPU=A6000 allows it.
+nvidia-smi --query-gpu=name --format=csv,noheader | grep -qi "${K13B_GPU:-A100}" || {
+  echo "Expected ${K13B_GPU:-A100}; refusing different hardware" >&2; exit 2;
 }
 export WANDB_MODE=offline CUBLAS_WORKSPACE_CONFIG=:4096:8
 mkdir -p "$HOME/.cache/inductor_k13b"
@@ -47,7 +48,9 @@ printf '%s\n' "$K13B_COMMIT" > "$d/code_commit"
 if [[ $pilot == 0 ]]; then cp "$K13B_GATE_MANIFEST" "$d/launch_gate.json"; fi
 start=$(date +%s)
 prefix=()
-if [[ $pilot == 1 ]]; then train_timeout=4500; fi
+# Pilot wall cap was 75 min (A100-calibrated). Off-A100, K13B_PILOT_TIMEOUT runs the full
+# fixed 200k iterations instead, so the pilot budget doesn't depend on GPU speed.
+if [[ $pilot == 1 ]]; then train_timeout=${K13B_PILOT_TIMEOUT:-4500}; fi
 prefix=(timeout --signal=TERM --kill-after=10s "${train_timeout}s")
 set +e
 "${prefix[@]}" python -u train.py --dataset "$data" --input_mode last_two --forget_rate .01 \
