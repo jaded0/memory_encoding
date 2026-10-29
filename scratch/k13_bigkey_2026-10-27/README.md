@@ -118,3 +118,31 @@ python scratch/k13_bigkey_2026-10-27/summarize.py "$CONFIRM_ROOT" --mode confirm
 ORC environment caveat: conda's MKL activate hook reads an optional unset variable.
 Both sbatch scripts deliberately disable nounset during activation, then restore it.
 This was found during CPU dataset preparation, before any GPU allocation/submission.
+
+## Deckard review tools (2026-10-28)
+
+The frozen gate still rejects training walltime above4510 seconds, even though the
+authorized move to deckard allowed full200k pilots. Do not rewrite the evidence or
+raise that bound to manufacture a manifest. `review_deckard.py` independently
+tabulates the existing analyzer's scientific checks and the unchanged stable-budget
+function; it **never authorizes launch**. All new tools leave model defaults alone.
+
+```bash
+python scratch/k13_bigkey_2026-10-27/review_deckard.py "$ROOT/pilot" \
+  --out "$ROOT/scientific_review.json" --markdown "$ROOT/pilot_tables.md"
+# Each invocation <=580 seconds including forced termination; idle GPU only.
+# Source hebby first and set CUDA_VISIBLE_DEVICES=0. Scripts may live outside CODE.
+bash /path/to/deckard_timing.sh "$CODE" "$ROOT/timing" par2
+bash /path/to/deckard_timing.sh "$CODE" "$ROOT/timing" spar
+python scratch/k13_bigkey_2026-10-27/estimate_deckard.py "$ROOT" \
+  --iterations 195000 --out "$ROOT/runtime_estimate.json"
+```
+
+Timing uses the unchanged full-width K16 recipe and1000 iterations on standard
+data, no heldout evaluations during timing. `estimate_deckard.py` uses measured
+lin pilot walltime and both measured transformed arms, a two-lanes/GPU contention
+factor and explicit reserves. Its A100 accounting parity is deliberately labelled
+**not an empirical GPU speed conversion**; no A100 pilot actually ran. Four-lane
+ideal, seven-wave and completely seed-paired schedule estimates are reported.
+The task's48-hour deckard ceiling is checked separately from the frozen A100 cap.
+Neither a scientific audit nor a timing smoke permits confirmation by itself.
