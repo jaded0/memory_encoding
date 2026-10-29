@@ -44,6 +44,7 @@ def estimate(root, iterations):
         arms[arm] = dict(seconds_per_iter=rate, scoring_seconds=1800,
                          evidence=evidence, basis='conservative_estimate', explanation=explanation)
     cost = max(iterations * a['seconds_per_iter'] + a['scoring_seconds'] for a in arms.values())
+    seed_cost = sum(iterations * a['seconds_per_iter'] + a['scoring_seconds'] for a in arms.values())
     return dict(hardware='deckard 2x RTX A6000; four lanes, two/GPU', dataset='mqar2_16_q4',
                 iterations=iterations, core_runs=25, launch_approved=False, arms=arms,
                 measurements=measurements, pilot_lin_seconds_per_iter=lin_rate,
@@ -55,6 +56,9 @@ def estimate(root, iterations):
                 ideal_four_lane_wall_hours=25 * cost / 4 / 3600,
                 seven_wave_wall_hours=7 * cost / 3600,
                 seed_block_paired_wall_hours=10 * cost / 3600,
+                arm_specific_ideal_four_lane_wall_hours=5 * seed_cost / 4 / 3600,
+                arm_specific_seed_block_paired_wall_hours=2 * seed_cost / 3600,
+                envelope_basis='Primary fields conservatively charge all25 runs at the slowest arm, matching frozen gate policy. arm_specific fields sum the individual arm estimates instead.',
                 schedule='Five complete five-arm seed blocks on four lanes; one lane gets two seed blocks (10 runs); others 5. Fully paired partial results.',
                 total_a6000_lane_hours=25 * cost / 3600,
                 lin_only_unpadded_ideal_lower_bound_hours=25 * iterations * lin_rate / 4 / 3600,
