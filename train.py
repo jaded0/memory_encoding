@@ -532,7 +532,10 @@ def build_model(config, charset, n_characters):
             order2_mode=config.get('order2_mode', 'parallel'),
             order2_temperature=config.get('order2_temperature', 4.0),
             order2_dim=config.get('order2_dim', 16),
-            order2_seed=config.get('seed') or 0)
+            order2_seed=config.get('seed') or 0,
+            write_gain_power=config.get('write_gain_power', 0.0),
+            write_gain_window=config.get('write_gain_window', 256),
+            write_gain_max=config.get('write_gain_max', 0.0))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -724,6 +727,18 @@ def build_parser():
                              'projected cosine c (the softmax temperature analogue).')
     parser.add_argument('--order2_dim', type=int, default=16,
                         help='--order2_layers: the projection size d.')
+    parser.add_argument('--write_gain_power', type=float, default=0.0,
+                        help='Ephemeral DFA (2026-10-27, proposal P3, the expansive write-gain test): scale '
+                             'every fast write by (|e| / m)^p, |e| the norm of the error that layer\'s fast '
+                             'entries are written with (per layer and batch row), m that layer\'s running '
+                             'median of |e| over the last --write_gain_window training steps. Slow entries, '
+                             'biases and i2o are unchanged. 0 (default) = off, bit for bit. See README '
+                             '"Expansive write gain".')
+    parser.add_argument('--write_gain_window', type=int, default=256,
+                        help='--write_gain_power: training steps (characters) in the running median\'s '
+                             'window; each step adds batch_size norms.')
+    parser.add_argument('--write_gain_max', type=float, default=0.0,
+                        help='--write_gain_power: cap on the gain (0 = none, the default).')
     parser.add_argument('--layer_norm', type=str2bool, nargs='?', const=True, default=False,
                         help='Both models: LayerNorm (no learnable gain or bias) on each trunk layer\'s '
                              'activations, after the GELU, so the next layer (and its DFA input trace) '
@@ -964,6 +979,21 @@ def check_argument_combinations(args, parser):
             parser.error("--order2_layers is defined only for --fast_structure exclusive.")
         if args.order2_temperature <= 0 or args.order2_dim < 1:
             parser.error("--order2_temperature must be > 0 and --order2_dim >= 1.")
+    if (not math.isfinite(args.write_gain_power) or not math.isfinite(args.write_gain_max)
+            or args.write_gain_power < 0 or args.write_gain_window < 1 or args.write_gain_max < 0):
+        parser.error("--write_gain_power and --write_gain_max must be >= 0 and --write_gain_window >= 1.")
+    if args.write_gain_power > 0:
+        if args.model_type != 'ephemeral' or args.updater != 'dfa':
+            parser.error("--write_gain_power supports only --model_type ephemeral --updater dfa.")
+        if args.grad_norm_clip > 0:
+            parser.error("--write_gain_power is not defined with --grad_norm_clip (the fused step clips the "
+                         "error before the gain, the unfused step the gradient after it).")
+        if str(args.slow_update_every) != '1' or str(args.fast_backward_per_forward) != '1':
+            parser.error("--write_gain_power needs --slow_update_every 1 and --fast_backward_per_forward 1.")
+        if args.order2_layers:
+            parser.error("--write_gain_power is not defined with --order2_layers.")
+        if args.fast_structure != 'exclusive':
+            parser.error("--write_gain_power is defined only for --fast_structure exclusive.")
     for name in ('fast_layers', 'decouple_fast_feedback', 'fast_write_from_readout', 'order2_layers'):
         try:
             parse_layer_list(getattr(args, name))
@@ -1510,6 +1540,8 @@ def main():
             if args.print_freq > 0 and iter % args.print_freq == 0:
                 metrics = interval.summary()
                 metrics.update(rnn.grad_clip_stats.summary())
+                if isinstance(rnn, EphemeralRNN):
+                    metrics.update(rnn.write_gain_summary())
                 metrics.update(heldout_metrics)
                 metrics.update(trace_metrics)
                 heldout_metrics, trace_metrics = {}, {}

@@ -476,6 +476,34 @@ Stability interventions, all ephemeral + DFA only and off by default:
     `--grad_norm_clip`, `--slow_update_every` or `--fast_backward_per_forward` other than 1,
     `--fast_read_norm`, backprop and BPTT are refused. Off (default, empty) is the original model, bit
     for bit (`tests/test_order2.py`).
+- **Expansive write gain** (`--write_gain_power p`, `--write_gain_window W`, `--write_gain_max G`;
+  DFA, ephemeral model; added 2026-10-27 for the vault proposal P3, "the expansive write-gain test").
+  Cross-entropy surprise is compressed (`|softmax − onehot| ≤ √2`), so on key recall the store
+  step's write is only ~2× the median other write (cheap checks 2026-10-16 §1). This flag makes it
+  expansive on purpose: every fast write is scaled by `(|e| / m)^p`.
+  - `e` is the error the layer's fast entries are written with this step (its projected DFA error,
+    or the `--decouple_fast_feedback` / `--fast_write_from_readout` override): the "value" `p_s` of
+    the 10-16 decomposition. `|e|` is its L2 norm **per layer and per batch row**; every layer with
+    fast entries (the trunk layers `--fast_layers` keeps, and i2h) is gained separately.
+  - `m` is that layer's running median: the exact lower median of the raw (ungained) norms of the
+    last `W` training steps (characters) of every batch row, `W × batch_size` values in a ring
+    buffer (default `W` 256, about 28 key-recall batches). Zero-error rows (padding) are left out.
+    It is causal: a step's gain uses the median of the steps before it, and the very first step,
+    with no history, writes with gain 1. Only training steps add to the history; held-out
+    evaluation and the loop tracer read the median frozen as training left it, so a checkpoint's
+    held-out numbers do not depend on protocol order. The history and its step counter are buffers
+    in the checkpoint (only when on), and a resume with different settings is refused.
+  - Only the fast write changes: the slow entries, biases and i2o take the ungained error, exactly
+    as with the flag off. The gain is unbounded by default (`G` 0); `--write_gain_max G` caps it.
+    With `p ≥ 2` the mean gain is well above 1 (every above-median write grows), so the run's
+    effective `lr·α` grows too; the interval metrics log `write_gain_mean`, `write_gain_max`,
+    `write_gain_frac_above_1` and each gained layer's median `write_gain_median_<k>` (`k` its
+    index in `trained_layers()`, i2h = `num_layers`).
+  - Every allowed step path (unfused, fused, the print steps that log norms, held-out fast-only)
+    writes the same gains. `--grad_norm_clip`, `--slow_update_every` or `--fast_backward_per_forward`
+    other than 1, `--order2_layers`, the additive `--fast_structure`s, backprop and BPTT are refused.
+    `0` (default) is the original model, bit for bit, with no checkpoint key added
+    (`tests/test_write_gain.py`).
 
 The settings may be introduced at a resume boundary for causal interventions. Their defaults
 preserve the original update exactly; `tests/test_drift_interventions.py` covers the error,

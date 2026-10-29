@@ -500,6 +500,62 @@ def per_sequence_clip_scale(norms, max_norm):
     return (max_norm / (norms + 1e-6)).clamp(max=1.0)
 
 
+def write_gain_factor(norms, medians, power: float, max_gain: float = 0.0):
+    """--write_gain_power p: each fast write's gain, (|p_b| / median)^p, [L, B] for norms [L, B]
+    (one row per gained layer) and medians [L] (NaN: no history yet). A layer with no history
+    takes gain 1, an all-zero (padding) row gain 0 (it writes nothing anyway). max_gain > 0 caps
+    the gain from above (--write_gain_max); 0 leaves it unbounded."""
+    medians = medians.unsqueeze(1)
+    gain = (norms / medians).pow(power)
+    if max_gain > 0:
+        gain = gain.clamp(max=max_gain)
+    return torch.where(torch.isnan(medians), torch.ones_like(gain), gain)
+
+
+def nan_lower_median(values):
+    """Row-wise lower median of the non-NaN entries of values [L, N] (torch.median's convention:
+    the lower of the two middle values for an even count), NaN for a row with none. Built from a
+    sort because torch.nanmedian has no deterministic CUDA implementation; NaNs sort last."""
+    count = (~torch.isnan(values)).sum(1)
+    ordered = torch.sort(values, dim=1).values
+    middle = ordered.gather(1, ((count - 1).clamp_min(0) // 2).unsqueeze(1)).squeeze(1)
+    return torch.where(count > 0, middle, torch.full_like(middle, float('nan')))
+
+
+class WriteGainStats:
+    """--write_gain_power statistics over a print interval, on the device (no host sync until
+    summary()): the mean and max gain over the non-padding rows of every gained layer, and the
+    fraction of those rows with gain above 1. The medians are read from the model at summary time."""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.gain_sum = self.gain_max = self.above = self.count = None
+
+    def record(self, gains, valid):
+        gains, valid = gains.detach(), valid.detach()
+        g = torch.where(valid, gains, torch.zeros_like(gains))
+        terms = (g.sum(), g.max(), ((gains > 1) & valid).sum(), valid.sum())
+        if self.count is None:
+            self.gain_sum, self.gain_max, self.above, self.count = terms
+        else:
+            self.gain_sum = self.gain_sum + terms[0]
+            self.gain_max = torch.maximum(self.gain_max, terms[1])
+            self.above = self.above + terms[2]
+            self.count = self.count + terms[3]
+
+    def summary(self):
+        if self.count is None or int(self.count) == 0:
+            self.reset()
+            return {}
+        count = int(self.count)
+        result = {"write_gain_mean": self.gain_sum.item() / count, "write_gain_max": self.gain_max.item(),
+                  "write_gain_frac_above_1": self.above.item() / count}
+        self.reset()
+        return result
+
+
 class GradNormClipStats:
     """--grad_norm_clip statistics over a print interval: the mean and max pre-clip gradient norm
     and the fraction of norms that exceeded the threshold. The ephemeral model records one norm
@@ -1258,7 +1314,7 @@ class EphemeralRNN(torch.nn.Module):
         fast_write_from_readout_scale=1.0, fast_read_norm='off', fast_read_norm_lr=None,
         absrun_floor=0.0, fast_structure='exclusive',
         order2_layers=None, order2_map='order2', order2_mode='parallel', order2_temperature=4.0,
-        order2_dim=16, order2_seed=0
+        order2_dim=16, order2_seed=0, write_gain_power=0.0, write_gain_window=256, write_gain_max=0.0
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -1294,7 +1350,9 @@ class EphemeralRNN(torch.nn.Module):
         check_fast_structure).
         order2_layers / order2_map / order2_mode / order2_temperature / order2_dim / order2_seed:
         --order2_layers and friends, an order-two (or order-one control) fast matrix on a fixed
-        projection of those trunk layers' inputs (see set_order2). None: off."""
+        projection of those trunk layers' inputs (see set_order2). None: off.
+        write_gain_power / write_gain_window / write_gain_max: --write_gain_power and friends, the
+        expansive write gain (see set_write_gain). 0: off."""
         super(EphemeralRNN, self).__init__()
         self.fast_structure = parse_fast_structure(fast_structure)
         check_fast_structure(self.fast_structure, updater=updater, slow_update_every=slow_update_every,
@@ -1425,6 +1483,9 @@ class EphemeralRNN(torch.nn.Module):
         if order2_layers is not None:
             self.set_order2(order2_layers, order2_map, order2_mode, order2_temperature, order2_dim,
                             order2_seed)
+        self.write_gain_power = 0.0
+        if write_gain_power:
+            self.set_write_gain(write_gain_power, write_gain_window, write_gain_max)
 
     def set_order2(self, layers, order='order2', mode='parallel', temperature=4.0, dim=16, seed=0):
         """--order2_layers: each listed trunk layer gets a second fast matrix G [B, out, F], read as
@@ -1488,6 +1549,90 @@ class EphemeralRNN(torch.nn.Module):
             if layer.order2 is not None:
                 layer.order2_write(error if fast is None else fast, learning_rate, update_clamp, forget)
 
+    def set_write_gain(self, power, window=256, max_gain=0.0):
+        """--write_gain_power p (P3, the expansive write-gain test): every fast write is scaled by
+        (|e| / m)^p, where e is the error the layer's fast entries are written with this step (its
+        projected DFA error, or the --decouple_fast_feedback / --fast_write_from_readout override),
+        |e| its L2 norm per layer and per batch row, and m that layer's running median of |e|.
+        The slow entries, the bias and i2o keep the ungained error: only the fast write changes.
+
+        m is the exact (lower) median of the raw, ungained norms of the last `window` training
+        steps of every batch row (window x batch_size values per layer, a ring buffer). Zero-error
+        rows (padding) are left out of the median. The gain of a step uses the median of the
+        steps before it (causal), so the first training step, with no history, writes with gain 1.
+        Only training steps (fused_dfa_step and the unfused override_fast_gradients) add to the
+        history: held-out fast-only steps and the loop tracer read the median, frozen as training
+        left it. The history and its step counter are buffers, saved in the checkpoint.
+
+        max_gain > 0 caps the gain (--write_gain_max); 0 leaves it unbounded. One fast write per
+        forward and one projected error per layer are assumed: the DFA updater,
+        --slow_update_every 1, --fast_backward_per_forward 1, the exclusive fast structure and no
+        --order2_layers are required."""
+        power, window, max_gain = float(power), int(window), float(max_gain)
+        if not power > 0 or not math.isfinite(power):
+            raise ValueError(f"--write_gain_power {power}: must be > 0 (0 is off)")
+        if window < 1:
+            raise ValueError(f"--write_gain_window {window}: must be >= 1")
+        if max_gain < 0 or not math.isfinite(max_gain):
+            raise ValueError(f"--write_gain_max {max_gain}: must be finite and >= 0 (0 is no cap)")
+        if self.updater != 'dfa':
+            raise ValueError("--write_gain_power supports only the DFA updater")
+        if self.slow_update_every != 1 or self.fast_iterations != 1 or self.fast_subsample != 1:
+            raise ValueError("--write_gain_power needs --slow_update_every 1 and --fast_backward_per_forward 1")
+        if self.order2_layers is not None:
+            raise ValueError("--write_gain_power is not defined with --order2_layers")
+        if any(layer.is_additive for layer in self.trained_layers()):
+            raise ValueError("--write_gain_power is defined only for --fast_structure exclusive")
+        layers = [index for index, layer in enumerate(self.trained_layers())
+                  if not layer.is_last_layer and bool(layer.ephemeral_mask.any())]
+        if not layers:
+            raise ValueError("--write_gain_power: no layer has fast entries")
+        self.write_gain_power, self.write_gain_window, self.write_gain_max = power, window, max_gain
+        self.write_gain_layers = layers
+        device = self.i2o.per_sample_weights.device
+        self.register_buffer('write_gain_history', torch.full(
+            (len(layers), window * self.batch_size), float('nan'), device=device))
+        self.register_buffer('write_gain_steps', torch.zeros((), dtype=torch.long, device=device))
+        self.write_gain_stats = WriteGainStats()
+
+    def write_gain_medians(self):
+        """[L]: each gained layer's running median of its raw fast-write error norms (NaN: no
+        history yet), in the order of write_gain_layers."""
+        return nan_lower_median(self.write_gain_history)
+
+    def write_gain_summary(self):
+        """The interval's gain statistics (WriteGainStats) and each gained layer's current median,
+        keyed by its trained_layers index (i2h is index num_layers). {} when off."""
+        if not self.write_gain_power:
+            return {}
+        result = self.write_gain_stats.summary()
+        for index, median in zip(self.write_gain_layers, self.write_gain_medians().tolist()):
+            result[f"write_gain_median_{index}"] = median
+        return result
+
+    def _apply_write_gain(self, projected, overrides, commit):
+        """fast_write_errors under --write_gain_power: each gained layer's fast-write error times its
+        gain (set_write_gain). commit=True (the training steps) records the gain statistics and
+        pushes this step's raw norms into the history, after the gains were taken."""
+        base = [projected[index] if overrides[index] is None else overrides[index]
+                for index in self.write_gain_layers]
+        norms = torch.stack([error.norm(dim=1) for error in base])  # [L, B]
+        gains = write_gain_factor(norms, self.write_gain_medians(), self.write_gain_power,
+                                  self.write_gain_max)
+        errors = list(overrides)
+        for k, index in enumerate(self.write_gain_layers):
+            errors[index] = base[k] * gains[k].unsqueeze(1)
+        if commit:
+            valid = norms > 0
+            self.write_gain_stats.record(gains, valid)
+            batch = norms.shape[1]
+            slot = ((self.write_gain_steps % self.write_gain_window) * batch
+                    + torch.arange(batch, device=norms.device))
+            self.write_gain_history.index_copy_(
+                1, slot, torch.where(valid, norms, torch.full_like(norms, float('nan'))))
+            self.write_gain_steps.add_(1)
+        return errors
+
     def set_fast_read_norm(self, mode, learning_rate=None, absrun_floor=0.0):
         """--fast_read_norm on every layer with ephemeral entries (the trunk layers --fast_layers
         keeps, and i2h): 'off' (default, the one-bmm forward), 'running', 'absrun' or 'rms'
@@ -1543,7 +1688,7 @@ class EphemeralRNN(torch.nn.Module):
         projected, norms = self.dfa_step_errors(output_error, grad_norm_clip)
         if norms is not None:
             self.grad_clip_stats.record(norms, grad_norm_clip)
-        fast_errors = self.fast_write_errors(output_error, projected)
+        fast_errors = self.fast_write_errors(output_error, projected, commit=True)
         self.order2_dfa_step(output_error, learning_rate, update_clamp, projected=projected)
         for layer, error, fast_error in zip(layers, projected, fast_errors):
             layer._last_projected_error = error
@@ -1581,7 +1726,7 @@ class EphemeralRNN(torch.nn.Module):
         scale = per_sequence_clip_scale(norms, grad_norm_clip)
         return [error * scale.unsqueeze(1) for error in projected], norms
 
-    def fast_write_errors(self, output_error, projected):
+    def fast_write_errors(self, output_error, projected, commit=False):
         """Each trained layer's fast-write error where it differs from its DFA error projected
         (dfa_step_errors), else None: --decouple_fast_feedback projects output_error through the
         layer's B_fast (with f' under --dfa_fprime, as for the slow error); --fast_write_from_readout
@@ -1589,10 +1734,15 @@ class EphemeralRNN(torch.nn.Module):
         step's update). Every step path writes the fast entries with these, so training, norm
         logging, held-out evaluation and the loop tracer all see the same writes. Neither flag
         is defined with --grad_norm_clip (train.py rejects the combination).
+        --write_gain_power: every gained layer's error (override or DFA) times its write gain
+        (set_write_gain); commit=True, used only by the training steps, also advances the running
+        median, so inspecting the writes (fast_write_projected) never changes them.
         --order2_mode replace: a layer with an order-two fast matrix writes its linear fast entries
         with a zero error (they are never written); its order-two matrix takes the error this
         method would otherwise give (order2_dfa_step)."""
         errors = self._fast_error_overrides(output_error, projected)
+        if self.write_gain_power:
+            errors = self._apply_write_gain(projected, errors, commit)
         if self.order2_layers is None:
             return errors
         return [torch.zeros_like(error) if layer.order2_replace else fast
@@ -1627,11 +1777,12 @@ class EphemeralRNN(torch.nn.Module):
         entries' gradient of each layer with a fast_write_errors override. normalize_slow_gradient
         leaves the ephemeral entries as they are, so this equals dfa_layer_step's gradient."""
         layers = self.trained_layers()
-        if not any(layer.fast_write_from_readout or layer.fast_feedback_weights is not None
-                   or layer.order2_replace for layer in layers):
+        if not self.write_gain_power and not any(
+                layer.fast_write_from_readout or layer.fast_feedback_weights is not None
+                or layer.order2_replace for layer in layers):
             return
         projected, _ = self.dfa_step_errors(output_error)
-        for layer, fast_error in zip(layers, self.fast_write_errors(output_error, projected)):
+        for layer, fast_error in zip(layers, self.fast_write_errors(output_error, projected, commit=True)):
             if fast_error is not None:
                 grad = layer.per_sample_weights.grad
                 grad.copy_(torch.where(layer.ephemeral_mask.unsqueeze(0),

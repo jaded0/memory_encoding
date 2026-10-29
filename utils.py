@@ -462,6 +462,13 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
         mismatches.extend((key, config.get(key, default), loaded_config.get(key, default))
                           for key, default in order2_defaults.items()
                           if config.get(key, default) != loaded_config.get(key, default))
+    # --write_gain_power and its settings change every fast write and add the median's history
+    # (absent: off).
+    write_gain_defaults = {'write_gain_power': 0.0, 'write_gain_window': 256, 'write_gain_max': 0.0}
+    if config.get('write_gain_power') or loaded_config.get('write_gain_power'):
+        mismatches.extend((key, config.get(key, default), loaded_config.get(key, default))
+                          for key, default in write_gain_defaults.items()
+                          if config.get(key, default) != loaded_config.get(key, default))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")
