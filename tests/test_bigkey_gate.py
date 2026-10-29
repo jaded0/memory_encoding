@@ -178,7 +178,7 @@ def test_train_exit_marker_and_failed_rebuild_clear_stale_approval(pilot):
 
 
 def test_bash_syntax():
-    for filename in ("train.sh", "pilot.sbatch", "confirm.sbatch"):
+    for filename in ("train.sh", "pilot.sbatch", "confirm.sbatch", "deckard_confirm.sh"):
         subprocess.run(["bash", "-n", str(ROOT / "scratch/k13_bigkey_2026-10-27" / filename)], check=True)
 
 
@@ -191,3 +191,34 @@ def test_conda_activation_allows_unset_mkl_environment(tmp_path, filename):
     env = dict(os.environ, HOME=str(tmp_path))
     env.pop('MKL_INTERFACE_LAYER', None)
     subprocess.run(['bash', '-u', '-c', activation], env=env, check=True, capture_output=True)
+
+
+def test_deckard3_profile_authorizes_only_three_arms(pilot):
+    root, runtime = pilot
+    for d in root.glob("mqar2_*-lin-s2718"):
+        run = json.loads((d / "pilot_run.json").read_text())
+        run["training_seconds"] = 33198
+        (d / "pilot_run.json").write_text(json.dumps(run))
+    with pytest.raises(ValueError, match="training walltime"): gate.build(root, runtime)
+    with pytest.raises(ValueError):
+        gate.build(root, runtime, True, gate.APPROVAL, "deckard3")
+    m = gate.build(root, runtime, True, gate.APPROVAL_DECKARD3, "deckard3")
+    assert m["profile"] == "deckard3" and m["core_runs"] == 15
+    assert m["arms"] == ["lin", "par2", "spar"]
+    assert gate.validate_manifest(m, m["dataset"], m["n_iters"], "spar", 1732)
+    for arm in ("par1", "rep2"):
+        with pytest.raises(ValueError, match="arm not authorized"):
+            gate.validate_manifest(m, arm=arm)
+    changed = copy.deepcopy(m); changed["profile"] = "a100"
+    with pytest.raises(ValueError): gate.validate_manifest(changed)
+
+
+def test_deckard3_lane_hours_are_arm_specific_and_capped(pilot):
+    root, runtime = pilot
+    costs = json.loads(runtime.read_text())
+    costs["arms"]["spar"]["seconds_per_iter"] = 5.0
+    hours = gate.estimate_runtime(costs, 10000, "deckard3")[0]
+    assert hours == pytest.approx(5 * (2 * (1000 + 60) + 50000 + 60) / 3600)
+    costs["arms"]["spar"]["seconds_per_iter"] = 40.0
+    with pytest.raises(ValueError, match="504 deckard lane-hours"):
+        gate.estimate_runtime(costs, 10000, "deckard3")

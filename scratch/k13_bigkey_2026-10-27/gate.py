@@ -9,6 +9,8 @@ arms, basis="conservative_estimate" may document pilot throughput times a safe
 multiplier (e.g. 3) and a scoring reserve; no unapproved feature-arm training is
 required. The core estimate charges all 25 runs at the slowest arm's cost.
 Missing evidence or an unexplained estimate blocks confirmation.
+--profile deckard3 is the 2026-10-29 addendum (K13bigkey_addendum_2026-10-29.md):
+lin/par2/spar only, on deckard, budgeted per arm in lane-hours.
 Pilot directories contain analysis.json, learning_curve.json and pilot_run.json.
 Curve JSON is {"split":"validation", "points":[{"iteration":5000,
 "strict_recall":0.5}, ...]}. pilot_run.json is written by train.sh.
@@ -25,6 +27,14 @@ ARMS = ("lin", "par2", "par1", "rep2", "spar")
 SEEDS = (2718, 3141, 1618, 1414, 1732)
 APPROVAL = ('Jaden chat 2026-10-27: try the higher-dimensional-key task; '
             'evaluate order two vs expand-and-sparsify')
+APPROVAL_DECKARD3 = ('Jaden chat 2026-10-29: option 1, lin/par2/spar x 5 seeds x 195k '
+                     'on deckard after B2fu-A')
+# The deckard pilots ran the full 200k under explicit authorization (K13B_PILOT_TIMEOUT).
+PROFILES = dict(
+    a100=dict(arms=ARMS, pilot_wall=4510, approval=APPROVAL),
+    deckard3=dict(arms=("lin", "par2", "spar"), pilot_wall=86400, approval=APPROVAL_DECKARD3,
+                  lane_hour_cap=504, run_wall_cap=72 * 3600),
+)
 RECIPE = dict(model="KRC1", hidden_size=1024, num_layers=3, batch_size=16,
               input_mode="last_two", updater="dfa", optimizer="sgd",
               learning_rate=1e-4, plasticity=3e4, ephemeral_fraction=.1,
@@ -81,7 +91,7 @@ def pooled_pr(layer):
     return number(layer["items"]["key_pr_pooled"], "pooled key PR")
 
 
-def candidate(analysis, curve, run, k):
+def candidate(analysis, curve, run, k, pilot_wall=4510):
     dataset = f"mqar2_{k}_q4"
     require(analysis.get("split") == "validation", "pilot cannot select on test")
     require(run.get("dataset") == dataset and run.get("arm") == "lin"
@@ -91,7 +101,7 @@ def candidate(analysis, curve, run, k):
     require(run.get("status") in ("completed", "timeout"), "failed/unfinished pilot")
     require(run.get("train_exit") == (0 if run["status"] == "completed" else 124),
             "pilot has no valid TRAIN EXIT status")
-    number(run["training_seconds"], "training walltime", 0, 4510)
+    number(run["training_seconds"], "training walltime", 0, pilot_wall)
     require(analysis.get("code_commit") == run.get("code_commit") and bool(run.get("code_commit")),
             "analysis/pilot commit mismatch")
     results = [r for r in analysis["results"] if r["dataset"] == dataset]
@@ -137,10 +147,13 @@ def candidate(analysis, curve, run, k):
                 status=run["status"])
 
 
-def estimate_runtime(runtime, iterations):
-    require(set(runtime["arms"]) == set(ARMS), "need documented runtime for all five arms")
+def estimate_runtime(runtime, iterations, profile="a100"):
+    arms = PROFILES[profile]["arms"]
+    if profile == "a100":
+        require(set(runtime["arms"]) == set(ARMS), "need documented runtime for all five arms")
+    require(set(arms) <= set(runtime["arms"]), "need documented runtime for every authorized arm")
     costs, files = [], []
-    for arm in ARMS:
+    for arm in arms:
         item = runtime["arms"][arm]
         require(item.get("basis") in ("measured", "conservative_estimate")
                 and isinstance(item.get("explanation"), str) and bool(item["explanation"].strip()),
@@ -149,23 +162,37 @@ def estimate_runtime(runtime, iterations):
         score = number(item["scoring_seconds"], f"{arm} scoring seconds", 1e-12)
         files.append(evidence(item["evidence"]))
         costs.append(iterations * rate + score)
+    if profile == "deckard3":
+        # Arm-specific lane-hours (two lanes per A6000), not the worst-arm envelope.
+        hours = len(SEEDS) * sum(costs) / 3600
+        require(hours <= PROFILES[profile]["lane_hour_cap"],
+                "core 15-run estimate exceeds 504 deckard lane-hours")
+        return hours, files
     hours = 25 * max(costs) / 3600
     require(hours <= 40, "core 25-run training + scoring estimate exceeds 40 A100-hours")
     return hours, files
 
 
-def allocation_budget(runtime, iterations):
+def allocation_budget(runtime, iterations, profile="a100"):
     # Include a 20% margin plus a full bounded diagnostic window and setup time.
-    train_seconds = max(iterations * r["seconds_per_iter"] for r in runtime["arms"].values())
-    scoring_seconds = max(r["scoring_seconds"] for r in runtime["arms"].values())
+    arms = [runtime["arms"][a] for a in PROFILES[profile]["arms"]]
+    train_seconds = max(iterations * r["seconds_per_iter"] for r in arms)
+    scoring_seconds = max(r["scoring_seconds"] for r in arms)
     reserve = max(600, math.ceil(1.2 * scoring_seconds))
     wall = math.ceil((1.2 * train_seconds + reserve + 60) / 60) * 60
+    if profile == "deckard3":
+        # A per-run timeout only; the lane-hour estimate is the budget.
+        require(wall <= PROFILES[profile]["run_wall_cap"], "per-run deckard wall exceeds 72 hours")
+        return dict(per_run_wall_seconds=wall, training_timeout_seconds=wall - reserve - 60,
+                    scoring_timeout_seconds=reserve)
     require(25 * wall <= 40 * 3600, "core allocated walltime exceeds 40 A100-hours")
     return dict(per_run_wall_seconds=wall, training_timeout_seconds=wall - reserve - 60,
                 scoring_timeout_seconds=reserve, allocated_a100_hours=25 * wall / 3600)
 
 
-def build(root, runtime_path, approve=False, approval_reference=None):
+def build(root, runtime_path, approve=False, approval_reference=None, profile="a100"):
+    require(profile in PROFILES, "unknown gate profile")
+    P = PROFILES[profile]
     records, files = [], []
     for k in KS:
         d = Path(root) / f"mqar2_{k}_q4-lin-s2718"
@@ -176,14 +203,24 @@ def build(root, runtime_path, approve=False, approval_reference=None):
         files.append(evidence(log))
         markers = [line for line in log.read_text().splitlines() if line.startswith("TRAIN EXIT ")]
         require(markers == [f"TRAIN EXIT {run['train_exit']}"], "missing/ambiguous TRAIN EXIT marker")
-        records.append(candidate(analysis, curve, run, k))
+        records.append(candidate(analysis, curve, run, k, P["pilot_wall"]))
     selected = next((r for r in records if r["qualifies"]), None)
     require(selected is not None, "no K passes the frozen regime and stability gates")
     files.append(evidence(runtime_path))
-    hours, runtime_files = estimate_runtime(load(runtime_path), selected["n_iters"])
-    allocation = allocation_budget(load(runtime_path), selected["n_iters"])
+    hours, runtime_files = estimate_runtime(load(runtime_path), selected["n_iters"], profile)
+    allocation = allocation_budget(load(runtime_path), selected["n_iters"], profile)
     files.extend(runtime_files)
-    require(not approve or approval_reference == APPROVAL, "explicit frozen approval reference required")
+    require(not approve or approval_reference == P["approval"], "explicit frozen approval reference required")
+    if profile != "a100":
+        return dict(**allocation, schema_version=1, profile=profile, regime_verified=True,
+                    launch_approved=bool(approve),
+                    approval_reference=approval_reference if approve else None,
+                    dataset=f"mqar2_{selected['k']}_q4", n_iters=selected["n_iters"],
+                    arms=list(P["arms"]), seeds=list(SEEDS), core_runs=len(SEEDS) * len(P["arms"]),
+                    recipe=RECIPE, estimated_lane_hours=hours, includes_scoring=True,
+                    pilot_evidence=files, pilot_results=records,
+                    pilot_root=str(Path(root).resolve()),
+                    runtime_estimate=str(Path(runtime_path).resolve()))
     return dict(**allocation, schema_version=1, regime_verified=True, launch_approved=bool(approve),
                 approval_reference=approval_reference if approve else None,
                 dataset=f"mqar2_{selected['k']}_q4", n_iters=selected["n_iters"],
@@ -197,14 +234,17 @@ def build(root, runtime_path, approve=False, approval_reference=None):
 def validate_manifest(manifest, dataset=None, iterations=None, arm=None, seed=None):
     require(manifest.get("regime_verified") is True and manifest.get("launch_approved") is True,
             "confirmation is not explicitly approved")
-    require(manifest.get("approval_reference") == APPROVAL, "invalid approval reference")
+    profile = manifest.get("profile", "a100")
+    require(profile in PROFILES, "unknown gate profile")
+    approval = PROFILES[profile]["approval"]
+    require(manifest.get("approval_reference") == approval, "invalid approval reference")
     for item in manifest["pilot_evidence"]:
         require(evidence(item["path"]) == item, "evidence changed since gate evaluation")
-    rebuilt = build(manifest["pilot_root"], manifest["runtime_estimate"], True, APPROVAL)
+    rebuilt = build(manifest["pilot_root"], manifest["runtime_estimate"], True, approval, profile)
     require(manifest == rebuilt, "manifest does not match frozen gate/evidence")
     require(dataset is None or dataset == manifest["dataset"], "dataset not authorized")
     require(iterations is None or iterations == manifest["n_iters"], "iterations not authorized")
-    require(arm is None or arm in ARMS, "arm not authorized")
+    require(arm is None or arm in PROFILES[profile]["arms"], "arm not authorized")
     require(seed is None or seed in SEEDS, "seed not authorized")
     return manifest
 
@@ -218,6 +258,7 @@ def main(argv=None):
     b.add_argument("--out", required=True)
     b.add_argument("--approve", action="store_true")
     b.add_argument("--approval-reference")
+    b.add_argument("--profile", choices=sorted(PROFILES), default="a100")
     v = sub.add_parser("validate")
     v.add_argument("manifest")
     v.add_argument("--dataset")
@@ -229,7 +270,8 @@ def main(argv=None):
         if args.command == "validate":
             validate_manifest(load(args.manifest), args.dataset, args.iterations, args.arm, args.seed)
         else:
-            result = build(args.pilot_root, args.runtime_estimate, args.approve, args.approval_reference)
+            result = build(args.pilot_root, args.runtime_estimate, args.approve, args.approval_reference,
+                           args.profile)
             Path(args.out).write_text(json.dumps(result, indent=2, allow_nan=False) + "\n")
     except (ValueError, KeyError, TypeError, OSError) as exc:
         # Replace stale approval on a failed rebuild; never leave an old launchable file.
