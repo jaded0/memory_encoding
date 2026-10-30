@@ -18,17 +18,19 @@ for lr in "${LRS[@]}"; do
     --length 512 --stories 4096 --out "$ROOT/lrsweep/select/lr$lr"
 done
 "$PY" - "$ROOT/lrsweep/select" "${LRS[@]}" <<'PY'
-import json, sys
+import json, math, sys
 d, lrs = sys.argv[1], sys.argv[2:]
 rows = []
 for lr in lrs:
     r = json.load(open(f"{d}/lr{lr}.json"))
     assert r["iteration"] >= 20000 and r["stories"] == 4096, (lr, r["iteration"], r["stories"])
     assert abs(r["arm_config"]["learning_rate"] - float(lr)) < 1e-12, r["arm_config"]
-    rows.append((r["ce"]["all"]["on"], lr))
+    ce = r["ce"]["all"]["on"]
+    rows.append((ce if math.isfinite(ce) else math.inf, lr))  # a nonfinite run is never picked
 for ce, lr in sorted(rows, key=lambda t: float(t[1])):
     print(f"lr {lr}: val CE {ce:.5f} nats/char")
-pick = min(rows)[1]
+assert any(math.isfinite(ce) for ce, _ in rows), rows
+pick = min(rows, key=lambda t: (t[0], float(t[1])))[1]  # ties -> smaller lr
 print("PICK", pick)
 json.dump({"val_ce": {lr: ce for ce, lr in rows}, "pick": pick}, open(f"{d}/pick.json", "w"), indent=1)
 PY
