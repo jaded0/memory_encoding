@@ -7,8 +7,8 @@ Pre-registered in PREREG_fastlayers.md, "Batch B2". Run from a memory_encoding c
     python b2_eval.py synth --checkpoint C --batches 64 --out OUT                         (key PR on its own task)
     python b2_eval.py horizon --checkpoint C --stories 1024 --wipe_every 4,8,16,32,64,128 --out OUT   (round 2)
 
-Inference-only forgetting intervention (all scoring modes): --inference_forget_rate 0.03 (or 0.05, 0.1).
-Omit it to retain checkpoint forgetting (e.g. DEEP's 0.01). Slow weights and checkpoint config stay unchanged;
+Inference-only forgetting intervention (all scoring modes): --forget_rate_override 0.03 (or 0.05, 0.1).
+Omit it to retain checkpoint forgetting (e.g. DEEP's 0.01). Slow weights and checkpoint files stay unchanged;
 JSON inference_forgetting records checkpoint/effective rates and every layer's actual rates.
 
 Every protocol freezes the slow weights and starts each sequence from wiped fast entries (heldout.py):
@@ -79,22 +79,25 @@ def forget_rate_value(value):
 def inference_forgetting(model, config, override=None):
     """Change actual updater attributes, not just config (also works on unfused CPU/sm61).
 
-    The checkpoint config remains the training recipe. With no override this is strictly read-only.
+    The in-memory config reports the effective rate; metadata preserves the training recipe.
+    With no override this is strictly read-only.
     Include i2h/i2o and any auxiliary fast layers, not only the trunk; the root attribute is also
     kept consistent even though fast_only_dfa_step reads each layer's forget_rate.
     """
+    checkpoint_rate = config.get("forget_rate")
     if override is not None:
         override = forget_rate_value(override)
         if not has_fast_weights(model):
-            raise ValueError("--inference_forget_rate requires a model with fast weights")
+            raise ValueError("--forget_rate_override requires a model with fast weights")
     modules = {name or "model": module for name, module in model.named_modules()
                if hasattr(module, "forget_rate")}
     original = {name: module.forget_rate for name, module in modules.items()}
     if override is not None:
         for module in modules.values():
             module.forget_rate = override
-    return {"checkpoint_forget_rate": config.get("forget_rate"), "override": override,
-            "effective_forget_rate": override if override is not None else config.get("forget_rate"),
+        config["forget_rate"] = override
+    return {"checkpoint_forget_rate": checkpoint_rate, "override": override,
+            "effective_forget_rate": override if override is not None else checkpoint_rate,
             "original_module_rates": original,
             "effective_module_rates": {name: module.forget_rate for name, module in modules.items()}}
 
@@ -544,7 +547,8 @@ def build_parser():
     parser.add_argument("--val_file", default=None, help="JSON list of filtered validation stories (dumpval)")
     parser.add_argument("--wipe_every", default="4,8,16,32,64,128", help="horizon: comma-separated wipe periods R")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--inference_forget_rate", type=forget_rate_value, default=None,
+    parser.add_argument("--forget_rate_override", "--inference_forget_rate", dest="inference_forget_rate",
+                        type=forget_rate_value, default=None,
                         help="inference-only fraction forgotten per write, in [0,1]; default: checkpoint rate")
     return parser
 
@@ -553,7 +557,7 @@ def main():
     parser = build_parser()
     args = parser.parse_args()
     if args.mode == "dumpval" and args.inference_forget_rate is not None:
-        parser.error("--inference_forget_rate is only valid for model scoring modes")
+        parser.error("--forget_rate_override is only valid for model scoring modes")
     if args.mode == "dumpval":
         with open(args.out, "w") as handle:
             json.dump(load_validation(args.stories, 10**9), handle)

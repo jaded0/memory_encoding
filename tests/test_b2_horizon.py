@@ -191,22 +191,22 @@ class InferenceForgettingTest(unittest.TestCase):
         base = ["curve", "--checkpoint", "unused", "--out", "unused"]
         self.assertIsNone(parser.parse_args(base).inference_forget_rate)
         for rate in (0, 0.01, 0.03, 0.05, 0.1, 1):
-            self.assertEqual(parser.parse_args(base + ["--inference_forget_rate", str(rate)]).
+            self.assertEqual(parser.parse_args(base + ["--forget_rate_override", str(rate)]).
                              inference_forget_rate, rate)
         for rate in ("nan", "inf", "-0.01", "1.01", "invalid"):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-                parser.parse_args(base + ["--inference_forget_rate", rate])
+                parser.parse_args(base + ["--forget_rate_override", rate])
 
     def test_actual_unfused_decay_and_losses_all_deep_rates(self):
         hot = onehot(TEXTS)
         baseline = build(forget_rate=0.01)
         expected = b2_eval.run_pass(baseline, hot, CONFIG, write=True)
         expected_off = b2_eval.run_pass(baseline, hot, CONFIG, write=False)
-        config = dict(CONFIG, forget_rate=0.01)
         for rate in (0.03, 0.05, 0.1):
+            config = dict(CONFIG, forget_rate=0.01)
             model = build(forget_rate=0.01)
             metadata = b2_eval.inference_forgetting(model, config, rate)
-            self.assertEqual(config["forget_rate"], 0.01)
+            self.assertEqual(config["forget_rate"], rate)
             self.assertEqual(metadata["checkpoint_forget_rate"], 0.01)
             self.assertEqual(metadata["effective_forget_rate"], rate)
             self.assertEqual(set(metadata["original_module_rates"].values()), {0.01})
@@ -255,7 +255,7 @@ class InferenceForgettingTest(unittest.TestCase):
                 self.assertIsNone(metadata["override"])
                 self.assertTrue(torch.equal(expected, b2_eval.run_pass(loaded, hot, loaded_config, write=write)))
             b2_eval.inference_forgetting(loaded, loaded_config, 0.1)
-            self.assertEqual(loaded_config["forget_rate"], 0.01)
+            self.assertEqual(loaded_config["forget_rate"], 0.1)
             self.assertTrue(all(layer.forget_rate == 0.1 for layer in
                                 (*loaded.linear_layers, loaded.i2h, loaded.i2o)))
             reloaded, _, _, _ = b2_eval.load_model(path, "cpu")
@@ -269,9 +269,9 @@ class InferenceForgettingTest(unittest.TestCase):
     def test_all_scoring_modes_write_original_and_effective_metadata(self):
         charset = "ab. "
         texts = ["ab. ab aa. ab", "ba. ba bb. ba"]
-        config = dict(CONFIG, batch_size=2, dataset="unused", forget_rate=0.01)
         with tempfile.TemporaryDirectory() as directory:
             for mode in ("tiny", "curve", "horizon", "synth"):
+                config = dict(CONFIG, batch_size=2, dataset="unused", forget_rate=0.01)
                 model = build(forget_rate=0.01)
                 args = SimpleNamespace(device="cpu", checkpoint="unused", stories=2, length=len(texts[0]),
                                        val_file=None, names=None, mode=mode, batches=1, wipe_every="1,4",
@@ -289,7 +289,7 @@ class InferenceForgettingTest(unittest.TestCase):
                 self.assertEqual(metadata["override"], 0.05)
                 self.assertEqual(set(metadata["effective_module_rates"].values()), {0.05})
                 if "arm_config" in result:
-                    self.assertEqual(result["arm_config"]["forget_rate"], 0.01)
+                    self.assertEqual(result["arm_config"]["forget_rate"], 0.05)
 
 
 class SimpleRNNProtocolTest(unittest.TestCase):
