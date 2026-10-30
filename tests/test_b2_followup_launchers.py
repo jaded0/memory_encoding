@@ -34,6 +34,22 @@ class B2FollowupLaunchersTest(unittest.TestCase):
                 self.assertTrue(args.residual_connection)
                 self.assertFalse(args.layer_norm)  # fixed README baseline, not B2's DFA stabilizer
 
+    def test_rnn_lr_override_only_touches_rnn(self):
+        import os
+        def flags(arm, lr):
+            env = dict(os.environ, RNN_LR=lr)
+            return subprocess.run(['bash', '-c',
+                'source "$1/arms.sh"; arm_args "$2" && printf "%s\\0" "${FLAGS[@]}"',
+                'bash', str(HERE), arm], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        for lr in ('3e-5', '1e-4', '3e-4', '1e-3'):
+            p = flags('RNN-BPTT', lr)
+            args = train.parse_args(p.stdout.decode().rstrip('\0').split('\0'))
+            self.assertAlmostEqual(args.learning_rate, float(lr))
+            self.assertEqual((args.optimizer, args.grad_norm_clip, args.n_iters), ('adam', 1, 20000))
+        p = flags('REC-DEEP', '1e-3')
+        self.assertEqual(p.returncode, 2)
+        self.assertIn(b'RNN-BPTT only', p.stderr)
+
     def test_production_launcher_requires_approval(self):
         for arm in ('DEEP-W16', 'REC-DEEP'):
             import os
