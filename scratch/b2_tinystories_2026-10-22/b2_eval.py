@@ -7,6 +7,10 @@ Pre-registered in PREREG_fastlayers.md, "Batch B2". Run from a memory_encoding c
     python b2_eval.py synth --checkpoint C --batches 64 --out OUT                         (key PR on its own task)
     python b2_eval.py horizon --checkpoint C --stories 1024 --wipe_every 4,8,16,32,64,128 --out OUT   (round 2)
 
+Inference-only forgetting intervention (all scoring modes): --inference_forget_rate 0.03 (or 0.05, 0.1).
+Omit it to retain checkpoint forgetting (e.g. DEEP's 0.01). Slow weights and checkpoint config stay unchanged;
+JSON inference_forgetting records checkpoint/effective rates and every layer's actual rates.
+
 Every protocol freezes the slow weights and starts each sequence from wiped fast entries (heldout.py):
   ON     every step writes the fast entries with the true next character (heldout.py "observed").
   OFF    no fast weights (they stay at their wiped zeros); with recurrence off this is a character bigram model.
@@ -63,6 +67,36 @@ def load_model(path, device):
 def has_fast_weights(model):
     """SimpleRNN checkpoints have neither fast state nor a fast-only updater."""
     return callable(getattr(model, "fast_only_dfa_step", None))
+
+
+def forget_rate_value(value):
+    rate = float(value)
+    if not math.isfinite(rate) or not 0 <= rate <= 1:
+        raise argparse.ArgumentTypeError("inference forget rate must be finite and in [0, 1]")
+    return rate
+
+
+def inference_forgetting(model, config, override=None):
+    """Change actual updater attributes, not just config (also works on unfused CPU/sm61).
+
+    The checkpoint config remains the training recipe. With no override this is strictly read-only.
+    Include i2h/i2o and any auxiliary fast layers, not only the trunk; the root attribute is also
+    kept consistent even though fast_only_dfa_step reads each layer's forget_rate.
+    """
+    if override is not None:
+        override = forget_rate_value(override)
+        if not has_fast_weights(model):
+            raise ValueError("--inference_forget_rate requires a model with fast weights")
+    modules = {name or "model": module for name, module in model.named_modules()
+               if hasattr(module, "forget_rate")}
+    original = {name: module.forget_rate for name, module in modules.items()}
+    if override is not None:
+        for module in modules.values():
+            module.forget_rate = override
+    return {"checkpoint_forget_rate": config.get("forget_rate"), "override": override,
+            "effective_forget_rate": override if override is not None else config.get("forget_rate"),
+            "original_module_rates": original,
+            "effective_module_rates": {name: module.forget_rate for name, module in modules.items()}}
 
 
 def wipe_fast(model):
@@ -248,6 +282,7 @@ def load_validation(n, length, path=None):
 def tiny(args):
     device = args.device
     model, config, charset, iteration = load_model(args.checkpoint, device)
+    forgetting = inference_forgetting(model, config, getattr(args, "inference_forget_rate", None))
     c2i = {c: i for i, c in enumerate(charset)}
     batch = config["batch_size"]
     length = args.length
@@ -337,6 +372,7 @@ def tiny(args):
         ce[name]["on_bits"] = ce[name]["on"] / math.log(2)
         ce[name]["off_bits"] = ce[name]["off"] / math.log(2)
     res["ce"] = ce
+    res["inference_forgetting"] = forgetting
     if want_keys:
         res["pr"] = {}
         for p in ("on", "off"):
@@ -419,6 +455,7 @@ def horizon(args):
     With recurrence, report a fast-only intervention without imposing the OFF equivalence."""
     device = args.device
     model, config, charset, iteration = load_model(args.checkpoint, device)
+    forgetting = inference_forgetting(model, config, getattr(args, "inference_forget_rate", None))
     c2i = {c: i for i, c in enumerate(charset)}
     batch = config["batch_size"]
     texts = load_validation(args.stories, args.length, args.val_file)
@@ -453,6 +490,7 @@ def horizon(args):
            "arm_config": {k: config.get(k) for k in ("plasticity", "fast_layers", "layer_norm", "seed",
                                                       "model_type", "updater", "enable_recurrence",
                                                       "train_wipe_chars", "forget_rate")}}
+    res["inference_forgetting"] = forgetting
     gain = ce["off"]["all"] - ce["on"]["all"]
     res["H"] = {str(r): (ce["off"]["all"] - ce[f"wipe{r}"]["all"]) / gain if gain else float("nan") for r in periods}
     res["seconds"] = time.time() - t0
@@ -465,6 +503,7 @@ def synth(args):
     from heldout import load_heldout_batches
     device = args.device
     model, config, charset, iteration = load_model(args.checkpoint, device)
+    forgetting = inference_forgetting(model, config, getattr(args, "inference_forget_rate", None))
     batches = load_heldout_batches(config["dataset"], config["batch_size"], args.batches, device)
     n_layers = len(model.linear_layers) if has_fast_weights(model) else 0
     dim = model.linear_layers[0].in_features
@@ -482,7 +521,7 @@ def synth(args):
                 episode[l][0].extend(u)
                 episode[l][1].extend(c)
     res = {"checkpoint": args.checkpoint, "iteration": iteration, "dataset": config["dataset"],
-           "episodes": len(batches) * config["batch_size"], "pr": {}}
+           "episodes": len(batches) * config["batch_size"], "pr": {}, "inference_forgetting": forgetting}
     for l in range(n_layers):
         entry = corpus[l].result()
         entry["episode_pr_uncentered"] = float(np.mean(episode[l][0]))
@@ -493,7 +532,7 @@ def synth(args):
     print(json.dumps(res["pr"]))
 
 
-def main():
+def build_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["tiny", "curve", "synth", "dumpval", "horizon"])
     parser.add_argument("--checkpoint", required=True)
@@ -505,7 +544,16 @@ def main():
     parser.add_argument("--val_file", default=None, help="JSON list of filtered validation stories (dumpval)")
     parser.add_argument("--wipe_every", default="4,8,16,32,64,128", help="horizon: comma-separated wipe periods R")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--inference_forget_rate", type=forget_rate_value, default=None,
+                        help="inference-only fraction forgotten per write, in [0,1]; default: checkpoint rate")
+    return parser
+
+
+def main():
+    parser = build_parser()
     args = parser.parse_args()
+    if args.mode == "dumpval" and args.inference_forget_rate is not None:
+        parser.error("--inference_forget_rate is only valid for model scoring modes")
     if args.mode == "dumpval":
         with open(args.out, "w") as handle:
             json.dump(load_validation(args.stories, 10**9), handle)

@@ -185,6 +185,113 @@ class RecurrentProtocolTest(unittest.TestCase):
             self.assertEqual(sum(c.kwargs.get("wipe_every") == 1 for c in run.call_args_list), 1)
 
 
+class InferenceForgettingTest(unittest.TestCase):
+    def test_parser_validation(self):
+        parser = b2_eval.build_parser()
+        base = ["curve", "--checkpoint", "unused", "--out", "unused"]
+        self.assertIsNone(parser.parse_args(base).inference_forget_rate)
+        for rate in (0, 0.01, 0.03, 0.05, 0.1, 1):
+            self.assertEqual(parser.parse_args(base + ["--inference_forget_rate", str(rate)]).
+                             inference_forget_rate, rate)
+        for rate in ("nan", "inf", "-0.01", "1.01", "invalid"):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                parser.parse_args(base + ["--inference_forget_rate", rate])
+
+    def test_actual_unfused_decay_and_losses_all_deep_rates(self):
+        hot = onehot(TEXTS)
+        baseline = build(forget_rate=0.01)
+        expected = b2_eval.run_pass(baseline, hot, CONFIG, write=True)
+        expected_off = b2_eval.run_pass(baseline, hot, CONFIG, write=False)
+        config = dict(CONFIG, forget_rate=0.01)
+        for rate in (0.03, 0.05, 0.1):
+            model = build(forget_rate=0.01)
+            metadata = b2_eval.inference_forgetting(model, config, rate)
+            self.assertEqual(config["forget_rate"], 0.01)
+            self.assertEqual(metadata["checkpoint_forget_rate"], 0.01)
+            self.assertEqual(metadata["effective_forget_rate"], rate)
+            self.assertEqual(set(metadata["original_module_rates"].values()), {0.01})
+            self.assertEqual(set(metadata["effective_module_rates"].values()), {rate})
+            for layer in (*model.linear_layers, model.i2h, model.i2o):
+                self.assertEqual(layer.forget_rate, rate)
+            self.assertIsNone(model.fused_layer_step)
+            # A zero-error actual fast-only updater call must decay each fast entry by 1-rate.
+            model.start_sequence_wipe()
+            model(hot[:, 0], model.initHidden(hot.shape[0]))
+            layers = [*model.linear_layers, model.i2h]
+            with torch.no_grad():
+                for layer in layers:
+                    layer.per_sample_weights[:, layer.ephemeral_mask] = 0.2
+            before = [layer.per_sample_weights.detach().clone() for layer in layers]
+            model.fast_only_dfa_step(torch.zeros(hot.shape[0], 4), 0.3, 0.05)
+            for layer, old in zip(layers, before):
+                torch.testing.assert_close(layer.per_sample_weights[:, layer.ephemeral_mask],
+                                           old[:, layer.ephemeral_mask] * (1 - rate), rtol=0, atol=0)
+                self.assertTrue(torch.equal(layer.per_sample_weights[:, ~layer.ephemeral_mask],
+                                            old[:, ~layer.ephemeral_mask]))
+            # Fresh model so the analytic fixture cannot influence the causal scoring comparison.
+            model = build(forget_rate=0.01)
+            b2_eval.inference_forgetting(model, config, rate)
+            self.assertFalse(torch.equal(expected, b2_eval.run_pass(model, hot, config, write=True)))
+            self.assertTrue(torch.equal(expected_off, b2_eval.run_pass(model, hot, config, write=False)))
+
+    def test_checkpoint_default_equivalence_and_override(self):
+        from train import build_model, build_parser
+        from utils import initialize_charset, save_checkpoint
+        config = vars(build_parser().parse_args([]))
+        config.update(updater="dfa", n_hidden=6, n_layers=3, batch_size=2, input_mode="last_one",
+                      positional_encoding_dim=0, forget_rate=0.01, fused_update=False)
+        charset, c2i, _, size = initialize_charset(config["dataset"])
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            model = build_model(config, charset, size).eval()
+            save_checkpoint({"config": config, "model_state_dict": model.state_dict(), "iter": 12},
+                            directory, "dfa.pth")
+            path = os.path.join(directory, "dfa.pth")
+            loaded, loaded_config, _, _ = b2_eval.load_model(path, "cpu")
+            hot, _ = b2_eval.onehot_batch([charset[:11], charset[::-1][:11]], c2i, size, 11, 2, "cpu")
+            for write in (False, True):
+                expected = b2_eval.run_pass(loaded, hot, loaded_config, write=write)
+                metadata = b2_eval.inference_forgetting(loaded, loaded_config)
+                self.assertEqual(metadata["original_module_rates"], metadata["effective_module_rates"])
+                self.assertIsNone(metadata["override"])
+                self.assertTrue(torch.equal(expected, b2_eval.run_pass(loaded, hot, loaded_config, write=write)))
+            b2_eval.inference_forgetting(loaded, loaded_config, 0.1)
+            self.assertEqual(loaded_config["forget_rate"], 0.01)
+            self.assertTrue(all(layer.forget_rate == 0.1 for layer in
+                                (*loaded.linear_layers, loaded.i2h, loaded.i2o)))
+            reloaded, _, _, _ = b2_eval.load_model(path, "cpu")
+            self.assertEqual(reloaded.forget_rate, 0.01)  # checkpoint was not rewritten
+
+    def test_reject_nonfast_override(self):
+        model = SimpleRNN(4, 6, 4, 3, updater="bptt")
+        with self.assertRaisesRegex(ValueError, "requires a model with fast weights"):
+            b2_eval.inference_forgetting(model, {"forget_rate": 0.01}, 0.1)
+
+    def test_all_scoring_modes_write_original_and_effective_metadata(self):
+        charset = "ab. "
+        texts = ["ab. ab aa. ab", "ba. ba bb. ba"]
+        config = dict(CONFIG, batch_size=2, dataset="unused", forget_rate=0.01)
+        with tempfile.TemporaryDirectory() as directory:
+            for mode in ("tiny", "curve", "horizon", "synth"):
+                model = build(forget_rate=0.01)
+                args = SimpleNamespace(device="cpu", checkpoint="unused", stories=2, length=len(texts[0]),
+                                       val_file=None, names=None, mode=mode, batches=1, wipe_every="1,4",
+                                       inference_forget_rate=0.05, out=os.path.join(directory, mode))
+                with mock.patch.object(b2_eval, "load_model", return_value=(model, config, charset, 0)), \
+                        mock.patch.object(b2_eval, "load_validation", return_value=texts), \
+                        mock.patch("heldout.load_heldout_batches", return_value=[(TEXTS, onehot(TEXTS))]), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    getattr(b2_eval, mode if mode != "curve" else "tiny")(args)
+                with open(args.out + ".json") as handle:
+                    result = json.load(handle)
+                metadata = result["inference_forgetting"]
+                self.assertEqual(metadata["checkpoint_forget_rate"], 0.01)
+                self.assertEqual(metadata["effective_forget_rate"], 0.05)
+                self.assertEqual(metadata["override"], 0.05)
+                self.assertEqual(set(metadata["effective_module_rates"].values()), {0.05})
+                if "arm_config" in result:
+                    self.assertEqual(result["arm_config"]["forget_rate"], 0.01)
+
+
 class SimpleRNNProtocolTest(unittest.TestCase):
     def setUp(self):
         seed_everything(7, deterministic=True)
