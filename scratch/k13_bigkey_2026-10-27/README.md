@@ -146,3 +146,10 @@ factor and explicit reserves. Its A100 accounting parity is deliberately labelle
 ideal, seven-wave and completely seed-paired schedule estimates are reported.
 The task's48-hour deckard ceiling is checked separately from the frozen A100 cap.
 Neither a scientific audit nor a timing smoke permits confirmation by itself.
+
+## Confirmation restart (2026-11-02)
+Attempt 1 died on a full deckard disk. Restarted from scratch at the addendum commit
+(`K13bigkey_addendum_2026-11-02.md`), checkout `~/k13b_2026-10-28/code_d4`. Runs now pause on low
+disk (`--min_free_disk_gb 15`), resume from `latest_checkpoint.pth` after a failure (up to 3 attempts
+per run), and keep numbered checkpoints every 25000. Events (`START … attemptN`, `EXIT`, `REQUEUE`,
+`GIVEUP`, `DISKWAIT`) are lines in `~/k13b_2026-10-28/confirm_status.txt`.

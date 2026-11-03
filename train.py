@@ -10,7 +10,7 @@ from reproducibility import DataStream, capture_rng_state, record_seed_in_slurm,
 from metrics import IntervalMetrics, recall_chance
 from heldout import evaluate_protocols, load_heldout_batches
 from loop_trace import NULL_TRACER, LoopTracer, summarize as summarize_traces
-from utils import model_input, randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint, check_checkpoint_code_version, CHECKPOINT_CODE_VERSION, keep_numbered_checkpoint
+from utils import model_input, randomTrainingExample, timeSince, str2bool, initialize_charset, save_checkpoint, load_checkpoint, read_checkpoint, check_checkpoint_code_version, CHECKPOINT_CODE_VERSION, keep_numbered_checkpoint, save_checkpoint_retrying, wait_for_free_space
 import time
 import math
 import argparse
@@ -791,6 +791,10 @@ def build_parser():
                              'see loop_trace.py), log their summaries with the interval metrics, and write the '
                              'arrays to <checkpoint_dir>/traces/trace_<iter>.pt. Observation only: training is '
                              'bit-identical with it on or off.')
+    parser.add_argument('--min_free_disk_gb', type=float, default=0,
+                        help='Pause (do not crash) while the checkpoint filesystem has less than this many GB free: '
+                             'checked every --print_freq iterations and before each periodic checkpoint save, '
+                             'which is also retried on a write failure. $DISK_WAIT_NOTIFY runs once per pause. 0 = off.')
     parser.add_argument('--checkpoint_keep_every', type=int, default=0,
                         help='Also keep a numbered copy checkpoint_<iter>.pth every N iterations (0 = off; '
                              'latest_checkpoint.pth is saved as before). trace_replay.py reads them.')
@@ -890,6 +894,8 @@ def check_argument_combinations(args, parser):
         parser.error(str(exc))
     if args.plasticity_schedule and args.model_type != "ephemeral":
         parser.error("--plasticity_schedule needs --model_type ephemeral.")
+    if args.min_free_disk_gb < 0:
+        parser.error("--min_free_disk_gb must not be negative.")
     if args.trace_loop_every < 0 or args.checkpoint_keep_every < 0 or args.checkpoint_keep_max < 0:
         parser.error("--trace_loop_every, --checkpoint_keep_every and --checkpoint_keep_max must not be negative.")
     if args.trace_loop_every > 0:
@@ -1307,6 +1313,11 @@ def main():
     previous_handlers = {sig: signal.signal(sig, request_stop) for sig in (signal.SIGUSR1, signal.SIGTERM)}
     stopped_by_signal = None
 
+    min_free_bytes = int(args.min_free_disk_gb * 1e9)
+
+    def save_periodic(state_dict, directory, filename):
+        return save_checkpoint_retrying(state_dict, directory, filename, min_free_bytes)
+
     def checkpoint_state(next_iter):
         return {
             'iter': next_iter,
@@ -1604,9 +1615,12 @@ def main():
             # --- Checkpointing ---
             # ==============================================================
             if args.checkpoint_save_freq > 0 and iter % args.checkpoint_save_freq == 0:
-                save_checkpoint(checkpoint_state(iter + 1), args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
+                save_periodic(checkpoint_state(iter + 1), args.checkpoint_dir, "latest_checkpoint.pth") # Overwrites latest
             if args.checkpoint_keep_every > 0 and iter % args.checkpoint_keep_every == 0:
-                keep_numbered_checkpoint(checkpoint_state(iter + 1), args.checkpoint_dir, iter, args.checkpoint_keep_max)
+                keep_numbered_checkpoint(checkpoint_state(iter + 1), args.checkpoint_dir, iter, args.checkpoint_keep_max,
+                                         save=save_periodic)
+            elif min_free_bytes and iter % args.print_freq == 0:
+                wait_for_free_space(args.checkpoint_dir, min_free_bytes)
 
         # End of training loop - mark normal completion if no early stopping occurred
         if args.track and wandb.run and not nan_detected and not early_stopped and not stopped_by_signal:

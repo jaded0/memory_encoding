@@ -42,7 +42,25 @@ case "$arm" in
 esac
 d="$root/$data-$arm-s$seed"
 # Pilot reruns would silently spend more than the approved four allocations.
-[[ ! -e "$d" ]] || { echo "Refusing existing run directory: $d" >&2; exit 2; }
+# Confirmation runs may continue (addendum 2026-11-02, K13B_RESUME=1): an interrupted run resumes
+# from its latest checkpoint at the same commit; one that never wrote a checkpoint starts over.
+resume=() train_done=0 used=0
+if [[ -e "$d" ]]; then
+  [[ $pilot == 0 && ${K13B_RESUME:-0} == 1 ]] || { echo "Refusing existing run directory: $d" >&2; exit 2; }
+  grep -q '^EVAL EXIT 0' "$d/train.log" 2>/dev/null && { echo "Already complete: $d" >&2; exit 0; }
+  [[ $(cat "$d/code_commit") == "$K13B_COMMIT" ]] || { echo "Run $d was started at another commit" >&2; exit 2; }
+  cmp -s "$K13B_GATE_MANIFEST" "$d/launch_gate.json" || { echo "Run $d has another gate manifest" >&2; exit 2; }
+  used=$(cat "$d/train_seconds" 2>/dev/null || echo 0)
+  if grep -q '^TRAIN EXIT 0' "$d/train.log" 2>/dev/null; then
+    train_done=1  # only scoring failed
+  elif [[ -f "$d/latest_checkpoint.pth" ]]; then
+    resume=(--resume_checkpoint "$d/latest_checkpoint.pth")
+  else
+    mv "$d/train.log" "$d/train.attempt-$(date +%Y%m%dT%H%M%S).log" 2>/dev/null || true
+  fi
+  printf 'RESUME %s train_done=%s checkpoint=%s used_seconds=%s\n' "$(date -Is)" "$train_done" \
+    "${resume[1]:-none}" "$used" | tee -a "$d/resumes.txt" >> "$d/train.log"
+fi
 mkdir -p "$d"
 printf '%s\n' "$K13B_COMMIT" > "$d/code_commit"
 if [[ $pilot == 0 ]]; then cp "$K13B_GATE_MANIFEST" "$d/launch_gate.json"; fi
@@ -51,8 +69,17 @@ prefix=()
 # Pilot wall cap was 75 min (A100-calibrated). Off-A100, K13B_PILOT_TIMEOUT runs the full
 # fixed 200k iterations instead, so the pilot budget doesn't depend on GPU speed.
 if [[ $pilot == 1 ]]; then train_timeout=${K13B_PILOT_TIMEOUT:-4500}; fi
-prefix=(timeout --signal=TERM --kill-after=10s "${train_timeout}s")
+# The timeout is the run's total training wall time, summed over resumed segments.
+left=$(( train_timeout - used ))
+if (( left <= 0 )); then
+  echo 'Training budget already spent' >> "$d/train.log"; rc=124
+fi
+prefix=(timeout --signal=TERM --kill-after=10s "${left}s")
+# Pause rather than crash when the disk fills (the 2026-10-31 failure); the lane reports pauses.
+export DISK_WAIT_NOTIFY="echo \"DISKWAIT $data-$arm-s$seed \$(date -Is)\" >> '$root/confirm_status.txt'"
 set +e
+if (( train_done == 1 )); then rc=0
+elif (( left > 0 )); then
 "${prefix[@]}" python -u train.py --dataset "$data" --input_mode last_two --forget_rate .01 \
   --ephemeral_update_clamp 0 --weight_clamp 0 --slow_weight_decay 0 \
   --hidden_size 1024 --num_layers 3 --residual_connection false --positional_encoding_dim 0 \
@@ -61,11 +88,14 @@ set +e
   --order2_temperature 4 --order2_dim 16 \
   --plasticity 3e4 --ephemeral_fraction .1 --optimizer sgd --n_iters "$n" --print_freq 500 \
   --early_stop_window 0 --heldout_eval_every 5000 --heldout_batches 8 \
-  --checkpoint_save_freq 5000 --checkpoint_keep_every 5000 --seed "$seed" \
+  --checkpoint_save_freq 5000 --checkpoint_keep_every "${K13B_KEEP_EVERY:-5000}" --seed "$seed" \
+  --min_free_disk_gb "${K13B_MIN_FREE_GB:-0}" "${resume[@]}" \
   --checkpoint_dir "$d" "${flags[@]}" >> "$d/train.log" 2>&1
 rc=$?
+fi
 set -e
-elapsed=$(( $(date +%s) - start ))
+elapsed=$(( used + $(date +%s) - start ))
+printf '%s\n' "$elapsed" > "$d/train_seconds"
 # A timeout is NEVER marked as completed.
 printf 'TRAIN EXIT %s\n' "$rc" >> "$d/train.log"
 python - "$d" "$data" "$n" "$arm" "$seed" "$rc" "$elapsed" "$K13B_COMMIT" <<'PY'
@@ -74,17 +104,20 @@ spec = importlib.util.spec_from_file_location('gate', 'scratch/k13_bigkey_2026-1
 gate = importlib.util.module_from_spec(spec); spec.loader.exec_module(gate)
 d, data, n, arm, seed, rc, elapsed, commit = sys.argv[1:]
 rc = int(rc); d = pathlib.Path(d)
+resumes = d/'resumes.txt'
 run = dict(dataset=data, arm=arm, seed=int(seed), requested_iterations=int(n), train_exit=rc,
+           resumes=resumes.read_text().count('\n') if resumes.exists() else 0,
            status='completed' if rc == 0 else 'timeout' if rc == 124 else 'failed',
            training_seconds=int(elapsed), code_commit=commit, recipe=gate.RECIPE)
 (d/'pilot_run.json').write_text(json.dumps(run, indent=2)+'\n')
-points = []; iteration = None
-for line in (d/'train.log').read_text().splitlines():
+curve = {}; iteration = None  # a resumed segment can re-log an iteration; the later value wins
+for line in (d/'train.log').read_text(errors='replace').splitlines():
     match = re.search(r'Interval metrics \(ending @ iter (\d+)', line)
     if match: iteration = int(match[1])
     match = re.match(r'\s+heldout_strict/recall_acc:\s*([\d.eE+-]+)', line)
     if match and iteration and iteration % 5000 == 0:
-        points.append(dict(iteration=iteration, strict_recall=float(match[1])))
+        curve[iteration] = float(match[1])
+points = [dict(iteration=i, strict_recall=v) for i, v in sorted(curve.items())]
 (d/'learning_curve.json').write_text(json.dumps(dict(split='validation', points=points), indent=2)+'\n')
 PY
 if [[ $rc != 0 && ! ( $pilot == 1 && $rc == 124 ) ]]; then exit "$rc"; fi

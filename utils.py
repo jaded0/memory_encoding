@@ -3,6 +3,8 @@ import time
 import math
 import argparse
 import os
+import shutil
+import subprocess
 
 import bench_tasks
 import kv_switch
@@ -224,10 +226,50 @@ def save_checkpoint(state_dict, checkpoint_dir, filename="checkpoint.pth"):
             os.remove(tmp_path)
     print(f"Checkpoint saved to {filepath}")
 
-def keep_numbered_checkpoint(state_dict, checkpoint_dir, iteration, keep_max=0):
+def wait_for_free_space(directory, min_free_bytes, poll_seconds=300, sleep=None):
+    """--min_free_disk_gb: blocks while the filesystem holding `directory` has less than
+    min_free_bytes free (0 = no check) and returns the seconds waited. A full disk killed six
+    K13 confirmation runs mid-save on 2026-10-31; pausing instead keeps the run, and the margin
+    keeps its log writable, until space is freed. The first wait runs $DISK_WAIT_NOTIFY (a shell
+    command, e.g. a phone ping) if it is set."""
+    if min_free_bytes <= 0:
+        return 0
+    sleep = sleep or time.sleep
+    waited = 0
+    while (free := shutil.disk_usage(directory).free) < min_free_bytes:
+        if waited == 0:
+            print(f"WARNING: {free / 1e9:.1f} GB free under {directory}, below --min_free_disk_gb "
+                  f"{min_free_bytes / 1e9:g}; pausing until space is freed.", flush=True)
+            if os.environ.get("DISK_WAIT_NOTIFY"):
+                try:
+                    subprocess.run(os.environ["DISK_WAIT_NOTIFY"], shell=True, timeout=60, check=False)
+                except Exception as error:  # a failed ping must not stop the run
+                    print(f"DISK_WAIT_NOTIFY failed: {error}", flush=True)
+        sleep(poll_seconds)
+        waited += poll_seconds
+    if waited:
+        print(f"Disk space recovered ({free / 1e9:.1f} GB free) after {waited} s; continuing.", flush=True)
+    return waited
+
+def save_checkpoint_retrying(state_dict, checkpoint_dir, filename, min_free_bytes=0, attempts=4,
+                             poll_seconds=300, sleep=None):
+    """save_checkpoint after wait_for_free_space; a failed write (torch.save raises RuntimeError,
+    the filesystem OSError) is retried, since the atomic save leaves the previous file intact."""
+    for attempt in range(1, attempts + 1):
+        wait_for_free_space(checkpoint_dir, min_free_bytes, poll_seconds, sleep)
+        try:
+            return save_checkpoint(state_dict, checkpoint_dir, filename)
+        except (OSError, RuntimeError) as error:
+            if attempt == attempts:
+                raise
+            print(f"WARNING: saving {filename} failed ({error}); retry {attempt}/{attempts - 1} "
+                  f"in {poll_seconds} s.", flush=True)
+            (sleep or time.sleep)(poll_seconds)
+
+def keep_numbered_checkpoint(state_dict, checkpoint_dir, iteration, keep_max=0, save=save_checkpoint):
     """--checkpoint_keep_every: saves checkpoint_<iteration>.pth next to latest_checkpoint.pth and,
     with keep_max > 0, deletes all but the newest keep_max numbered copies."""
-    save_checkpoint(state_dict, checkpoint_dir, f"checkpoint_{iteration:08d}.pth")
+    save(state_dict, checkpoint_dir, f"checkpoint_{iteration:08d}.pth")
     if keep_max > 0:
         numbered = sorted(name for name in os.listdir(checkpoint_dir)
                           if name.startswith("checkpoint_") and name.endswith(".pth"))
