@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+from contextlib import contextmanager
 import sys
 from utils import initialize_charset
 import numpy as np
@@ -203,8 +204,9 @@ def order2_step(fast, error, features, alpha, learning_rate, forget_rate, update
 
 def dfa_per_sample_gradient(projected_error, input):
     """Per-sequence DFA gradient, [B, out, in]: the outer product of each sequence's projected
-    error [B, out] with its layer input (the input trace) [B, in]."""
-    out = projected_error.unsqueeze(2)  # [batch_size, out_features, 1]
+    error [B, out] with its layer input (the input trace) [B, in]. Separate band feedback
+    supplies an entry-wise error [B, out, in] instead; the same input multiplication applies."""
+    out = projected_error if projected_error.ndim == 3 else projected_error.unsqueeze(2)
     return out * input.unsqueeze(1)  # [batch_size, 1, in_features] -> [batch_size, out_features, in_features]
 
 
@@ -506,7 +508,12 @@ def write_gain_factor(norms, medians, power: float, max_gain: float = 0.0):
     takes gain 1, an all-zero (padding) row gain 0 (it writes nothing anyway). max_gain > 0 caps
     the gain from above (--write_gain_max); 0 leaves it unbounded."""
     medians = medians.unsqueeze(1)
-    gain = (norms / medians).pow(power)
+    if power < 0:
+        # Exact inverse norm, not epsilon regularization: padding must never make inf * 0.
+        gain = torch.where(norms > 0, (norms.masked_fill(norms == 0, 1) / medians).pow(power),
+                           torch.zeros_like(norms))
+    else:
+        gain = (norms / medians).pow(power)
     if max_gain > 0:
         gain = gain.clamp(max=max_gain)
     return torch.where(torch.isnan(medians), torch.ones_like(gain), gain)
@@ -762,6 +769,20 @@ class EphemeralLinear(nn.Linear):
                                      persistent=False)
 
     @property
+    def forget_rate(self):
+        if hasattr(self, 'band_forget_rates'):
+            override = getattr(self, '_band_forget_override', None)
+            return self.band_forget_rates if override is None else override
+        return self._forget_rate
+
+    @forget_rate.setter
+    def forget_rate(self, value):
+        if hasattr(self, 'band_forget_rates'):
+            self._band_forget_override = value
+        else:
+            self._forget_rate = value
+
+    @property
     def is_additive(self):
         """--fast_structure additive_masked or additive_dense on this layer (W = S + F)."""
         return self.fast_structure != 'exclusive'
@@ -805,8 +826,11 @@ class EphemeralLinear(nn.Linear):
                 fast = plasticity[mask]
                 alpha = float(fast[0]) if fast.numel() else 1.0
                 uniform = bool((fast == alpha).all()) and bool((plasticity[~mask] == 1).all())
-            self._fused_plasticity = alpha if uniform else plasticity
-        return self._fused_plasticity
+            # Cache only the uniform alpha or a nonuniform sentinel, never the Parameter:
+            # nn.Module would register an alias under _fused_plasticity. Resolve the tensor
+            # afresh so device/dtype moves (including Parameter replacement) stay correct.
+            self._fused_plasticity = alpha if uniform else False
+        return self.plasticity if self._fused_plasticity is False else self._fused_plasticity
 
     def _load_from_state_dict(self, *args, **kwargs):
         self._fused_plasticity = None
@@ -1300,6 +1324,23 @@ def check_fast_structure(fast_structure, updater='dfa', slow_update_every=1, fas
                          "(see check_fast_structure)")
 
 
+def parse_plasticity_bands(value):
+    """Whole-matrix fraction, alpha, forget triples; empty means legacy behavior."""
+    if not value:
+        return ()
+    try:
+        items = (item.split(':') for item in value.split(',')) if isinstance(value, str) else value
+        bands = tuple(tuple(map(float, item)) for item in items)
+        if any(len(item) != 3 for item in bands):
+            raise ValueError()
+        if any(not all(math.isfinite(x) for x in item) or item[0] <= 0 or item[1] < 0
+               or not 0 <= item[2] <= 1 for item in bands) or sum(x[0] for x in bands) > 1:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise ValueError("--plasticity_bands needs fraction:alpha:forget triples; fractions > 0, sum <= 1, alpha >= 0, forget in [0,1]") from None
+    return bands
+
+
 class EphemeralRNN(torch.nn.Module):
     def __init__(
         self, input_size, hidden_size, output_size, num_layers, charset,
@@ -1314,7 +1355,8 @@ class EphemeralRNN(torch.nn.Module):
         fast_write_from_readout_scale=1.0, fast_read_norm='off', fast_read_norm_lr=None,
         absrun_floor=0.0, fast_structure='exclusive',
         order2_layers=None, order2_map='order2', order2_mode='parallel', order2_temperature=4.0,
-        order2_dim=16, order2_seed=0, write_gain_power=0.0, write_gain_window=256, write_gain_max=0.0
+        order2_dim=16, order2_seed=0, write_gain_power=0.0, write_gain_window=256, write_gain_max=0.0,
+        plasticity_bands='', band_feedback='shared'
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -1352,8 +1394,21 @@ class EphemeralRNN(torch.nn.Module):
         --order2_layers and friends, an order-two (or order-one control) fast matrix on a fixed
         projection of those trunk layers' inputs (see set_order2). None: off.
         write_gain_power / write_gain_window / write_gain_max: --write_gain_power and friends, the
-        expansive write gain (see set_write_gain). 0: off."""
+        write gain (see set_write_gain). 0: off, -1: flat error norm at the running median.
+        plasticity_bands: fraction:alpha:forget triples over the whole matrix, partitioning the
+        usual random ephemeral mask; their sum replaces ephemeral_fraction. band_feedback:
+        shared keeps the usual DFA projection, separate draws fixed random per-band projections."""
         super(EphemeralRNN, self).__init__()
+        self.plasticity_bands = parse_plasticity_bands(plasticity_bands)
+        self.band_feedback = band_feedback
+        if band_feedback not in ('shared', 'separate') or (band_feedback != 'shared' and not self.plasticity_bands):
+            raise ValueError("--band_feedback separate needs --plasticity_bands")
+        if self.plasticity_bands:
+            if (updater != 'dfa' or fast_structure != 'exclusive' or parse_slow_update_every(slow_update_every) != 1
+                    or parse_fast_backward_per_forward(fast_backward_per_forward) != 1 or order2_layers is not None
+                    or decouple_fast_feedback or fast_write_from_readout or fast_read_norm != 'off'):
+                raise ValueError("--plasticity_bands requires per-step DFA, exclusive weights, no order2, feedback overrides or fast read normalization")
+            ephemeral_fraction = sum(item[0] for item in self.plasticity_bands)
         self.fast_structure = parse_fast_structure(fast_structure)
         check_fast_structure(self.fast_structure, updater=updater, slow_update_every=slow_update_every,
                              fast_backward_per_forward=fast_backward_per_forward, slow_nlms=slow_nlms,
@@ -1480,12 +1535,96 @@ class EphemeralRNN(torch.nn.Module):
         set_dfa_fprime(self, dfa_fprime)
         self.set_fast_read_norm(fast_read_norm, fast_read_norm_lr, absrun_floor)
         self.order2_layers = None
+        if self.plasticity_bands:
+            self._initialize_bands()
         if order2_layers is not None:
             self.set_order2(order2_layers, order2_map, order2_mode, order2_temperature, order2_dim,
                             order2_seed)
         self.write_gain_power = 0.0
         if write_gain_power:
             self.set_write_gain(write_gain_power, write_gain_window, write_gain_max)
+
+    def _initialize_bands(self):
+        """Partition existing random support with local RNG; never redraw or enlarge it.
+
+        Counts are proportional to whole-matrix fractions, rounded cumulatively on the
+        realized Bernoulli support. IDs persist with the checkpoint's mask.
+        """
+        self.register_buffer('band_spec', torch.tensor(self.plasticity_bands, dtype=torch.float64))
+        self.register_buffer('band_feedback_code', torch.tensor(int(self.band_feedback == 'separate')))
+        total = sum(item[0] for item in self.plasticity_bands)
+        for index, layer in enumerate(self.trained_layers()):
+            ids = torch.full_like(layer.ephemeral_mask, -1, dtype=torch.long)
+            positions = layer.ephemeral_mask.flatten().nonzero().flatten()
+            generator = torch.Generator().manual_seed(73129 + index)
+            positions = positions[torch.randperm(len(positions), generator=generator)]
+            start, cumulative = 0, 0.0
+            for band, (fraction, alpha, rate) in enumerate(self.plasticity_bands):
+                cumulative += fraction
+                end = round(len(positions) * cumulative / total)
+                ids.view(-1)[positions[start:end]] = band
+                start = end
+            layer.register_buffer('band_ids', ids)
+            rates = torch.zeros_like(layer.plasticity)
+            with torch.no_grad():
+                for band, (_, alpha, rate) in enumerate(self.plasticity_bands):
+                    layer.plasticity.masked_fill_(ids == band, alpha)
+                    rates.masked_fill_(ids == band, rate)
+            layer.register_buffer('band_forget_rates', rates)
+            layer._fused_plasticity = None
+            if self.band_feedback == 'separate' and not layer.is_last_layer:
+                layer.register_buffer('band_feedback_weights', torch.stack([
+                    decoupled_fast_feedback(*layer.feedback_weights.shape, 10000 + index * len(self.plasticity_bands) + band)
+                    for band in range(len(self.plasticity_bands))]), persistent=False)
+
+    def _validate_band_indices(self, indices):
+        indices = list(indices)
+        if not self.plasticity_bands or any(not isinstance(i, int) or not 0 <= i < len(self.plasticity_bands) for i in indices):
+            raise ValueError("band indices must index --plasticity_bands (zero based)")
+        return indices
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        for key in ('band_spec', 'band_feedback_code'):
+            expected = getattr(self, key, None)
+            supplied = state_dict.get(prefix + key)
+            if key == 'band_spec' and expected is not None and supplied is not None:
+                # Module.float()/half() casts floating buffers too. Compare the original
+                # configuration at checkpoint precision, rather than fresh float64 literals.
+                expected = torch.tensor(self.plasticity_bands, dtype=supplied.dtype,
+                                        device=supplied.device)
+            if (expected is None) != (supplied is None) or (expected is not None
+                    and not torch.equal(expected.cpu(), supplied.cpu())):
+                raise RuntimeError('checkpoint plasticity_bands / band_feedback differs from model configuration')
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+
+    @torch.no_grad()
+    def wipe_bands(self, indices):
+        """Zero selected bands without consolidation or changes to slow weights/biases."""
+        for band in self._validate_band_indices(indices):
+            for layer in self.trained_layers():
+                layer.per_sample_weights.masked_fill_((layer.band_ids == band).unsqueeze(0), 0)
+                layer.weight.masked_fill_(layer.band_ids == band, 0)
+
+    @contextmanager
+    def band_forget_override(self, rates):
+        """Inference-only temporary band rates, sequence or {band_index: rate}."""
+        if self.training:
+            raise ValueError("band_forget_override is inference-only; call eval() first")
+        rates = dict(enumerate(rates)) if not isinstance(rates, dict) else dict(rates)
+        self._validate_band_indices(rates)
+        if any(not math.isfinite(float(rate)) or not 0 <= float(rate) <= 1 for rate in rates.values()):
+            raise ValueError("band forget overrides must be finite rates in [0,1]")
+        saved = [(layer, getattr(layer, '_band_forget_override', None)) for layer in self.trained_layers()]
+        try:
+            for layer, original in saved:
+                override = layer.forget_rate.clone()
+                for band, rate in rates.items():
+                    override.masked_fill_(layer.band_ids == band, float(rate))
+                layer._band_forget_override = override
+            yield self
+        finally:
+            for layer, original in saved:
+                layer._band_forget_override = original
 
     def set_order2(self, layers, order='order2', mode='parallel', temperature=4.0, dim=16, seed=0):
         """--order2_layers: each listed trunk layer gets a second fast matrix G [B, out, F], read as
@@ -1569,8 +1708,8 @@ class EphemeralRNN(torch.nn.Module):
         --slow_update_every 1, --fast_backward_per_forward 1, the exclusive fast structure and no
         --order2_layers are required."""
         power, window, max_gain = float(power), int(window), float(max_gain)
-        if not power > 0 or not math.isfinite(power):
-            raise ValueError(f"--write_gain_power {power}: must be > 0 (0 is off)")
+        if (power < 0 and power != -1) or power == 0 or not math.isfinite(power):
+            raise ValueError(f"--write_gain_power {power}: must be > 0 or -1 (0 is off)")
         if window < 1:
             raise ValueError(f"--write_gain_window {window}: must be >= 1")
         if max_gain < 0 or not math.isfinite(max_gain):
@@ -1589,9 +1728,12 @@ class EphemeralRNN(torch.nn.Module):
             raise ValueError("--write_gain_power: no layer has fast entries")
         self.write_gain_power, self.write_gain_window, self.write_gain_max = power, window, max_gain
         self.write_gain_layers = layers
+        self.write_gain_slots = [(index, band) for index in layers
+                                 for band in (range(len(self.plasticity_bands))
+                                              if self.band_feedback == 'separate' else [None])]
         device = self.i2o.per_sample_weights.device
         self.register_buffer('write_gain_history', torch.full(
-            (len(layers), window * self.batch_size), float('nan'), device=device))
+            (len(self.write_gain_slots), window * self.batch_size), float('nan'), device=device))
         self.register_buffer('write_gain_steps', torch.zeros((), dtype=torch.long, device=device))
         self.write_gain_stats = WriteGainStats()
 
@@ -1606,22 +1748,30 @@ class EphemeralRNN(torch.nn.Module):
         if not self.write_gain_power:
             return {}
         result = self.write_gain_stats.summary()
-        for index, median in zip(self.write_gain_layers, self.write_gain_medians().tolist()):
-            result[f"write_gain_median_{index}"] = median
+        for (index, band), median in zip(self.write_gain_slots, self.write_gain_medians().tolist()):
+            suffix = '' if band is None else f'_band_{band}'
+            result[f"write_gain_median_{index}{suffix}"] = median
         return result
 
     def _apply_write_gain(self, projected, overrides, commit):
         """fast_write_errors under --write_gain_power: each gained layer's fast-write error times its
         gain (set_write_gain). commit=True (the training steps) records the gain statistics and
         pushes this step's raw norms into the history, after the gains were taken."""
-        base = [projected[index] if overrides[index] is None else overrides[index]
-                for index in self.write_gain_layers]
+        base = [(projected[index] if overrides[index] is None else overrides[index])
+                if band is None else overrides[index][band]
+                for index, band in self.write_gain_slots]
         norms = torch.stack([error.norm(dim=1) for error in base])  # [L, B]
         gains = write_gain_factor(norms, self.write_gain_medians(), self.write_gain_power,
                                   self.write_gain_max)
         errors = list(overrides)
-        for k, index in enumerate(self.write_gain_layers):
-            errors[index] = base[k] * gains[k].unsqueeze(1)
+        for k, (index, band) in enumerate(self.write_gain_slots):
+            gained = base[k] * gains[k].unsqueeze(1)
+            if band is None:
+                errors[index] = gained
+            else:
+                if not isinstance(errors[index], list):
+                    errors[index] = list(errors[index])
+                errors[index][band] = gained
         if commit:
             valid = norms > 0
             self.write_gain_stats.record(gains, valid)
@@ -1707,6 +1857,8 @@ class EphemeralRNN(torch.nn.Module):
         """Each trained layer's projected error for one DFA step, and the pre-clip per-sequence
         norms (None without --grad_norm_clip). The clip uses the closed form for a rank-1
         gradient, |p_b x_b^T| = |p_b| |x_b|, and scales the projected errors."""
+        if self.plasticity_bands and grad_norm_clip > 0:
+            raise ValueError('--plasticity_bands is not defined with grad_norm_clip')
         layers = self.trained_layers()
         projected = [dfa_projected_error(output_error, layer.feedback_weights, layer.is_last_layer,
                                          dfa_layer_activation_derivative(layer))
@@ -1743,6 +1895,11 @@ class EphemeralRNN(torch.nn.Module):
         errors = self._fast_error_overrides(output_error, projected)
         if self.write_gain_power:
             errors = self._apply_write_gain(projected, errors, commit)
+        if self.band_feedback == 'separate':
+            errors = [sum((error.unsqueeze(2) * (layer.band_ids == band).unsqueeze(0)
+                           for band, error in enumerate(fast)), torch.zeros_like(layer.per_sample_weights))
+                      if isinstance(fast, (tuple, list)) else fast
+                      for layer, fast in zip(self.trained_layers(), errors)]
         if self.order2_layers is None:
             return errors
         return [torch.zeros_like(error) if layer.order2_replace else fast
@@ -1753,7 +1910,11 @@ class EphemeralRNN(torch.nn.Module):
         --fast_write_from_readout error of each trained layer, else None."""
         errors = []
         for layer, error in zip(self.trained_layers(), projected):
-            if layer.fast_write_from_readout:
+            if hasattr(layer, 'band_feedback_weights'):
+                errors.append(tuple(dfa_projected_error(output_error, feedback, False,
+                                    dfa_layer_activation_derivative(layer))
+                                    for feedback in layer.band_feedback_weights))
+            elif layer.fast_write_from_readout:
                 errors.append(readout_direction_error(
                     output_error, self.i2o.per_sample_weights.data, layer.pre_activation(), error,
                     self.fast_write_from_readout_scale))
@@ -1779,7 +1940,7 @@ class EphemeralRNN(torch.nn.Module):
         layers = self.trained_layers()
         if not self.write_gain_power and not any(
                 layer.fast_write_from_readout or layer.fast_feedback_weights is not None
-                or layer.order2_replace for layer in layers):
+                or hasattr(layer, 'band_feedback_weights') or layer.order2_replace for layer in layers):
             return
         projected, _ = self.dfa_step_errors(output_error)
         for layer, fast_error in zip(layers, self.fast_write_errors(output_error, projected, commit=True)):
@@ -2139,6 +2300,8 @@ class EphemeralRNN(torch.nn.Module):
 
     def set_plasticity(self, value):
         """Sets the ephemeral plasticity (alpha) in all EphemeralLinear layers (used on resume)."""
+        if self.plasticity_bands:
+            raise ValueError('set_plasticity / plasticity_schedule cannot replace configured plasticity_bands')
         print(f"Setting plasticity from checkpoint resume: {value}")
 
         # Update all linear layers
