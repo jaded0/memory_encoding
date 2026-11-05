@@ -1,7 +1,8 @@
 # train.py
 import torch
 from ephemeral_model import (EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every,
-                             parse_fast_backward_per_forward, FAST_STRUCTURES, check_fast_structure)
+                             parse_fast_backward_per_forward, FAST_STRUCTURES, check_fast_structure,
+                             check_order2_read_norm)
 import wandb
 import kv_switch
 import matplotlib.pyplot as plt
@@ -528,7 +529,9 @@ def build_model(config, charset, n_characters):
             order2_dim=config.get('order2_dim', 16),
             order2_seed=config.get('seed') or 0,
             order2_sparse_m=config.get('order2_sparse_m', 273),
-            order2_sparse_k=config.get('order2_sparse_k', 17))
+            order2_sparse_k=config.get('order2_sparse_k', 17),
+            order2_read_norm=config.get('order2_read_norm', 'off'),
+            order2_sink=config.get('order2_sink', 'off'))
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -693,6 +696,10 @@ def build_parser():
                              'sum of absolute key-query scores sum_s |x_s . x|; rms: cap rms(F x) at rms(S x); '
                              'ln: LayerNorm (no gain or bias) of F x alone. Off (default) is the one-bmm forward, '
                              'bit for bit. See README "Fast read normalization".')
+    parser.add_argument('--order2_read_norm', default='off', choices=['off', 'sum'],
+                        help='Normalize the order-two read by decayed stored-key mass (DFA only).')
+    parser.add_argument('--order2_sink', default='off', choices=['off', 'fixed', 'learned'],
+                        help='Null-value denominator mass with sum; learned is unavailable under DFA.')
     parser.add_argument('--order2_layers', type=str, default='',
                         help='Ephemeral DFA (2026-10-22, video experiment 5): comma list of trunk layers that '
                              'get an order-two fast matrix G, read as G psi(x) next to the layer\'s other '
@@ -945,6 +952,12 @@ def check_argument_combinations(args, parser):
                                  fast_read_norm=args.fast_read_norm)
         except ValueError as exc:
             parser.error(str(exc))
+    try:
+        check_order2_read_norm(args.order2_read_norm, args.order2_sink, args.order2_layers, args.order2_map)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.order2_read_norm == 'sum' and not 0 <= args.forget_rate <= 1:
+        parser.error('--order2_read_norm sum requires forget_rate in [0, 1].')
     if args.order2_layers:
         if args.order2_map == 'sparse' and not 1 <= args.order2_sparse_k <= args.order2_sparse_m:
             parser.error('--order2_sparse_k must satisfy 1 <= k <= --order2_sparse_m.')
@@ -1225,6 +1238,8 @@ def main():
             "backprop_step_parity": args.backprop_step_parity,
             "fast_write_from_readout": args.fast_write_from_readout,
             "fast_write_from_readout_scale": args.fast_write_from_readout_scale,
+            "order2_read_norm": args.order2_read_norm,
+            "order2_sink": args.order2_sink,
             "order2_layers": args.order2_layers,
             "order2_map": args.order2_map,
             "order2_mode": args.order2_mode,
@@ -1412,6 +1427,11 @@ def main():
             if heldout_batches is not None and iter % args.heldout_eval_every == 0:
                 # Logged with the next interval; evaluate_protocols restores the model's state.
                 heldout_metrics = evaluate_protocols(rnn, heldout_batches, config, args.dataset)
+                if isinstance(rnn, EphemeralRNN):
+                    norm_metrics = rnn.order2_norm_summary()
+                    heldout_metrics.update(norm_metrics)
+                    if norm_metrics:
+                        print(f'Order2 normalization diagnostics @ iter {iter}: {norm_metrics}', flush=True)
 
             # ==============================================================
             # --- Frequent Detailed Console Logging Period (print_freq) ---
@@ -1509,6 +1529,8 @@ def main():
             if args.print_freq > 0 and iter % args.print_freq == 0:
                 metrics = interval.summary()
                 metrics.update(rnn.grad_clip_stats.summary())
+                if isinstance(rnn, EphemeralRNN):
+                    metrics.update(rnn.order2_norm_summary())
                 metrics.update(heldout_metrics)
                 metrics.update(trace_metrics)
                 heldout_metrics, trace_metrics = {}, {}
@@ -1657,6 +1679,10 @@ def main():
 
 
     finally: # Ensure wandb finishes even on error/interrupt
+        if isinstance(rnn, EphemeralRNN):
+            norm_metrics = rnn.order2_norm_summary()
+            if norm_metrics:
+                print(f'Final order2 normalization diagnostics: {norm_metrics}', flush=True)
         for sig, handler in previous_handlers.items():
             signal.signal(sig, handler)
         if args.track and wandb.run is not None:

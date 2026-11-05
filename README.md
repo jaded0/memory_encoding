@@ -467,6 +467,71 @@ Stability interventions, all ephemeral + DFA only and off by default:
     `--fast_read_norm`, backprop and BPTT are refused. Off (default, empty) is the original model, bit
     for bit (`tests/test_order2.py`).
 
+### Sum-normalized order-two reads (K15)
+
+`--order2_read_norm {off,sum}` defaults to `off`: existing K13 par2 forward/update
+traces and checkpoint tensor keys remain bit-identical to **0f512f8**.
+With `sum`, each selected order-two layer keeps a detached key sum `z [B,F]`:
+
+```text
+G <- (1-f) * (G - lr*alpha*error outer psi(x))  # existing write, with existing clamps
+z <- (1-f) * (z + psi(x))                     # add, then forget; no write gradient
+read = G psi(query) / max(1e-12, z dot psi(query) + sink)
+```
+
+The only key-side scaling is already in `psi`: `sqrt(fraction/k(1))*||x||` and the
+Taylor features. **lr*alpha is value-side**, so it is not included in `z` or sink
+mass. Without binding clamps, this is a positive weighted average of stored values
+`-lr_s*alpha_s*error_s`. For nonzero stored keys and query, the masses are
+`(1-f)^(t-s) * psi(key_s) dot psi(query)`, proportional to
+`(1-f)^(t-s) * ||key_s|| * ||query|| * k(c_s)`; they are not just `k(c_s)` when key
+norms vary. The order-two polynomial is positive for every cosine. Weights sum to
+one without sink (up to the epsilon floor), or below one with positive sink. Empty
+memory/zero-query reads remain finite. Zero-error writes still add their keys,
+including padding and strict-heldout masked writes: the value is zero, not the key.
+
+`--order2_sink {off,fixed,learned}` defaults to `off` and requires `sum` when enabled.
+`fixed` adds the null-value pseudo-write mass
+`fraction*||query||^2*k(0)/k(1)`, with `k(0)=1` and `k(1)=1+t+t^2/2`.
+**`learned` is refused**: a per-layer beta initialized to zero would receive no
+training gradient in this DFA setup. `dfa_output_error` requests only dL/dlogits,
+and the step manually updates layer weights/biases, never beta. The regression test
+inserts a differentiable scalar into an actual training forward and verifies its
+`.grad` stays `None`. Use `fixed` explicitly; there is no silent learned-to-fixed fallback.
+
+`z` resets and carries exactly with `G` (sequence wipes and `--wipe_every`), and is a
+checkpoint buffer. Checkpoints are written at completed sequence boundaries, where
+`z` can still be live; bit-exact split/resume tests cover both ordinary wipes and
+cross-sequence carry. Heldout evaluation restores `G`, `z`, and clipping counters.
+Changed normalization or sink settings are refused on resume; missing old settings
+mean `off`.
+
+All supported DFA routes call the same eager `order2_write`: unfused training,
+print/update-norm logging, heldout fast-only, and `fused_dfa_step`. In particular,
+A6000/sm86 enables the compiled **linear** DFA update under `--fused_update true`,
+but the order-two write itself is **not compiled/fused** and still calls the shared
+normalizer code. No need to turn off fused linear updates. Unsupported maps
+(`order1`, signed `sparse`), non-DFA updaters, alternate slow/fast update schedules,
+fast-read normalization, additive structures, and gradient clipping are refused by
+the existing order-two checks or the new normalizer checks. Forgetting must lie in
+`[0,1]`. `replace` currently covers selected **trunk** layers only: it cannot replace
+the state head's (`i2h`) fast entries.
+
+At each heldout eval, each print interval, and run exit, training logs per-layer
+`order2/layer_N/G_clamp_bound_fraction` and `update_clamp_fraction`, for **all**
+order-two arms, including unnormalized ones. These are cumulative element counts
+across training writes (heldout restores counters): G is measured **after both
+weight clamps and before forgetting**, so forgetting cannot hide saturation. The
+update diagnostic counts raw update elements at/beyond `ephemeral_update_clamp`.
+No-clamp recipes report explicit zero. Any binding clamp breaks the exact stored
+key/value weighted-average identity. Sum-mode counters are persistent; off-mode
+counters are intentionally nonpersistent to keep legacy checkpoint tensor keys
+unchanged, so off-mode fractions restart at resume.
+
+Tests: `tests/test_order2_sum_norm.py` (including exact historical-code parity,
+explicit decayed keys, positivity and sink masses at t=4/16, resets/carry, route
+parity, refusal, heldout state restore and live-z bit-exact checkpoint continuation).
+
 ### Two-character MQAR: overlapping, spread keys (K13bigkey)
 
 `python bench_tasks.py mqar2_4_q4 mqar2_8_q4 mqar2_16_q4 mqar2_32_q4`

@@ -134,6 +134,9 @@ def evaluate_protocols(model, batches, config, dataset, protocols=PROTOCOLS, pre
     instead of taking the argmax. The model's whole state is restored afterwards, so a training
     run continues unchanged (sampling uses its own generator, not the global RNG)."""
     saved = {key: value.clone() for key, value in model.state_dict().items()}
+    # Unnormalized order-two counters are nonpersistent to preserve legacy checkpoint keys.
+    norm_counts = [(layer.order2_norm_counts, layer.order2_norm_counts.clone())
+                   for layer in model.linear_layers if layer.order2_norm_counts is not None]
     was_training = model.training
     model.eval()
     results = {}
@@ -162,6 +165,8 @@ def evaluate_protocols(model, batches, config, dataset, protocols=PROTOCOLS, pre
             results.update({f"{prefix}_{protocol}/{key}": value for key, value in summary.items()})
     finally:
         model.load_state_dict(saved)
+        for target, snapshot in norm_counts:
+            target.copy_(snapshot)
         model.train(was_training)
     return results
 

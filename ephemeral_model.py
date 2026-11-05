@@ -140,6 +140,21 @@ ORDER2_MAPS = ('order2', 'order1', 'sparse')
 ORDER2_MODES = ('parallel', 'replace')
 
 
+def check_order2_read_norm(mode, sink, layers, order):
+    """Sum normalization needs a positive kernel; DFA has no scalar beta update."""
+    if mode not in ('off', 'sum') or sink not in ('off', 'fixed', 'learned'):
+        raise ValueError('invalid --order2_read_norm or --order2_sink')
+    if sink == 'learned':
+        raise ValueError('--order2_sink learned unavailable: DFA differentiates only logits and '
+                         'manually updates weights/biases; beta would receive no training gradient. '
+                         'Use --order2_sink fixed explicitly.')
+    if sink != 'off' and mode != 'sum':
+        raise ValueError('--order2_sink requires --order2_read_norm sum')
+    if mode == 'sum' and (not layers or order != 'order2'):
+        raise ValueError('--order2_read_norm sum requires --order2_layers and --order2_map order2 '
+                         '(order1 and sparse can have negative kernel weights)')
+
+
 def order2_projection(in_features, dim, seed, layer_index):
     """--order2_layers: the fixed random projection [dim, in] of a layer's input that the order-two
     feature map expands, drawn from its own generator (seeded by the run's seed and the layer) so the
@@ -201,7 +216,7 @@ def order2_features(x, projection, order, temperature, fraction, eps=1e-12,
 
 
 def order2_step(fast, error, features, alpha, learning_rate, forget_rate, update_clamp, weight_clamp,
-                fast_weight_clamp):
+                fast_weight_clamp, norm_counts=None):
     """A layer's order-two fast matrix G [B, out, F] takes its DFA write in place, in the order the
     linear fast entries take theirs (dfa_layer_step): -alpha * (error outer features), the
     element-wise --ephemeral_update_clamp, G + lr * update, --weight_clamp and --fast_weight_clamp,
@@ -210,11 +225,20 @@ def order2_step(fast, error, features, alpha, learning_rate, forget_rate, update
     write is "error times whatever this layer sees", with psi(x) in place of x. A zero error row
     only forgets."""
     update = -alpha * (error.unsqueeze(2) * features.unsqueeze(1))
+    if norm_counts is not None and (update_clamp > 0 or weight_clamp > 0 or fast_weight_clamp > 0):
+        norm_counts[1].add_(update.numel())
+        if update_clamp > 0:
+            norm_counts[0].add_((update.abs() >= update_clamp).sum())
     if update_clamp > 0:
         update = update.clamp(-update_clamp, update_clamp)
     updated = regularized_weight(fast + learning_rate * update, weight_clamp)
     if fast_weight_clamp:
         updated = updated.clamp(-fast_weight_clamp, fast_weight_clamp)
+    if norm_counts is not None and (update_clamp > 0 or weight_clamp > 0 or fast_weight_clamp > 0):
+        norm_counts[3].add_(updated.numel())
+        bounds = [c for c in (weight_clamp, fast_weight_clamp) if c > 0]
+        if bounds:
+            norm_counts[2].add_((updated.abs() >= min(bounds)).sum())
     fast.copy_(updated * (1 - forget_rate))
 
 
@@ -632,6 +656,10 @@ class EphemeralLinear(nn.Linear):
         self.order2_temperature = 0.0
         self.order2_fraction = 0.0
         self.order2_trace = None
+        self.order2_read_norm = 'off'
+        self.order2_sink = 'off'
+        self.register_buffer('order2_z', None)
+        self.register_buffer('order2_norm_counts', None, persistent=False)
         self.register_buffer('order2_proj', None)
         self.register_buffer('order2_sparse_expansion', None)
         self.order2_sparse_k = 17
@@ -819,6 +847,8 @@ class EphemeralLinear(nn.Linear):
             self.fast_keys = self.fast_key_weights = None
             if self.order2_fast is not None:
                 self.order2_fast.zero_()
+            if self.order2_z is not None:
+                self.order2_z.zero_()
         # Reset the time counter at the start of the sequence
         self.t.fill_(0.0)
         self._retained_outputs = []
@@ -890,7 +920,15 @@ class EphemeralLinear(nn.Linear):
                                                 self.order2_temperature, self.order2_fraction,
                                                 sparse_expansion=self.order2_sparse_expansion,
                                                 sparse_k=self.order2_sparse_k)
-            output = output + torch.bmm(self.order2_fast, self.order2_trace.unsqueeze(2)).squeeze(2)
+            read = torch.bmm(self.order2_fast, self.order2_trace.unsqueeze(2)).squeeze(2)
+            if self.order2_read_norm == 'sum':
+                mass = (self.order2_z * self.order2_trace).sum(1, keepdim=True)
+                if self.order2_sink == 'fixed':
+                    # k(0) = 1. A fixed null-value key, in the same units as psi(x).psi(x).
+                    mass = mass + (self.order2_fraction * input.detach().square().sum(1, keepdim=True)
+                                   / order2_kernel_norm(self.order2, self.order2_temperature))
+                read = read / mass.clamp_min(1e-12)
+            output = output + read
 
         # Optionally add a bias if needed.
         if self.bias is not None:
@@ -946,9 +984,18 @@ class EphemeralLinear(nn.Linear):
     def order2_write(self, error, learning_rate, update_clamp, forget=True):
         """This step's DFA write on the order-two fast matrix (order2_step), with the features this
         layer's last forward recorded. forget=False leaves out the forgetting."""
-        order2_step(self.order2_fast, error, self.order2_trace, self.order2_alpha(), learning_rate,
+        alpha = self.order2_alpha()
+        if self.order2_read_norm == 'sum':
+            # psi already includes the key-side fraction/feature scale. lr*alpha multiplies
+            # the value (-error), not the key. z += psi, then the same forgetting as G.
+            # Zero-error (including padding/heldout-masked) rows still contribute keys.
+            with torch.no_grad():
+                self.order2_z.add_(self.order2_trace.detach())
+                if forget:
+                    self.order2_z.mul_(1 - self.forget_rate)
+        order2_step(self.order2_fast, error, self.order2_trace, alpha, learning_rate,
                     self.forget_rate if forget else 0.0, update_clamp, self.weight_clamp,
-                    self.fast_weight_clamp)
+                    self.fast_weight_clamp, self.order2_norm_counts)
 
     def update_imprints(self, input, output):
         self.in_traces.data = input
@@ -1274,7 +1321,8 @@ class EphemeralRNN(torch.nn.Module):
         fast_write_from_readout_scale=1.0, fast_read_norm='off', fast_read_norm_lr=None,
         fast_structure='exclusive',
         order2_layers=None, order2_map='order2', order2_mode='parallel', order2_temperature=4.0,
-        order2_dim=16, order2_seed=0, order2_sparse_m=273, order2_sparse_k=17
+        order2_dim=16, order2_seed=0, order2_sparse_m=273, order2_sparse_k=17,
+        order2_read_norm='off', order2_sink='off'
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -1437,9 +1485,31 @@ class EphemeralRNN(torch.nn.Module):
         set_dfa_fprime(self, dfa_fprime)
         self.set_fast_read_norm(fast_read_norm, fast_read_norm_lr)
         self.order2_layers = None
+        check_order2_read_norm(order2_read_norm, order2_sink, order2_layers, order2_map)
         if order2_layers is not None:
             self.set_order2(order2_layers, order2_map, order2_mode, order2_temperature, order2_dim,
                             order2_seed, order2_sparse_m, order2_sparse_k)
+        for layer in self.order2_targets():
+            layer.order2_read_norm, layer.order2_sink = order2_read_norm, order2_sink
+            if order2_read_norm == 'sum':
+                if not 0 <= layer.forget_rate <= 1:
+                    raise ValueError('--order2_read_norm sum requires forget_rate in [0, 1]')
+                layer.order2_z = layer.order2_fast.new_zeros(layer.batch_size, layer.order2_fast.shape[-1])
+                layer._non_persistent_buffers_set.discard('order2_norm_counts')
+
+    def order2_norm_summary(self):
+        """Cumulative clipping diagnostics; no-clamp runs report explicit zeros.
+
+        Count G at a weight bound after clipping, BEFORE forgetting moves it off the bound;
+        also report update elements at their clamp, which can break the key/value factorization.
+        """
+        summary = {}
+        for i, layer in enumerate(self.linear_layers):
+            if layer.order2_norm_counts is not None:
+                update_hits, updates, bound_hits, elements = layer.order2_norm_counts.tolist()
+                summary[f'order2/layer_{i}/G_clamp_bound_fraction'] = bound_hits / max(1, elements)
+                summary[f'order2/layer_{i}/update_clamp_fraction'] = update_hits / max(1, updates)
+        return summary
 
     def set_order2(self, layers, order='order2', mode='parallel', temperature=4.0, dim=16, seed=0,
                    sparse_m=273, sparse_k=17):
@@ -1481,6 +1551,7 @@ class EphemeralRNN(torch.nn.Module):
             layer.order2 = order
             layer.order2_replace = mode == 'replace'
             layer.order2_temperature = float(temperature)
+            layer.order2_norm_counts = torch.zeros(4, dtype=torch.int64, device=device)
             layer.order2_fraction = float(layer.ephemeral_mask.float().mean())
             layer.order2_proj = order2_projection(layer.in_features, int(dim), seed, index).to(device)
             if order == 'sparse':
