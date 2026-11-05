@@ -469,6 +469,9 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
         mismatches.extend((key, config.get(key, default), loaded_config.get(key, default))
                           for key, default in write_gain_defaults.items()
                           if config.get(key, default) != loaded_config.get(key, default))
+    for key in ('fast_key_rope', 'fast_write_momentum', 'fast_key_shift'):
+        if config.get(key, 0.0) != loaded_config.get(key, 0.0):
+            mismatches.append((key, config.get(key, 0.0), loaded_config.get(key, 0.0)))
     if mismatches:
         print("--------------------------------------------------------------------")
         print("ERROR: Checkpoint configuration mismatch!")

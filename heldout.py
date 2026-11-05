@@ -95,7 +95,8 @@ def evaluate_held_out(model, onehot, update_mask, config, self_from=None, sample
         if update_mask is not None:
             # A masked row gets zero error: its fast entries only forget, as a padding step does.
             model.fast_only_dfa_step(output_error * update_mask[:, i, None], config['learning_rate'],
-                                     config['ephemeral_update_clamp'], config.get('grad_norm_clip', 0))
+                                      config['ephemeral_update_clamp'], config.get('grad_norm_clip', 0),
+                                      write_mask=update_mask[:, i] & (write_target.sum(1) > 0))
             # --fast_backward_per_forward K >= 2: the K - 1 extra fast-only passes of training
             # (EphemeralRNN.extra_fast_iterations): re-forward the same input from the same incoming
             # hidden state, take the fresh error and write without forgetting. The prediction and

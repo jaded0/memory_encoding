@@ -346,13 +346,42 @@ def dfa_step_gradient(projected_error, inputs, ephemeral_mask, slow_nlms=False, 
                                    slow_scale=slow_lr_scale)
 
 
+def fast_momentum_update(update, mask, momentum, mu):
+    """Accumulate the alpha-scaled, update-clamped write u (before lr/weight clamps/decay).
+
+    Momentum is per sequence and fast entry only; it is not itself forgotten.
+    """
+    if momentum is None:
+        return update
+    momentum.copy_(torch.where(mask.unsqueeze(0), mu * momentum + update, 0))
+    return torch.where(mask.unsqueeze(0), momentum, update)
+
+
+def fast_key_features(x, previous, position, base=0.0, shift=0.0):
+    """Shift raw inputs first, then rotate adjacent feature pairs at this timestep.
+
+    RoPE frequencies are base**(-2*j/d); an odd final coordinate is unchanged.
+    The missing previous input at a wipe is zero.
+    """
+    key = (1 - shift) * x + shift * previous if shift else x
+    if not base:
+        return key
+    pairs = x.shape[1] // 2
+    frequency = base ** (-2 * torch.arange(pairs, device=x.device, dtype=x.dtype) / x.shape[1])
+    angle = position.to(x.dtype) * frequency
+    a, b = key[:, :2 * pairs:2], key[:, 1:2 * pairs:2]
+    rotated = torch.stack((a * angle.cos() - b * angle.sin(),
+                           a * angle.sin() + b * angle.cos()), dim=-1).flatten(1)
+    return torch.cat((rotated, key[:, 2 * pairs:]), dim=1)
+
+
 def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral_mask,
                    forget_rate: float, learning_rate: float, update_clamp: float,
                    weight_clamp: float, is_last_layer: bool,
                    slow_weight_decay: float = 0.0, fast_weight_clamp: float = 0.0,
                    freeze_slow: bool = False, freeze_fast: bool = False, fast_forget: bool = True,
                    slow_nlms: bool = False, slow_lr_scale: float = 1.0,
-                   fast_projected_error=None):
+                   fast_projected_error=None, fast_inputs=None, momentum=None, momentum_mu=0.0):
     """One EphemeralLinear's whole DFA step, in place on weights and bias: the DFA gradient, the
     update and weight clamp (apply_update), then forgetting (apply_forget_step).
     It is built from the same helpers as those methods, in the same order, so run eagerly it
@@ -371,11 +400,20 @@ def dfa_layer_step(weights, bias, projected_error, inputs, plasticity, ephemeral
     fast_projected_error (--decouple_fast_feedback, --fast_write_from_readout): the ephemeral
     entries' gradient uses this error instead of projected_error; the slow entries and the bias
     keep projected_error. Every operation after the gradient is element-wise, so this is the same
-    as a fast-only step with the one error followed by a slow-only step with the other."""
+    as a fast-only step with the one error followed by a slow-only step with the other.
+
+    fast_inputs replaces only the fast outer product's key. momentum accumulates that fast
+    alpha-scaled, update-clamped write before learning_rate, weight clamps and forgetting;
+    freeze_fast leaves momentum untouched. With both None the original operations are exact."""
     gradient = dfa_step_gradient(projected_error, inputs, ephemeral_mask, slow_nlms, slow_lr_scale,
                                  fast_projected_error)
+    if fast_inputs is not None:
+        gradient = torch.where(ephemeral_mask.unsqueeze(0), dfa_per_sample_gradient(
+            projected_error if fast_projected_error is None else fast_projected_error, fast_inputs), gradient)
     update = ephemeral_update(gradient, plasticity,
                               ephemeral_mask, update_clamp, is_last_layer)
+    if not freeze_fast:
+        update = fast_momentum_update(update, ephemeral_mask, momentum, momentum_mu)
     updated = clamp_fast_entries(
         regularized_weight(weights + learning_rate * update, weight_clamp),
         ephemeral_mask, fast_weight_clamp)
@@ -666,6 +704,11 @@ class EphemeralLinear(nn.Linear):
         self.register_buffer('fast_key_mass', None, persistent=False)
         self.register_buffer('fast_keys', None, persistent=False)
         self.register_buffer('fast_key_weights', None, persistent=False)
+        self.fast_key_rope = self.fast_key_shift = self.fast_write_momentum = 0.0
+        self.fast_key_trace = None
+        self.register_buffer('fast_previous_input', None)
+        self.register_buffer('fast_position', None)
+        self.register_buffer('fast_momentum', None)
         # --order2_layers (set by EphemeralRNN.set_order2): a separate fast matrix order2_fast
         # [B, out, F] read and written through order2_features of a fixed projection order2_proj.
         # Both are None (and so absent from the state dict) when the flag is off.
@@ -810,7 +853,15 @@ class EphemeralLinear(nn.Linear):
 
     def _load_from_state_dict(self, *args, **kwargs):
         self._fused_plasticity = None
+        self.fast_key_trace = None
         super()._load_from_state_dict(*args, **kwargs)
+
+    def wipe_fast_cousin_state(self):
+        """Reset temporal fast state, without touching slow weights or their raw traces."""
+        for state in (self.fast_previous_input, self.fast_position, self.fast_momentum):
+            if state is not None:
+                state.zero_()
+        self.fast_key_trace = None
 
     def start_sequence_wipe(self, wipe_fast=True):
         """Start of a sequence: set every sequence's slow entries to the batch mean (consolidation),
@@ -830,6 +881,8 @@ class EphemeralLinear(nn.Linear):
 
         Additive structures: every entry of per_sample_weights is slow (S), so all of it takes the
         batch mean; fast_state (F) is zeroed if wipe_fast, else each row keeps its own."""
+        if wipe_fast:
+            self.wipe_fast_cousin_state()
         if self.is_additive:
             aggregated = self.per_sample_weights.mean(dim=0, keepdim=True)
             self.per_sample_weights.data.copy_(aggregated.expand_as(self.per_sample_weights))
@@ -913,13 +966,18 @@ class EphemeralLinear(nn.Linear):
         # Perform a batched matrix multiplication.
         # input: [B, in_features] -> reshape to [B, in_features, 1]
         input_unsq = input.unsqueeze(2)
+        if self.fast_position is not None:
+            self.fast_key_trace = fast_key_features(input.detach(), self.fast_previous_input,
+                self.fast_position, self.fast_key_rope, self.fast_key_shift)
+            self.fast_previous_input.copy_(input.detach())
+            self.fast_position.add_(1)
 
         # The output will be [B, out_features, 1] and then we can squeeze the last dimension.
         if self.is_additive:
             # (S + F) x as S x + F x: two reads of [B, out, in] instead of three plus a write.
             output = torch.baddbmm(torch.bmm(self.per_sample_weights, input_unsq),
                                    self.fast_state, input_unsq).squeeze(2)
-        elif self.fast_read_norm == 'off':
+        elif self.fast_read_norm == 'off' and self.fast_position is None:
             output = torch.bmm(self.per_sample_weights, input_unsq).squeeze(2)
         else:
             output = self._normalized_read(input, input_unsq)
@@ -946,8 +1004,11 @@ class EphemeralLinear(nn.Linear):
         next read's normalizer covers exactly the writes its F holds (one write per forward;
         EphemeralRNN refuses the other step paths)."""
         weights, mask = self.per_sample_weights, self.ephemeral_mask.unsqueeze(0)
-        fast = torch.bmm(weights.masked_fill(~mask, 0), input_unsq).squeeze(2)
+        query = input if self.fast_position is None else self.fast_key_trace
+        fast = torch.bmm(weights.masked_fill(~mask, 0), query.unsqueeze(2)).squeeze(2)
         slow = torch.bmm(weights.masked_fill(mask, 0), input_unsq).squeeze(2)
+        if self.fast_read_norm == 'off':
+            return slow + fast
         if self.fast_read_norm == 'ln':
             return slow + fast_read_layer_norm(fast)
         if self.fast_read_norm in FAST_READ_NORMS_WITH_HISTORY:
@@ -1084,6 +1145,8 @@ class EphemeralLinear(nn.Linear):
         # are shared with dfa_layer_step (--fused_update).
         update = ephemeral_update(self.per_sample_weights.grad, self.plasticity, self.ephemeral_mask,
                                   update_clamp, self.is_last_layer)
+        update = fast_momentum_update(update, self.ephemeral_mask, self.fast_momentum,
+                                      self.fast_write_momentum)
 
         self.per_sample_weights.data = self.per_sample_weights.data + learning_rate * update
 
@@ -1314,7 +1377,8 @@ class EphemeralRNN(torch.nn.Module):
         fast_write_from_readout_scale=1.0, fast_read_norm='off', fast_read_norm_lr=None,
         absrun_floor=0.0, fast_structure='exclusive',
         order2_layers=None, order2_map='order2', order2_mode='parallel', order2_temperature=4.0,
-        order2_dim=16, order2_seed=0, write_gain_power=0.0, write_gain_window=256, write_gain_max=0.0
+        order2_dim=16, order2_seed=0, write_gain_power=0.0, write_gain_window=256, write_gain_max=0.0,
+        fast_key_rope=0.0, fast_write_momentum=0.0, fast_key_shift=0.0
     ):
         """forget_rate: fraction of each ephemeral weight removed per forget step,
         w <- (1 - forget_rate) * w (see EphemeralLinear).
@@ -1352,7 +1416,9 @@ class EphemeralRNN(torch.nn.Module):
         --order2_layers and friends, an order-two (or order-one control) fast matrix on a fixed
         projection of those trunk layers' inputs (see set_order2). None: off.
         write_gain_power / write_gain_window / write_gain_max: --write_gain_power and friends, the
-        expansive write gain (see set_write_gain). 0: off."""
+        expansive write gain (see set_write_gain). 0: off.
+        fast_key_rope / fast_write_momentum / fast_key_shift: fast-only temporal transforms
+        (see set_fast_cousins); each defaults to 0 (off)."""
         super(EphemeralRNN, self).__init__()
         self.fast_structure = parse_fast_structure(fast_structure)
         check_fast_structure(self.fast_structure, updater=updater, slow_update_every=slow_update_every,
@@ -1486,6 +1552,36 @@ class EphemeralRNN(torch.nn.Module):
         self.write_gain_power = 0.0
         if write_gain_power:
             self.set_write_gain(write_gain_power, write_gain_window, write_gain_max)
+        self.set_fast_cousins(fast_key_rope, fast_write_momentum, fast_key_shift)
+
+    def set_fast_cousins(self, base=0.0, mu=0.0, shift=0.0):
+        """Per-forward fast keys/queries and per-write momentum; slow input/error is unchanged.
+
+        State is checkpointed and retained across wipe_fast=False boundaries. A real fast wipe
+        clears position, previous raw input and momentum together with the fast weights.
+        One DFA write per timestep is required; other schedules, additive/order2 stores and
+        history-based read divisors are explicitly unsupported, not silently bypassed.
+        """
+        if not all(math.isfinite(v) for v in (base, mu, shift)) or base < 0:
+            raise ValueError('--fast_key_rope must be finite and >= 0 (0 is off)')
+        if not 0 <= mu < 1 or not 0 <= shift <= 1:
+            raise ValueError('--fast_write_momentum must be in [0,1); --fast_key_shift in [0,1]')
+        if not (base or mu or shift):
+            return
+        if (self.updater != 'dfa' or self.slow_update_every != 1 or
+                self.fast_backward_per_forward != 1 or self.fast_structure != 'exclusive' or
+                self.order2_layers is not None or self.fast_read_norm in FAST_READ_NORMS_WITH_HISTORY):
+            raise ValueError('fast cousin flags need DFA, per-step slow/fast updates, exclusive '
+                             'structure, no order2 and no history-based fast_read_norm')
+        for layer in self.trained_layers():
+            if layer.is_last_layer or not bool(layer.ephemeral_mask.any()):
+                continue
+            layer.fast_key_rope, layer.fast_write_momentum, layer.fast_key_shift = base, mu, shift
+            if base or shift:
+                layer.fast_previous_input = torch.zeros_like(layer.in_traces)
+                layer.fast_position = torch.zeros((), dtype=torch.long, device=layer.in_traces.device)
+            if mu:
+                layer.fast_momentum = torch.zeros_like(layer.per_sample_weights)
 
     def set_order2(self, layers, order='order2', mode='parallel', temperature=4.0, dim=16, seed=0):
         """--order2_layers: each listed trunk layer gets a second fast matrix G [B, out, F], read as
@@ -1701,13 +1797,18 @@ class EphemeralRNN(torch.nn.Module):
                 layer.forget_rate, learning_rate, update_clamp,
                 layer.weight_clamp, layer.is_last_layer, layer.slow_weight_decay,
                 layer.fast_weight_clamp, slow_nlms=layer.slow_nlms,
-                 slow_lr_scale=layer.slow_lr_scale, fast_projected_error=fast_error)
+                 slow_lr_scale=layer.slow_lr_scale, fast_projected_error=fast_error,
+                 fast_inputs=layer.fast_key_trace, momentum=layer.fast_momentum,
+                 momentum_mu=layer.fast_write_momentum)
 
     def dfa_step_errors(self, output_error, grad_norm_clip=0):
         """Each trained layer's projected error for one DFA step, and the pre-clip per-sequence
         norms (None without --grad_norm_clip). The clip uses the closed form for a rank-1
         gradient, |p_b x_b^T| = |p_b| |x_b|, and scales the projected errors."""
         layers = self.trained_layers()
+        if grad_norm_clip and any(layer.fast_write_momentum or layer.fast_position is not None
+                                  for layer in layers):
+            raise ValueError('fast cousin flags are not defined with --grad_norm_clip')
         projected = [dfa_projected_error(output_error, layer.feedback_weights, layer.is_last_layer,
                                          dfa_layer_activation_derivative(layer))
                      for layer in layers]
@@ -1779,14 +1880,17 @@ class EphemeralRNN(torch.nn.Module):
         layers = self.trained_layers()
         if not self.write_gain_power and not any(
                 layer.fast_write_from_readout or layer.fast_feedback_weights is not None
-                or layer.order2_replace for layer in layers):
+                or layer.order2_replace or layer.fast_position is not None for layer in layers):
             return
         projected, _ = self.dfa_step_errors(output_error)
-        for layer, fast_error in zip(layers, self.fast_write_errors(output_error, projected, commit=True)):
-            if fast_error is not None:
+        for layer, error, fast_error in zip(layers, projected,
+                                            self.fast_write_errors(output_error, projected, commit=True)):
+            if fast_error is not None or layer.fast_position is not None:
                 grad = layer.per_sample_weights.grad
+                error = error if fast_error is None else fast_error
+                key = layer.in_traces.data if layer.fast_position is None else layer.fast_key_trace
                 grad.copy_(torch.where(layer.ephemeral_mask.unsqueeze(0),
-                                       dfa_per_sample_gradient(fast_error, layer.in_traces.data), grad))
+                                       dfa_per_sample_gradient(error, key), grad))
 
     def check_fast_only_step(self):
         """fast_only_dfa_step needs the DFA updater."""
@@ -1796,7 +1900,7 @@ class EphemeralRNN(torch.nn.Module):
 
     @torch.no_grad()
     def fast_only_dfa_step(self, output_error, learning_rate, update_clamp, grad_norm_clip=0,
-                           forget=True):
+                           forget=True, write_mask=None):
         """The DFA step of fused_dfa_step (the same projected errors, clip, update, clamps and
         forgetting, through dfa_layer_step) restricted to the ephemeral entries: slow entries,
         biases and i2o stay bit for bit, and --slow_weight_decay does not act. Rows whose
@@ -1809,7 +1913,19 @@ class EphemeralRNN(torch.nn.Module):
         for layer, error in zip(self.trained_layers(), self.fast_write_projected(output_error, grad_norm_clip)):
             if layer.is_last_layer:
                 continue  # i2o has no ephemeral entries: the frozen step would leave it unchanged
+            # A held-out strict/padding row must not emit residual momentum writes. Zero error
+            # alone means u=0, which still advances momentum; an explicit mask means no write.
+            masked = write_mask is not None and layer.fast_momentum is not None
+            if masked:
+                before = layer.per_sample_weights.data.clone()
+                velocity = layer.fast_momentum.clone()
             self._fast_entry_step(layer, error, learning_rate, update_clamp, forget)
+            if masked:
+                keep = write_mask.view(-1, 1, 1)
+                decayed = before * forget_keep(layer.forget_rate if forget else 0.0,
+                                               layer.ephemeral_mask)
+                layer.per_sample_weights.data.copy_(torch.where(keep, layer.per_sample_weights.data, decayed))
+                layer.fast_momentum.copy_(torch.where(keep, layer.fast_momentum, velocity))
 
     def _fast_entry_step(self, layer, error, learning_rate, update_clamp, forget=True):
         """dfa_layer_step with freeze_slow: this step on the ephemeral entries only (bias frozen).
@@ -1825,7 +1941,8 @@ class EphemeralRNN(torch.nn.Module):
              learning_rate, update_clamp, layer.weight_clamp, layer.is_last_layer,
              layer.slow_weight_decay if forget else 0.0, layer.fast_weight_clamp, True,
              slow_nlms=layer.slow_nlms,
-                 slow_lr_scale=layer.slow_lr_scale)
+                 slow_lr_scale=layer.slow_lr_scale, fast_inputs=layer.fast_key_trace,
+                 momentum=layer.fast_momentum, momentum_mu=layer.fast_write_momentum)
 
     @property
     def split_step(self):
@@ -1999,6 +2116,9 @@ class EphemeralRNN(torch.nn.Module):
         torch.nn.utils.clip_grad_norm_ over every trained gradient. It runs on the raw gradient,
         before plasticity (alpha) scales the ephemeral entries and before
         --ephemeral_update_clamp and --weight_clamp. Returns the pre-clip norms, [B]."""
+        if any(layer.fast_write_momentum or layer.fast_position is not None
+               for layer in self.trained_layers()):
+            raise ValueError('fast cousin flags are not defined with --grad_norm_clip')
         if self.updater != 'dfa' and not self.i2o.retain_sequence_bias_grads:
             raise RuntimeError("Build EphemeralRNN with retain_sequence_bias_grads=True to clip "
                                "per-sequence gradients under backprop or BPTT.")
@@ -2126,6 +2246,7 @@ class EphemeralRNN(torch.nn.Module):
         copies across the batch and must never be used for a within-story wipe.
         """
         for layer in (*self.linear_layers, self.i2h, self.i2o):
+            layer.wipe_fast_cousin_state()
             if layer.is_additive:
                 layer.fast_state.data.zero_()
             else:
