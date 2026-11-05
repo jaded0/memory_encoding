@@ -115,6 +115,12 @@ def train_batch(line_tensor, onehot_line_tensor, rnn, config, state, optimizer=N
     """Trains on one batch of sequences with DFA, backprop or BPTT. tracer (a loop_trace.LoopTracer,
     ephemeral + DFA only) records the within-sequence feedback-loop traces without changing
     anything; the caller reads them with tracer.finish() afterwards."""
+    from sequence_outer import check_sequence_outer, train_sequence_outer
+    check_sequence_outer(config)
+    if config.get('sequence_outer', False):
+        if tracer is not None:
+            raise ValueError('--sequence_outer does not support loop tracing')
+        return train_sequence_outer(onehot_line_tensor, rnn, config, state, log_outputs)
     updater = config['updater']
     criterion = config['criterion']
     batch_size = onehot_line_tensor.shape[0]
@@ -502,7 +508,9 @@ def build_model(config, charset, n_characters):
                          layer_norm=config['layer_norm'], dfa_fprime=config.get('dfa_fprime', False))
     if config['model_type'] == 'ephemeral':
         print(f"Initializing EphemeralRNN model with '{updater}' updater.")
-        return EphemeralRNN(
+        from sequence_outer import check_sequence_outer
+        check_sequence_outer(config)
+        model = EphemeralRNN(
             input_size, config["n_hidden"], output_size, config["n_layers"], charset,
             residual_connection=config['residual_connection'],
             weight_clamp=config['weight_clamp'], updater=updater,
@@ -536,6 +544,8 @@ def build_model(config, charset, n_characters):
             write_gain_power=config.get('write_gain_power', 0.0),
             write_gain_window=config.get('write_gain_window', 256),
             write_gain_max=config.get('write_gain_max', 0.0))
+        model.sequence_outer = config.get('sequence_outer', False)
+        return model
     raise ValueError(f"Unknown model_type: {config['model_type']}")
 
 
@@ -672,8 +682,13 @@ def build_parser():
                              'Under --updater backprop (needs --backprop_step_parity) the slow entries '
                              'train by backprop and the listed layers\' fast entries take the same B_fast '
                              'DFA write ("0,1,2" is the host-agnostic C2 arm).')
+    parser.add_argument('--sequence_outer', type=str2bool, nargs='?', const=True, default=False,
+                        help='K14: sequence SGD on slow entries/biases, BPTT with DFA fast writes; '
+                             'requires backprop_step_parity and max_seq_len 10.')
+    parser.add_argument('--fast_write_grad', choices=['through', 'detached'], default='detached',
+                        help='With sequence_outer, differentiate DFA writes or stop-gradient them.')
     parser.add_argument('--backprop_step_parity', type=str2bool, nargs='?', const=True, default=False,
-                        help='Ephemeral + per-step backprop: give each sequence\'s weight copy its own '
+                        help='Ephemeral + backprop (online or sequence_outer): each weight copy gets its own '
                              'loss\'s gradient (backward on the batch sum, not the mean; biases keep the '
                              'batch mean) and apply alpha once, so the step is lr*alpha*g on the fast '
                              'entries and lr*g on the slow ones, the same form as DFA\'s. Off (default): '
@@ -1043,9 +1058,15 @@ def check_argument_combinations(args, parser):
     if args.label_smoothing and (args.fast_backward_per_forward != 1 or args.heldout_eval_every > 0):
         parser.error("--label_smoothing does not support --fast_backward_per_forward other than 1 "
                      "or --heldout_eval_every; those auxiliary passes use the plain error.")
-    if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral' or args.updater != 'dfa'):
+    from sequence_outer import check_sequence_outer
+    try:
+        check_sequence_outer(vars(args))
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.heldout_eval_every > 0 and (args.model_type != 'ephemeral'
+                                     or (args.updater != 'dfa' and not args.sequence_outer)):
         parser.error("--heldout_eval_every supports only --model_type ephemeral --updater dfa "
-                     "(see EphemeralRNN.check_fast_only_step).")
+                     "or the opt-in --sequence_outer backprop model.")
     return args
 
 
@@ -1260,6 +1281,8 @@ def main():
             "fast_structure": args.fast_structure,
             "decouple_fast_feedback": args.decouple_fast_feedback,
             "backprop_step_parity": args.backprop_step_parity,
+            "sequence_outer": args.sequence_outer,
+            "fast_write_grad": args.fast_write_grad,
             "fast_write_from_readout": args.fast_write_from_readout,
             "fast_write_from_readout_scale": args.fast_write_from_readout_scale,
             "order2_layers": args.order2_layers,

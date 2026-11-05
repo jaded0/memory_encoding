@@ -1,4 +1,4 @@
-"""Held-out evaluation of a DFA EphemeralRNN with its slow weights frozen.
+"""Held-out evaluation of a DFA (or opt-in K14 sequence-outer) EphemeralRNN.
 
 Each episode starts as a training sequence does (start_sequence_wipe: the batch's slow copies
 become their mean and the fast entries zero). Each step then predicts, is scored, and only
@@ -56,6 +56,11 @@ def evaluate_held_out(model, onehot, update_mask, config, self_from=None, sample
     state."""
     if not isinstance(model, EphemeralRNN):
         raise ValueError("held-out evaluation needs an EphemeralRNN (SimpleRNN has no fast weights)")
+    if getattr(model, 'sequence_outer', False):
+        from sequence_outer import check_sequence_outer
+        check_sequence_outer(config)
+        if not config.get('sequence_outer', False):
+            raise ValueError('sequence-outer heldout model needs matching sequence_outer config')
     model.check_fast_only_step()
     batch, steps = onehot.shape[0], onehot.shape[1] - 1
     if batch != model.batch_size:

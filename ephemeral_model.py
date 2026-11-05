@@ -1789,8 +1789,8 @@ class EphemeralRNN(torch.nn.Module):
                                        dfa_per_sample_gradient(fast_error, layer.in_traces.data), grad))
 
     def check_fast_only_step(self):
-        """fast_only_dfa_step needs the DFA updater."""
-        if self.updater != 'dfa':
+        """Fast-only DFA evaluation: legacy DFA or the opt-in sequence outer model."""
+        if self.updater != 'dfa' and not getattr(self, 'sequence_outer', False):
             raise ValueError("held-out evaluation needs an EphemeralRNN trained with --updater dfa: "
                              "its fast writes are the DFA step")
 

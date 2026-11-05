@@ -561,6 +561,11 @@ The entries that differ between columns are explained, with evidence, in the nex
 
 ### Backprop step parity (`--backprop_step_parity`) and B_fast writes under backprop
 
+For the separate, opt-in K14 **sequence-level outer loop**, including matched
+`--fast_write_grad through|detached` arms and frozen-slow held-out evaluation,
+see [K14 sequence outer loop](docs/K14_sequence_outer.md). It is not the online
+backprop comparator described below; existing defaults are unchanged.
+
 **Where α² and 1/B come from (default, unchanged).** Under per-step backprop the hidden state is
 detached, and sequence b's loss L_b depends only on its own weight copy W_b, so for the batch-mean
 loss `∂(mean_b L_b)/∂W_b = g_b / B`, with `g_b = ∂L_b/∂W_b` the sequence's own gradient
