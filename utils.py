@@ -408,6 +408,8 @@ def load_checkpoint(checkpoint_path, model, config, optimizer=None, device='cpu'
         'dfa_fprime': False,
         # --backprop_step_parity changes every backprop step's size; absent in older checkpoints (off).
         'backprop_step_parity': False,
+        'sequence_outer': False,
+        'fast_write_grad': 'detached',
     }
     mismatches = [
         (key, config.get(key, default), loaded_config.get(key, default))
