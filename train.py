@@ -546,7 +546,10 @@ def build_model(config, charset, n_characters):
             write_gain_window=config.get('write_gain_window', 256),
             write_gain_max=config.get('write_gain_max', 0.0),
             plasticity_bands=config.get('plasticity_bands', ''),
-            band_feedback=config.get('band_feedback', 'shared'))
+            band_feedback=config.get('band_feedback', 'shared'),
+            fast_key_rope=config.get('fast_key_rope', 0.0),
+            fast_write_momentum=config.get('fast_write_momentum', 0.0),
+            fast_key_shift=config.get('fast_key_shift', 0.0))
         model.sequence_outer = config.get('sequence_outer', False)
         return model
     raise ValueError(f"Unknown model_type: {config['model_type']}")
@@ -749,6 +752,12 @@ def build_parser():
                         help='fraction:alpha:forget,...; fractions over whole matrix, summed for ephemeral_fraction.')
     parser.add_argument('--band_feedback', choices=['shared', 'separate'], default='shared',
                         help='With plasticity_bands: shared DFA feedback or fixed per-band random feedback.')
+    parser.add_argument('--fast_key_rope', type=float, default=0.0, metavar='BASE',
+                        help='Rotate fast write keys/read queries by timestep (positive base; 0 off).')
+    parser.add_argument('--fast_write_momentum', type=float, default=0.0, metavar='MU',
+                        help='Fast write momentum S = mu*S + u, before lr/weight clamps/decay (0 off).')
+    parser.add_argument('--fast_key_shift', type=float, default=0.0, metavar='LAMBDA',
+                        help='Fast keys/queries (1-lambda)*x_t + lambda*x_prev, then RoPE (0 off).')
     parser.add_argument('--write_gain_power', type=float, default=0.0,
                         help='Ephemeral DFA (2026-10-27, proposal P3, the expansive write-gain test): scale '
                              'every fast write by (|e| / m)^p (-1 flattens nonzero error norms to m), |e| the norm of the error that layer\'s fast '
@@ -1001,6 +1010,18 @@ def check_argument_combinations(args, parser):
             parser.error("--order2_layers is defined only for --fast_structure exclusive.")
         if args.order2_temperature <= 0 or args.order2_dim < 1:
             parser.error("--order2_temperature must be > 0 and --order2_dim >= 1.")
+    if (not all(math.isfinite(v) for v in
+                (args.fast_key_rope, args.fast_write_momentum, args.fast_key_shift))
+            or args.fast_key_rope < 0
+            or not 0 <= args.fast_write_momentum < 1 or not 0 <= args.fast_key_shift <= 1):
+        parser.error('fast_key_rope needs >=0; fast_write_momentum [0,1); fast_key_shift [0,1].')
+    if args.fast_key_rope or args.fast_write_momentum or args.fast_key_shift:
+        if (args.model_type != 'ephemeral' or args.updater != 'dfa' or args.slow_update_every != 1
+                or args.fast_backward_per_forward != 1 or args.fast_structure != 'exclusive'
+                or args.order2_layers or args.fast_read_norm in ('running', 'absrun')
+                or args.grad_norm_clip):
+            parser.error('fast cousin flags need ephemeral DFA, per-step updates, exclusive structure, '
+                         'no order2/history read norm/grad_norm_clip.')
     if (not math.isfinite(args.write_gain_power) or not math.isfinite(args.write_gain_max)
             or (args.write_gain_power < 0 and args.write_gain_power != -1) or args.write_gain_window < 1 or args.write_gain_max < 0):
         parser.error("--write_gain_power must be >= 0 or -1; --write_gain_max >= 0 and --write_gain_window >= 1.")
@@ -1299,6 +1320,9 @@ def main():
             "layer_norm": args.layer_norm,
             "fast_layers": args.fast_layers,
             "fast_structure": args.fast_structure,
+            "fast_key_rope": args.fast_key_rope,
+            "fast_write_momentum": args.fast_write_momentum,
+            "fast_key_shift": args.fast_key_shift,
             "decouple_fast_feedback": args.decouple_fast_feedback,
             "backprop_step_parity": args.backprop_step_parity,
             "sequence_outer": args.sequence_outer,
