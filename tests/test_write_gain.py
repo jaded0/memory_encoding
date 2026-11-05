@@ -213,7 +213,7 @@ class WriteGainTest(unittest.TestCase):
         self.assertEqual(int(model.write_gain_steps), steps)
 
     def test_invalid_combinations_are_refused(self):
-        for kwargs in ({"write_gain_power": -1.0}, {"write_gain_power": 1.0, "write_gain_window": 0},
+        for kwargs in ({"write_gain_power": -0.5}, {"write_gain_power": 1.0, "write_gain_window": 0},
                        {"write_gain_power": 1.0, "write_gain_max": float('nan')},
                        {"write_gain_power": float('inf')},
                        {"write_gain_power": 1.0, "write_gain_max": -1.0},
@@ -230,7 +230,7 @@ class WriteGainTest(unittest.TestCase):
                      ['--write_gain_max', 'nan'], ['--write_gain_power', 'inf'],
                      ['--slow_update_every', '2'], ['--fast_backward_per_forward', '2'],
                      ['--order2_layers', '1'], ['--fast_structure', 'additive_dense'],
-                     ['--write_gain_window', '0'], ['--write_gain_max', '-1'], ['--write_gain_power', '-1']):
+                      ['--write_gain_window', '0'], ['--write_gain_max', '-1'], ['--write_gain_power', '-0.5']):
             with self.subTest(argv=argv), self.assertRaises(SystemExit), \
                     contextlib.redirect_stderr(io.StringIO()):
                 parse_args(base + argv)

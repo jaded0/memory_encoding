@@ -1,7 +1,8 @@
 # train.py
 import torch
 from ephemeral_model import (EphemeralRNN, SimpleRNN, dfa_output_error, parse_slow_update_every,
-                             parse_fast_backward_per_forward, FAST_STRUCTURES, check_fast_structure)
+                             parse_fast_backward_per_forward, FAST_STRUCTURES, check_fast_structure,
+                             parse_plasticity_bands)
 import wandb
 import kv_switch
 import matplotlib.pyplot as plt
@@ -543,7 +544,9 @@ def build_model(config, charset, n_characters):
             order2_seed=config.get('seed') or 0,
             write_gain_power=config.get('write_gain_power', 0.0),
             write_gain_window=config.get('write_gain_window', 256),
-            write_gain_max=config.get('write_gain_max', 0.0))
+            write_gain_max=config.get('write_gain_max', 0.0),
+            plasticity_bands=config.get('plasticity_bands', ''),
+            band_feedback=config.get('band_feedback', 'shared'))
         model.sequence_outer = config.get('sequence_outer', False)
         return model
     raise ValueError(f"Unknown model_type: {config['model_type']}")
@@ -742,9 +745,13 @@ def build_parser():
                              'projected cosine c (the softmax temperature analogue).')
     parser.add_argument('--order2_dim', type=int, default=16,
                         help='--order2_layers: the projection size d.')
+    parser.add_argument('--plasticity_bands', type=str, default='',
+                        help='fraction:alpha:forget,...; fractions over whole matrix, summed for ephemeral_fraction.')
+    parser.add_argument('--band_feedback', choices=['shared', 'separate'], default='shared',
+                        help='With plasticity_bands: shared DFA feedback or fixed per-band random feedback.')
     parser.add_argument('--write_gain_power', type=float, default=0.0,
                         help='Ephemeral DFA (2026-10-27, proposal P3, the expansive write-gain test): scale '
-                             'every fast write by (|e| / m)^p, |e| the norm of the error that layer\'s fast '
+                             'every fast write by (|e| / m)^p (-1 flattens nonzero error norms to m), |e| the norm of the error that layer\'s fast '
                              'entries are written with (per layer and batch row), m that layer\'s running '
                              'median of |e| over the last --write_gain_window training steps. Slow entries, '
                              'biases and i2o are unchanged. 0 (default) = off, bit for bit. See README '
@@ -995,9 +1002,22 @@ def check_argument_combinations(args, parser):
         if args.order2_temperature <= 0 or args.order2_dim < 1:
             parser.error("--order2_temperature must be > 0 and --order2_dim >= 1.")
     if (not math.isfinite(args.write_gain_power) or not math.isfinite(args.write_gain_max)
-            or args.write_gain_power < 0 or args.write_gain_window < 1 or args.write_gain_max < 0):
-        parser.error("--write_gain_power and --write_gain_max must be >= 0 and --write_gain_window >= 1.")
-    if args.write_gain_power > 0:
+            or (args.write_gain_power < 0 and args.write_gain_power != -1) or args.write_gain_window < 1 or args.write_gain_max < 0):
+        parser.error("--write_gain_power must be >= 0 or -1; --write_gain_max >= 0 and --write_gain_window >= 1.")
+    try:
+        bands = parse_plasticity_bands(args.plasticity_bands)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if args.band_feedback != 'shared' and not bands:
+        parser.error('--band_feedback separate needs --plasticity_bands.')
+    if bands:
+        if (args.model_type != 'ephemeral' or args.updater != 'dfa' or args.fast_structure != 'exclusive'
+                or str(args.slow_update_every) != '1' or str(args.fast_backward_per_forward) != '1'
+                or args.order2_layers or args.decouple_fast_feedback or args.fast_write_from_readout
+                or args.fast_read_norm != 'off' or args.plasticity_schedule or args.grad_norm_clip > 0):
+            parser.error('--plasticity_bands needs per-step exclusive DFA without order2, feedback overrides, fast read normalization, plasticity_schedule or grad_norm_clip.')
+        args.ephemeral_fraction = sum(item[0] for item in bands)
+    if args.write_gain_power != 0:
         if args.model_type != 'ephemeral' or args.updater != 'dfa':
             parser.error("--write_gain_power supports only --model_type ephemeral --updater dfa.")
         if args.grad_norm_clip > 0:
@@ -1215,7 +1235,7 @@ def main():
             loaded_plasticity = loaded_config.get('plasticity', 1.0)
             current_plasticity = config.get('plasticity', 1.0)
 
-            if loaded_plasticity != current_plasticity:
+            if loaded_plasticity != current_plasticity and not config.get('plasticity_bands'):
                 print(f"Plasticity changed from {loaded_plasticity} to {current_plasticity}")
                 print("Updating plasticity parameters in all layers...")
                 rnn.set_plasticity(current_plasticity)
