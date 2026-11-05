@@ -152,7 +152,8 @@ class LoopTracer:
             fast, slow = layer.fast_weights(), layer.slow_weights()
             buffers["act_norm"][step, :, l] = row_norm(inputs)
             buffers["fast_norm"][step, :, l] = row_norm(fast)
-            buffers["fast_drive"][step, :, l] = row_norm(torch.bmm(fast, inputs.unsqueeze(2)))
+            query = inputs if layer.fast_key_trace is None else layer.fast_key_trace
+            buffers["fast_drive"][step, :, l] = row_norm(torch.bmm(fast, query.unsqueeze(2)))
             buffers["slow_drive"][step, :, l] = row_norm(torch.bmm(slow, inputs.unsqueeze(2)))
             if fast_write:
                 buffers["fast_write"][step, :, l] = self._write_norm(layer, projected[l])
@@ -166,9 +167,13 @@ class LoopTracer:
         """|lr * clamp(alpha * p x^T)| on the layer's ephemeral entries (additive: F's support),
         per batch row."""
         inputs, mask = layer.in_traces.data, layer.fast_mask
+        if layer.fast_key_trace is not None:
+            inputs = layer.fast_key_trace
         plasticity = layer.fast_alpha() if layer.is_additive else layer.plasticity
         update = ephemeral_update(dfa_per_sample_gradient(projected_error, inputs), plasticity,
                                   mask, self.update_clamp, layer.is_last_layer)
+        if layer.fast_momentum is not None:
+            update = layer.fast_write_momentum * layer.fast_momentum + update
         return self.learning_rate * row_norm(update * mask)
 
     def _record_pass(self, step, pass_index, output, loss, write, fast_norm):
