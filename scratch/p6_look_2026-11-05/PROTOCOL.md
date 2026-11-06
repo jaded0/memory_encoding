@@ -1,0 +1,16 @@
+# Fixed before measurement (2026-11-05)
+Analysis only. Eight full batches (128 episodes at B16) per checkpoint, first stored validation batches for KR, first stored test batches for MQAR. Seeds 2718,3141,1618 for KR plain rms, plain ln, DC2 ln, 30k. MQAR K4/8/16/32 seed2718 200k. No seed selection from these results.
+Observed held-out replay, slow scaffold frozen, reset fast state each episode. Exclude padding and zero-energy steps from M1 (count separately). M2 KR compares its ? store to every other real write in that episode; MQAR compares all distinct table value stores. Store index is input ? for KR; second key character predicting the value for MQAR (canonical source-1 convention).
+Per fast layer E=p^2*(mask @ x^2). Canonical fast_write_projected handles DC2. Selection energy descending and absolute postnonlinearity activation descending; deterministic neuron-index tie break. M1 selected share always uses E even for activation selection; normalized energy participation ratio does not depend on selection. k=16,64,256. M3 store-set counts and top ceil(0.05*N) neurons. Jaccard baseline k/(2*N-k), using actual layer width N, not nominal hidden_size. Distributions pooled over real steps/store steps, separately per run/layer, seed pooled in report with per-seed decisions retained. No additional decision metrics.
+
+At k = 64 (6.25% of 1024), in the memory-carrying layer, for the |p|-energy selection:
+- **Worth running P6** if the median top-64 energy share at store steps is < 0.5 **and** the mean store-store Jaccard is < 3× the random baseline.
+- **Not worth it** if the median top-64 energy share is > 0.8 (writes already effectively sparse) **or** the mean Jaccard is > 0.5 (the same neurons take every item, so top-k won't separate them).
+- **Ambiguous** otherwise. Report the activation-selection numbers next to it; if activation selection passes where |p| fails, say so (P6 has it as a variant).
+
+Provenance correction before measurement: pilot code_commit and pilot_run.json name 983ca8be8d7713b8f4c7f8f52fb74eb90017a515, not requested 0f512f8. Replay uses actual trained archive 983ca8b. BFR uses b26e88d per run launcher and BFR note. No training or library changes.
+
+Localization diagnostic, separate from M1-M3: strict replay of the same MQAR test episodes, subtract one fast layer read at recall prediction steps (never alter store-time reads), report strict and first-answer accuracy against unmodified strict. This names recall dependence without selecting the best-looking concentration layer. The decision table will report all trunk layers; i2h is recurrence-off, so not memory-carrying. No added concentration threshold.
+
+## 2026-11-05 15:33 addendum — correct healthy-checkpoint inclusion
+The brief requires healthy KR runs with strict recall approximately 1. Existing `runs/kr_plain_ln_s*/heldout.json` (2048 episodes, written before this analysis) has s2718/s1618/s1414 exactly 1.000; s3141=.94140625 and s5772=.93603515625. The initial assumed seed list included s3141 without checking that file; its concentration was measured, but is excluded from the primary healthy panel and kept as a flagged sensitivity result. Replace it with s1414 solely on prior strict health, not concentration. Plain rms/DC2 ln seed lists unchanged. No metric, threshold, or memory-layer rule changed. Report this deviation explicitly.
