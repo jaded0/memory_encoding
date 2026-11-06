@@ -71,7 +71,11 @@ def main():
     verdicts=[]
     for label,g in groups.items():
         ls=("L1","L2") if g["task"]=="kr" else ("L0",)
-        verdicts.append(label+": "+", ".join(f"{l} **{decision(g[layers][l][selections][energy][64])}** (top64 share {g[layers][l][selections][energy][64][store][median]:.3f}; mean J {g[layers][l][selections][energy][64][jaccard][mean]:.3f})" for l in ls))
+        cells=[]
+        for l in ls:
+            q=g["layers"][l]["selections"]["energy"]["64"]
+            cells.append(f"{l} **{decision(q)}** (top64 share {q['store']['median']:.3f}; mean J {q['jaccard']['mean']:.3f})")
+        verdicts.append(label+": "+", ".join(cells))
     text=['---',f'title: "Ephemeral weights: P6 write concentration cheap look"','date: 2026-11-05',
           'tags: [ephemeral-weights, research, analysis]','project: ephemeral-weights','status: final',
           'reading: unread','reading_priority: 2','reading_est: 12',
@@ -127,7 +131,7 @@ def main():
                 cells.append(f"{q['store']['median']:.3f} / {q['jaccard']['mean']:.3f} / {decision(q)}")
             text.append(f"| {label} | {r['config']['seed']} | "+' | '.join(cells)+' |')
     text += ['', '**Activation passes where energy does not:** '+('; '.join(activation_wins) if activation_wins else 'none in this panel.')+'.',
-             '', '## Which MQAR layer carries recall?','',
+             '', '**M3 at k64, memory layers:** energy selection uses 30–44% of KR neurons at least once across 128 episodes, with the most-used 5% taking 26–31% of all selections (ranges across layers/seeds). MQAR L0 uses about 86% of neurons, with its top 5% taking 16–17% of selections at every K. Thus the bigkey failure of the fixed gate is **concentration**, not the same small set taking every item; its mean within-episode J is only about 1.8–1.9× random. Activation selection is more skewed in MQAR L0 (top5 share 37–56%) and does not clear the overlap gate.', '', '## Which MQAR layer carries recall?','',
              'Strict read-time knockout on the same test batches subtracts just one layer’s fast read **at recall prediction steps**, leaving store-time computation unchanged. The first-answer column cannot be contaminated by earlier answer writes. **L0 is the net recall-supporting fast layer at every K:** removing its fast read reduces first-answer accuracy from .781/.672/.461/.273 to .398/.313/.195/.133 (K4/8/16/32). In contrast, removing L1 or L2 improves recall: their fast reads are net harmful at query time in these pilots. Apply the task decision to L0 (**Not worth it** at every K, because median top64 share > .8); the L1/L2 ambiguous rows are not the bigkey task verdict. This diagnostic localizes dependence; it is not a new concentration decision metric. Report all trunk layers rather than selecting whichever gives a favorable gate. i2h writes are shown in the full tables but **cannot carry recall with recurrence off**.',
              '', '| K | condition | strict first answer | strict all targets |', '|---:|---|---:|---:|']
     for k,p in probes.items():
@@ -169,7 +173,7 @@ def main():
              '- Full results: `manticore:/home/jaden/p6_look_2026-11-05/results/` (`*.json`, per-layer `*.npz`); `pooled_summary.json`, `analysis.log`, hash manifests. `run.sh`, `probe_layers.py`, `report.py` reproduce the analysis; no figure adds information beyond these fixed-k tables, so none included.',
              '', '## Five-line summary','']
     text += ['1. Existing checkpoints only: nine healthy KR runs and four MQAR lin pilots; no training or main merge.',
-             '2. KR is ambiguous in every primary arm and memory layer: top64 share ≈0.32–0.33, but J≈0.125–0.142 misses the fixed overlap gate (0.09590).',
+             '2. KR is ambiguous in every primary arm and memory layer: top64 share ≈0.32–0.33, but J≈0.133–0.140 misses the fixed overlap gate (0.09590).',
              '3. MQAR K4/8/16/32: not worth it in recall-supporting L0; top64 already carries 0.803–0.806 of write energy (J≈0.055–0.058).',
              '4. Activation does not pass in any pooled task/arm memory layer; DC2-ln seed2718 L2 is the lone individual-seed variant-only pass.',
              '5. This is a screening look, not evidence that sparse writes improve recall; Jaden decides whether P6 runs.']
